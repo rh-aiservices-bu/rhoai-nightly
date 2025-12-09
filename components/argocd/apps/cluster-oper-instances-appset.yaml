@@ -30,6 +30,11 @@ spec:
               name: instance-jobset
               path: components/instances/jobset-instance/base
               namespace: openshift-gitops
+          - cluster: local
+            values:
+              name: instance-kuadrant
+              path: components/instances/connectivity-link-instance/base
+              namespace: openshift-gitops
   template:
     metadata:
       name: "{{values.name}}"

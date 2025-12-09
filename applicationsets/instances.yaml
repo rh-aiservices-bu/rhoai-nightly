@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: instances
+  namespace: openshift-gitops
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/cfchase/rhoai-nightly
+        revision: main
+        directories:
+          - path: components/instances/*
+  template:
+    metadata:
+      name: 'instance-{{path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/cfchase/rhoai-nightly
+        targetRevision: main
+        path: '{{path}}'
+      destination:
+        server: https://kubernetes.default.svc
+      syncPolicy:
+        automated:
+          selfHeal: true

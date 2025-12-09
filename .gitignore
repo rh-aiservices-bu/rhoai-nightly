@@ -1,0 +1,29 @@
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.credentials
+*credentials*
+*secret*.txt
+*secret*.json
+*.key
+*.pem
+
+# Temp files
+*.tmp
+.tmp/
+tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Backup files
+*.bak
+*~

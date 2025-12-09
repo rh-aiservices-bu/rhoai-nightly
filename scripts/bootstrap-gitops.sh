@@ -4,11 +4,19 @@
 #
 # Usage:
 #   ./bootstrap-gitops.sh
+#
+# Environment variables (can also be set in .env):
+#   GITOPS_REPO_URL  - Git repository URL (default: https://github.com/cfchase/rhoai-nightly)
+#   GITOPS_BRANCH    - Git branch (default: main)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults (can be overridden by env vars)
+GITOPS_REPO_URL="${GITOPS_REPO_URL:-https://github.com/cfchase/rhoai-nightly}"
+GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -29,6 +37,8 @@ if ! oc whoami &>/dev/null; then
 fi
 
 log_info "Connected to: $(oc whoami --show-server)"
+log_info "GitOps Repo: $GITOPS_REPO_URL"
+log_info "GitOps Branch: $GITOPS_BRANCH"
 
 # Step 1: Install GitOps Operator
 log_step "Installing OpenShift GitOps operator..."
@@ -73,9 +83,10 @@ log_step "Waiting for ArgoCD server..."
 oc wait --for=condition=Available deployment/openshift-gitops-server \
     -n openshift-gitops --timeout=300s 2>/dev/null || log_warn "Timeout, continuing..."
 
-# Step 6: Apply Root Application
+# Step 6: Apply Root Application (with repo URL substitution)
 log_step "Applying root Application..."
-oc apply -f "$REPO_ROOT/bootstrap/root-app.yaml"
+export GITOPS_REPO_URL GITOPS_BRANCH
+envsubst < "$REPO_ROOT/bootstrap/root-app/root-app-template.yaml" | oc apply -f -
 
 log_info "Bootstrap complete!"
 ROUTE=$(oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='{.spec.host}' 2>/dev/null || echo "pending")

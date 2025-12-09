@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu pull-secret icsp setup bootstrap status validate all clean
+.PHONY: help check gpu pull-secret icsp setup bootstrap status validate all clean configure-repo
 
 # Default target
 help:
@@ -35,6 +35,10 @@ help:
 	@echo "Autonomous:"
 	@echo "  make all          - Run everything (setup + bootstrap)"
 	@echo ""
+	@echo "Configuration (for forks):"
+	@echo "  make configure-repo - Update repo URLs in applicationsets"
+	@echo "                        Set GITOPS_REPO_URL and GITOPS_BRANCH in .env"
+	@echo ""
 
 # Verify cluster connection
 check:
@@ -46,19 +50,9 @@ check:
 gpu:
 	@chmod +x scripts/create-gpu-machineset.sh
 	@scripts/create-gpu-machineset.sh
-	@echo ""
-	@echo "Verify GPU MachineSet:"
-	@echo "  oc get machineset -n openshift-machine-api | grep gpu"
-	@echo "  oc get machines -n openshift-machine-api | grep gpu"
 
-# Pre-GitOps: Pull Secret (requires QUAY_USER and QUAY_TOKEN from .env or environment)
+# Pre-GitOps: Pull Secret
 pull-secret:
-ifndef QUAY_USER
-	$(error QUAY_USER is not set. Create .env from .env.example or set env vars)
-endif
-ifndef QUAY_TOKEN
-	$(error QUAY_TOKEN is not set. Create .env from .env.example or set env vars)
-endif
 	@chmod +x scripts/add-pull-secret.sh
 	@scripts/add-pull-secret.sh
 
@@ -66,10 +60,6 @@ endif
 icsp:
 	@chmod +x scripts/create-icsp.sh
 	@scripts/create-icsp.sh
-	@echo ""
-	@echo "Monitor node rollout:"
-	@echo "  oc get nodes -w"
-	@echo "  oc get mcp"
 
 # All pre-GitOps setup
 setup: gpu pull-secret icsp
@@ -83,34 +73,13 @@ bootstrap:
 
 # Show ArgoCD status
 status:
-	@echo "ArgoCD Applications:"
-	@oc get applications -n openshift-gitops 2>/dev/null || echo "ArgoCD not installed"
-	@echo ""
-	@echo "ApplicationSets:"
-	@oc get applicationsets -n openshift-gitops 2>/dev/null || echo "No ApplicationSets"
+	@chmod +x scripts/status.sh
+	@scripts/status.sh
 
 # Full validation
 validate:
-	@echo "=== Cluster Info ==="
-	@oc whoami --show-server
-	@echo ""
-	@echo "=== Nodes ==="
-	@oc get nodes
-	@echo ""
-	@echo "=== GPU Nodes ==="
-	@oc get nodes -l node-role.kubernetes.io/gpu 2>/dev/null || echo "No GPU nodes"
-	@echo ""
-	@echo "=== GitOps Operator ==="
-	@oc get csv -n openshift-gitops-operator 2>/dev/null | grep gitops || echo "Not installed"
-	@echo ""
-	@echo "=== ArgoCD Applications ==="
-	@oc get applications -n openshift-gitops 2>/dev/null || echo "ArgoCD not ready"
-	@echo ""
-	@echo "=== RHOAI Operator ==="
-	@oc get csv -n redhat-ods-operator 2>/dev/null | grep rhods || echo "Not installed"
-	@echo ""
-	@echo "=== DataScienceCluster ==="
-	@oc get datasciencecluster 2>/dev/null || echo "Not created"
+	@chmod +x scripts/validate.sh
+	@scripts/validate.sh
 
 # Full autonomous run
 all: setup bootstrap
@@ -124,3 +93,8 @@ clean:
 	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]
 	@oc delete applications --all -n openshift-gitops 2>/dev/null || true
 	@oc delete applicationsets --all -n openshift-gitops 2>/dev/null || true
+
+# Configure repo URLs for forks
+configure-repo:
+	@chmod +x scripts/configure-repo.sh
+	@scripts/configure-repo.sh

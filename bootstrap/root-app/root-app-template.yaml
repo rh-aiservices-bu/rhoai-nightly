@@ -6,8 +6,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/cfchase/rhoai-nightly
-    targetRevision: main
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_BRANCH}
     path: applicationsets
   destination:
     server: https://kubernetes.default.svc

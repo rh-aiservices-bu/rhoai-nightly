@@ -32,19 +32,11 @@ if oc get imagecontentsourcepolicy quay-registry &>/dev/null; then
     exit 0
 fi
 
-log_info "Creating ImageContentSourcePolicy..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-cat <<EOF | oc apply -f -
-apiVersion: operator.openshift.io/v1alpha1
-kind: ImageContentSourcePolicy
-metadata:
-  name: quay-registry
-spec:
-  repositoryDigestMirrors:
-    - source: registry.redhat.io/rhoai
-      mirrors:
-        - quay.io/rhoai
-EOF
+log_info "Creating ImageContentSourcePolicy..."
+oc apply -f "$REPO_ROOT/bootstrap/icsp/icsp.yaml"
 
 log_info "ICSP created!"
 log_warn "Nodes will restart to apply the new mirror configuration."

@@ -7,15 +7,14 @@ metadata:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  generators: []  # Empty - add instances as list elements when ready
-  # Example:
-  # - list:
-  #     elements:
-  #       - cluster: local
-  #         values:
-  #           name: instance-nfd
-  #           path: components/instances/nfd-instance/base
-  #           namespace: openshift-gitops
+  generators:
+    - list:
+        elements:
+          - cluster: local
+            values:
+              name: instance-nfd
+              path: components/instances/nfd-instance/overlays/nvidia
+              namespace: openshift-gitops
   template:
     metadata:
       name: "{{values.name}}"

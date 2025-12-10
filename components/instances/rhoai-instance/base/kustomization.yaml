@@ -8,3 +8,4 @@ resources:
   - datasciencecluster.yaml
   - odh-dashboard-config.yaml
   - notebook-controller-culler-config-cm.yaml
+  - hardwareprofile-gpu.yaml

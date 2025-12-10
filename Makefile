@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu pull-secret icsp setup bootstrap status validate all clean configure-repo
+.PHONY: help check gpu cpu pull-secret icsp setup bootstrap status validate all clean configure-repo
 
 # Default target
 help:
@@ -17,9 +17,10 @@ help:
 	@echo ""
 	@echo "Pre-GitOps Setup (run individually, verify each):"
 	@echo "  make gpu          - Create GPU MachineSet (g5.2xlarge)"
+	@echo "  make cpu          - Create CPU worker MachineSet (m5.4xlarge)"
 	@echo "  make pull-secret  - Add quay.io/rhoai credentials"
 	@echo "  make icsp         - Create ImageContentSourcePolicy"
-	@echo "  make setup        - Run all pre-GitOps setup"
+	@echo "  make setup        - Run all pre-GitOps setup (gpu + pull-secret + icsp)"
 	@echo ""
 	@echo "Credentials: Copy .env.example to .env and fill in values"
 	@echo "             Or: QUAY_USER=x QUAY_TOKEN=y make pull-secret"
@@ -50,6 +51,11 @@ check:
 gpu:
 	@chmod +x scripts/create-gpu-machineset.sh
 	@scripts/create-gpu-machineset.sh
+
+# Pre-GitOps: CPU Worker MachineSet
+cpu:
+	@chmod +x scripts/create-cpu-machineset.sh
+	@scripts/create-cpu-machineset.sh
 
 # Pre-GitOps: Pull Secret
 pull-secret:

@@ -17,6 +17,7 @@ spec:
     modelAsService: true
     disableLMEval: false
     disableKueue: false
+    disableModelCatalog: false
   groupsConfig:
     adminGroups: "rhoai-admins,rhods-admins,cluster-admins"
     allowedGroups: "system:authenticated"

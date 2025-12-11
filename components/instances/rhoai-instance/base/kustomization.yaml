@@ -9,3 +9,4 @@ resources:
   - odh-dashboard-config.yaml
   - notebook-controller-culler-config-cm.yaml
   - hardwareprofile-gpu.yaml
+  - model-catalog-sources.yaml

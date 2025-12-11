@@ -27,18 +27,17 @@ fi
 
 log_info "Connected to: $(oc whoami --show-server)"
 
-if oc get imagecontentsourcepolicy quay-registry &>/dev/null; then
-    log_info "ICSP 'quay-registry' already exists"
-    exit 0
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-log_info "Creating ImageContentSourcePolicy..."
+if oc get imagecontentsourcepolicy quay-registry &>/dev/null; then
+    log_info "ICSP 'quay-registry' already exists, updating if needed"
+fi
+
+log_info "Applying ImageContentSourcePolicy..."
 oc apply -f "$REPO_ROOT/bootstrap/icsp/icsp.yaml"
 
-log_info "ICSP created!"
+log_info "ICSP applied!"
 log_warn "Nodes will restart to apply the new mirror configuration."
 log_warn "Monitor with:"
 log_warn "  oc get nodes -w"

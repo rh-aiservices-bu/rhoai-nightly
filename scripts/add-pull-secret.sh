@@ -32,19 +32,22 @@ log_info "Extracting current pull-secret..."
 oc get secret/pull-secret -n openshift-config \
     --template='{{index .data ".dockerconfigjson" | base64decode}}' > "$TMPFILE"
 
-if grep -q "quay.io/rhoai" "$TMPFILE" 2>/dev/null; then
-    log_info "quay.io/rhoai credentials already present"
-    exit 0
-fi
-
 # Credentials should be passed via environment variables
 if [[ -z "${QUAY_USER:-}" ]] || [[ -z "${QUAY_TOKEN:-}" ]]; then
+    if grep -q "quay.io/rhoai" "$TMPFILE" 2>/dev/null; then
+        log_info "quay.io/rhoai credentials already present, no update needed"
+        exit 0
+    fi
     log_error "QUAY_USER and QUAY_TOKEN environment variables must be set"
     log_error "Example: QUAY_USER=myuser QUAY_TOKEN=mytoken ./add-pull-secret.sh"
     exit 1
 fi
 
-log_info "Adding quay.io/rhoai credentials..."
+if grep -q "quay.io/rhoai" "$TMPFILE" 2>/dev/null; then
+    log_info "quay.io/rhoai credentials already present, updating..."
+else
+    log_info "Adding quay.io/rhoai credentials..."
+fi
 oc registry login --registry=quay.io/rhoai \
     --auth-basic="${QUAY_USER}:${QUAY_TOKEN}" \
     --to="$TMPFILE"

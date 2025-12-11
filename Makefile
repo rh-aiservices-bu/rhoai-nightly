@@ -9,9 +9,11 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu pull-secret icsp setup bootstrap status validate all clean configure-repo
+.PHONY: help check gpu cpu pull-secret icsp setup bootstrap status validate all clean configure-repo scale refresh
 
-# Default target
+# Default target - run everything
+.DEFAULT_GOAL := all
+
 help:
 	@echo "RHOAI 3.2 Nightly GitOps"
 	@echo ""
@@ -20,7 +22,7 @@ help:
 	@echo "  make cpu          - Create CPU worker MachineSet (m5.4xlarge)"
 	@echo "  make pull-secret  - Add quay.io/rhoai credentials"
 	@echo "  make icsp         - Create ImageContentSourcePolicy"
-	@echo "  make setup        - Run all pre-GitOps setup (gpu + pull-secret + icsp)"
+	@echo "  make setup        - Run all pre-GitOps setup (pull-secret + icsp + gpu + cpu)"
 	@echo ""
 	@echo "Credentials: Copy .env.example to .env and fill in values"
 	@echo "             Or: QUAY_USER=x QUAY_TOKEN=y make pull-secret"
@@ -32,9 +34,14 @@ help:
 	@echo "  make check        - Verify cluster connection"
 	@echo "  make status       - Show ArgoCD application status"
 	@echo "  make validate     - Full cluster validation"
+	@echo "  make refresh      - Force pull latest nightly images"
 	@echo ""
 	@echo "Autonomous:"
 	@echo "  make all          - Run everything (setup + bootstrap)"
+	@echo ""
+	@echo "Scaling:"
+	@echo "  make scale NAME=<machineset> REPLICAS=<N|+N|-N>"
+	@echo "                      Scale a MachineSet (e.g., REPLICAS=2 or REPLICAS=+1)"
 	@echo ""
 	@echo "Configuration (for forks):"
 	@echo "  make configure-repo - Update repo URLs in applicationsets"
@@ -67,8 +74,8 @@ icsp:
 	@chmod +x scripts/create-icsp.sh
 	@scripts/create-icsp.sh
 
-# All pre-GitOps setup
-setup: gpu pull-secret icsp
+# All pre-GitOps setup (pull-secret and icsp first, then workers)
+setup: pull-secret icsp gpu cpu
 	@echo ""
 	@echo "Pre-GitOps setup complete!"
 
@@ -104,3 +111,22 @@ clean:
 configure-repo:
 	@chmod +x scripts/configure-repo.sh
 	@scripts/configure-repo.sh
+
+# Scale a MachineSet
+scale:
+	@chmod +x scripts/scale-machineset.sh
+	@scripts/scale-machineset.sh --name "$(NAME)" --replicas "$(REPLICAS)"
+
+# Force refresh of nightly images
+refresh:
+	@echo "Refreshing RHOAI nightly images..."
+	@echo "Restarting catalog pod..."
+	@oc delete pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly 2>/dev/null || true
+	@echo "Waiting for catalog pod to restart..."
+	@sleep 5
+	@oc wait --for=condition=Ready pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly --timeout=120s 2>/dev/null || true
+	@echo "Restarting RHOAI operator..."
+	@oc delete pod -n redhat-ods-operator -l name=rhods-operator 2>/dev/null || true
+	@echo ""
+	@echo "Refresh initiated! Operator will reconcile with latest images."
+	@echo "Monitor with: oc get pods -n redhat-ods-operator -w"

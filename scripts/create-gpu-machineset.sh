@@ -10,11 +10,13 @@
 #   --replicas N           Number of replicas (default: 1)
 #   --az ZONE              Availability zone (default: auto-detected)
 #   --access-type TYPE     SHARED or PRIVATE (default: SHARED)
+#   --min N                Minimum replicas for autoscaling (enables autoscaling)
+#   --max N                Maximum replicas for autoscaling (enables autoscaling)
 #   --dry-run              Preview without applying
 #   --wait                 Wait for node to become Ready
 #
 # Environment variables (can also be set in .env):
-#   GPU_INSTANCE_TYPE, GPU_REPLICAS, GPU_ACCESS_TYPE, GPU_AZ
+#   GPU_INSTANCE_TYPE, GPU_REPLICAS, GPU_ACCESS_TYPE, GPU_AZ, GPU_MIN, GPU_MAX
 
 set -euo pipefail
 
@@ -36,6 +38,8 @@ INSTANCE_TYPE="${GPU_INSTANCE_TYPE:-${INSTANCE_TYPE:-g5.2xlarge}}"
 REPLICAS="${GPU_REPLICAS:-${REPLICAS:-1}}"
 ACCESS_TYPE="${GPU_ACCESS_TYPE:-${ACCESS_TYPE:-SHARED}}"
 AZ="${GPU_AZ:-}"
+AUTOSCALE_MIN="${GPU_MIN:-1}"
+AUTOSCALE_MAX="${GPU_MAX:-3}"
 WAIT=false
 DRY_RUN=false
 
@@ -45,6 +49,8 @@ while [[ $# -gt 0 ]]; do
         --replicas) REPLICAS="$2"; shift 2 ;;
         --az) AZ="$2"; shift 2 ;;
         --access-type) ACCESS_TYPE="$2"; shift 2 ;;
+        --min) AUTOSCALE_MIN="$2"; shift 2 ;;
+        --max) AUTOSCALE_MAX="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --wait) WAIT=true; shift ;;
         -h|--help)
@@ -56,8 +62,16 @@ Options:
   --replicas N           Number of replicas (default: 1)
   --az ZONE              Availability zone (default: auto-detected)
   --access-type TYPE     SHARED or PRIVATE (default: SHARED)
+  --min N                Minimum replicas for autoscaling (enables autoscaling)
+  --max N                Maximum replicas for autoscaling (enables autoscaling)
   --dry-run              Preview without applying
   --wait                 Wait for GPU node to be Ready
+
+Autoscaling:
+  When --min and --max are provided, the script will:
+  1. Create a ClusterAutoscaler (if not exists)
+  2. Create a MachineAutoscaler for the GPU MachineSet
+  3. Set initial replicas to --min value
 
 Supported instance types:
   g4dn.*           NVIDIA T4 (16GB) - Budget option
@@ -84,9 +98,8 @@ log_info "Connected to: $(oc whoami --show-server)"
 
 # Check if GPU MachineSet already exists
 if oc get machineset -n openshift-machine-api -o name 2>/dev/null | grep -q gpu; then
-    log_warn "GPU MachineSet already exists"
+    log_info "GPU MachineSet already exists, will update if needed"
     oc get machineset -n openshift-machine-api | grep gpu
-    exit 0
 fi
 
 # Verify AWS platform
@@ -123,6 +136,11 @@ if [[ -z "$AZ" ]]; then
     AZ="$DISCOVERED_AZ"
 fi
 
+# Handle autoscaling configuration (enabled by default with min=1, max=3)
+AUTOSCALING_ENABLED=true
+REPLICAS="$AUTOSCALE_MIN"
+log_info "  Autoscaling: enabled (min=$AUTOSCALE_MIN, max=$AUTOSCALE_MAX)"
+
 log_info "  Region: $REGION"
 log_info "  Availability Zone: $AZ"
 log_info "  AMI: $AMI"
@@ -153,6 +171,51 @@ fi
 
 echo "$MACHINESET_YAML" | oc apply -f -
 log_info "GPU MachineSet created: $MS_NAME"
+
+# Create autoscaling resources if enabled
+if [[ "$AUTOSCALING_ENABLED" == "true" ]]; then
+    log_info "Creating autoscaling resources..."
+
+    # Create ClusterAutoscaler if it doesn't exist
+    if ! oc get clusterautoscaler default &>/dev/null; then
+        log_info "Creating ClusterAutoscaler..."
+        cat <<EOF | oc apply -f -
+apiVersion: autoscaling.openshift.io/v1
+kind: ClusterAutoscaler
+metadata:
+  name: default
+spec:
+  podPriorityThreshold: -10
+  scaleDown:
+    delayAfterAdd: 20m
+    delayAfterDelete: 5m
+    delayAfterFailure: 30s
+    enabled: true
+    unneededTime: 5m
+EOF
+        log_info "ClusterAutoscaler created"
+    else
+        log_info "ClusterAutoscaler already exists"
+    fi
+
+    # Create MachineAutoscaler for this MachineSet
+    log_info "Creating MachineAutoscaler for $MS_NAME..."
+    cat <<EOF | oc apply -f -
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: $MS_NAME
+  namespace: openshift-machine-api
+spec:
+  minReplicas: $AUTOSCALE_MIN
+  maxReplicas: $AUTOSCALE_MAX
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: $MS_NAME
+EOF
+    log_info "MachineAutoscaler created: $MS_NAME (min=$AUTOSCALE_MIN, max=$AUTOSCALE_MAX)"
+fi
 
 if [[ "$WAIT" == "true" ]]; then
     log_info "Waiting for GPU node to be Ready (5-10 minutes)..."

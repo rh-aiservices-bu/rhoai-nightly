@@ -85,7 +85,8 @@ icsp:
 
 # All pre-GitOps setup (pull-secret, icsp, workers)
 # Each script waits for its resources to be ready before returning
-setup: pull-secret icsp gpu cpu
+# CPU before GPU - cheaper instances provision faster
+setup: pull-secret icsp cpu gpu
 	@echo ""
 	@echo "Pre-GitOps setup complete!"
 

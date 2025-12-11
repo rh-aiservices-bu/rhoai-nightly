@@ -19,6 +19,11 @@ spec:
     spec:
       project: default
       syncPolicy: {}
+      ignoreDifferences:
+        - group: operators.coreos.com
+          kind: Subscription
+          jsonPointers:
+            - /spec/installPlanApproval
       source:
         repoURL: https://github.com/cfchase/rhoai-nightly
         targetRevision: main

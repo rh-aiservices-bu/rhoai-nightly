@@ -80,6 +80,17 @@ done
 
 # Step 5: Wait for ArgoCD Server to be available
 log_step "Waiting for ArgoCD server to be ready..."
+
+# First wait for the deployment to exist
+for i in {1..60}; do
+    if oc get deployment/openshift-gitops-server -n openshift-gitops &>/dev/null; then
+        break
+    fi
+    log_info "Waiting for ArgoCD server deployment to be created..."
+    sleep 5
+done
+
+# Then wait for it to be ready
 oc wait --for=condition=Available deployment/openshift-gitops-server \
     -n openshift-gitops --timeout=300s || {
     log_error "ArgoCD server not ready after 5 minutes"

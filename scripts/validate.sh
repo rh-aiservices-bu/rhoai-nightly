@@ -7,13 +7,10 @@
 
 set -euo pipefail
 
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 section() { echo -e "${BLUE}=== $* ===${NC}"; }
-log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 
 section "Cluster Info"
 oc whoami --show-server

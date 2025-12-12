@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu pull-secret icsp setup gitops deploy bootstrap status validate all clean configure-repo scale refresh sync sync-app sync-disable sync-enable dedicate-masters
+.PHONY: help check gpu cpu pull-secret icsp setup gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh sync sync-app sync-disable sync-enable dedicate-masters
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -45,6 +45,10 @@ help:
 	@echo "  make sync-disable - Disable auto-sync on all apps (for manual changes)"
 	@echo "  make sync-enable  - Re-enable auto-sync on all apps"
 	@echo ""
+	@echo "Cleanup:"
+	@echo "  make undeploy     - Remove ArgoCD apps with cascade deletion (keeps GitOps)"
+	@echo "  make clean        - Full cleanup including pre-installed operators"
+	@echo ""
 	@echo "Autonomous:"
 	@echo "  make all          - Run everything (setup + bootstrap)"
 	@echo ""
@@ -65,22 +69,18 @@ check:
 
 # Pre-GitOps: GPU MachineSet
 gpu:
-	@chmod +x scripts/create-gpu-machineset.sh
 	@scripts/create-gpu-machineset.sh
 
 # Pre-GitOps: CPU Worker MachineSet
 cpu:
-	@chmod +x scripts/create-cpu-machineset.sh
 	@scripts/create-cpu-machineset.sh
 
 # Pre-GitOps: Pull Secret
 pull-secret:
-	@chmod +x scripts/add-pull-secret.sh
 	@scripts/add-pull-secret.sh
 
 # Pre-GitOps: ICSP (triggers node restart, waits for MCP update)
 icsp:
-	@chmod +x scripts/create-icsp.sh
 	@scripts/create-icsp.sh
 
 # All pre-GitOps setup (pull-secret, icsp, workers)
@@ -92,12 +92,10 @@ setup: pull-secret icsp cpu gpu
 
 # Install GitOps operator and ArgoCD
 gitops:
-	@chmod +x scripts/install-gitops.sh
 	@scripts/install-gitops.sh
 
 # Deploy root application (triggers all GitOps syncs)
 deploy:
-	@chmod +x scripts/deploy-apps.sh
 	@scripts/deploy-apps.sh
 
 # Bootstrap GitOps (install + deploy)
@@ -105,12 +103,10 @@ bootstrap: gitops deploy
 
 # Show ArgoCD status
 status:
-	@chmod +x scripts/status.sh
 	@scripts/status.sh
 
 # Full validation
 validate:
-	@chmod +x scripts/validate.sh
 	@scripts/validate.sh
 
 # Full autonomous run
@@ -119,21 +115,24 @@ all: setup bootstrap sync
 	@echo "Full setup complete!"
 	@echo "RHOAI 3.2 nightly is now deploying."
 
-# Clean up (dangerous!)
-clean:
-	@echo "This will delete all ArgoCD applications and applicationsets!"
-	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]
-	@oc delete applications --all -n openshift-gitops 2>/dev/null || true
-	@oc delete applicationsets --all -n openshift-gitops 2>/dev/null || true
+# Remove ArgoCD apps with cascade deletion (keeps GitOps operator)
+# ArgoCD deletes managed resources before removing the app
+# Usage: make undeploy [DRY_RUN=true] [SKIP_CONFIRM=true]
+undeploy:
+	@scripts/undeploy.sh $(if $(DRY_RUN),--dry-run) $(if $(SKIP_CONFIRM),-y)
+
+# Full cleanup including pre-installed operators
+# Chains: undeploy -> clean
+# Usage: make clean [DRY_RUN=true] [SKIP_CONFIRM=true]
+clean: undeploy
+	@scripts/clean.sh $(if $(DRY_RUN),--dry-run) $(if $(SKIP_CONFIRM),-y)
 
 # Configure repo URLs for forks
 configure-repo:
-	@chmod +x scripts/configure-repo.sh
 	@scripts/configure-repo.sh
 
 # Scale a MachineSet
 scale:
-	@chmod +x scripts/scale-machineset.sh
 	@scripts/scale-machineset.sh --name "$(NAME)" --replicas "$(REPLICAS)"
 
 # Force refresh of nightly images
@@ -152,7 +151,6 @@ refresh:
 
 # Sync all apps one-by-one in dependency order (RECOMMENDED)
 sync:
-	@chmod +x scripts/sync-apps.sh
 	@scripts/sync-apps.sh
 
 # Sync a single app and trigger immediate sync
@@ -161,7 +159,7 @@ sync-app:
 	@oc patch application.argoproj.io/$(APP) -n openshift-gitops --type=merge \
 	  -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
 	@echo "Triggering sync..."
-	@oc annotate application.argoproj.io/$(APP) -n openshift-gitops \
+	@oc annotate application/$(APP) -n openshift-gitops \
 	  argocd.argoproj.io/refresh=normal --overwrite
 	@echo "Sync enabled and triggered for $(APP)"
 

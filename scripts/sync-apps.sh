@@ -12,54 +12,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
-
-# Sync order - operators first, then their instances
-SYNC_ORDER=(
-    # Phase 1: Foundation
-    "nfd"
-    "instance-nfd"
-    "nvidia-operator"
-    "instance-nvidia"
-
-    # Phase 2: Dependent Operators
-    "openshift-service-mesh"
-    "kueue-operator"
-    "leader-worker-set"
-    "instance-lws"
-    "jobset-operator"
-    "instance-jobset"
-    "connectivity-link"
-    "instance-kuadrant"
-
-    # Phase 3: RHOAI
-    "rhoai-operator"
-    "instance-rhoai"
-)
+source "$SCRIPT_DIR/lib/common.sh"
 
 # Timeout for each app to become healthy (seconds)
 HEALTH_TIMEOUT="${SYNC_TIMEOUT:-300}"
-
-# CRDs that must exist before syncing instance apps
-declare -A REQUIRED_CRDS=(
-    ["instance-nfd"]="nodefeaturediscoveries.nfd.openshift.io"
-    ["instance-nvidia"]="clusterpolicies.nvidia.com"
-    ["instance-lws"]="leaderworkersetoperators.operator.openshift.io"
-    ["instance-jobset"]="jobsetoperators.operator.openshift.io"
-    ["instance-kuadrant"]="kuadrants.kuadrant.io"
-    ["instance-rhoai"]="datascienceclusters.datasciencecluster.opendatahub.io"
-)
 
 wait_for_crd() {
     local app="$1"
@@ -83,6 +39,32 @@ wait_for_crd() {
     echo ""
     log_info "CRD ready: $crd"
     return 0
+}
+
+wait_for_dsci() {
+    local app="$1"
+
+    # Only check for instance-rhoai
+    [[ "$app" != "instance-rhoai" ]] && return 0
+
+    local timeout=120
+    local start_time=$(date +%s)
+
+    while true; do
+        local phase=$(oc get dscinitialization default-dsci -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [[ "$phase" == "Ready" ]]; then
+            log_info "DSCInitialization is Ready"
+            return 0
+        fi
+
+        local elapsed=$(($(date +%s) - start_time))
+        if [[ $elapsed -ge $timeout ]]; then
+            log_warn "Timeout waiting for DSCInitialization to be Ready"
+            return 0  # Continue anyway, let ArgoCD handle retries
+        fi
+        printf "  Waiting for DSCInitialization: phase=%s (%ds)...\r" "${phase:-NotFound}" "$elapsed"
+        sleep 5
+    done
 }
 
 clear_sync_failure() {
@@ -134,6 +116,9 @@ sync_app() {
 
     # Wait for required CRD before syncing instance apps
     wait_for_crd "$app"
+
+    # Wait for DSCInitialization before syncing instance-rhoai
+    wait_for_dsci "$app"
 
     # Enable auto-sync with retry policy (handles CRD timing issues)
     oc patch application.argoproj.io/"$app" -n openshift-gitops --type=merge \
@@ -199,13 +184,7 @@ wait_for_all_apps() {
 }
 
 main() {
-    # Verify cluster connection
-    if ! oc whoami &>/dev/null; then
-        log_error "Not logged into OpenShift cluster"
-        exit 1
-    fi
-
-    log_info "Connected to: $(oc whoami --show-server)"
+    check_cluster_connection
 
     # Pre-flight check: ensure all apps exist
     wait_for_all_apps

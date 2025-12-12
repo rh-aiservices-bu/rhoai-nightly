@@ -56,7 +56,7 @@ declare -A REQUIRED_CRDS=(
     ["instance-nfd"]="nodefeaturediscoveries.nfd.openshift.io"
     ["instance-nvidia"]="clusterpolicies.nvidia.com"
     ["instance-lws"]="leaderworkersetoperators.operator.openshift.io"
-    ["instance-jobset"]="jobsets.jobset.x-k8s.io"
+    ["instance-jobset"]="jobsetoperators.operator.openshift.io"
     ["instance-kuadrant"]="kuadrants.kuadrant.io"
     ["instance-rhoai"]="datascienceclusters.datasciencecluster.opendatahub.io"
 )

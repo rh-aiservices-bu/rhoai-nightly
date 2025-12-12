@@ -4,8 +4,9 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
     opendatahub.io/dashboard-feature-visibility: '[]'
+    opendatahub.io/description: GPU profile with 1 CPU, 12 GiB memory, and 1 NVIDIA GPU.
     opendatahub.io/disabled: 'false'
-    opendatahub.io/display-name: gpu-profile
+    opendatahub.io/display-name: GPU Profile
   labels:
     app.kubernetes.io/part-of: hardwareprofile
     app.opendatahub.io/hardwareprofile: "true"

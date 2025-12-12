@@ -1,4 +1,4 @@
-apiVersion: dscinitialization.opendatahub.io/v1
+apiVersion: dscinitialization.opendatahub.io/v2
 kind: DSCInitialization
 metadata:
   name: default-dsci
@@ -8,6 +8,8 @@ spec:
   applicationsNamespace: redhat-ods-applications
   monitoring:
     managementState: Managed
+    metrics: {}
     namespace: redhat-ods-monitoring
   trustedCABundle:
+    customCABundle: ""
     managementState: Managed

@@ -10,21 +10,17 @@ metadata:
   namespace: redhat-ods-applications
 spec:
   dashboardConfig:
-    # Overrides only - features not listed use blankDashboardCR defaults
+    disableKServeMetrics: false
+    disableLMEval: false
+    disableModelCatalog: false
+    disableModelRegistry: false
     disableTracking: false
-    # Enable RHOAI 3.2 features (default is disabled)
     genAiStudio: true
     modelAsService: true
-    disableLMEval: false
-    disableKueue: false
-    disableModelCatalog: false
-  groupsConfig:
-    adminGroups: "rhoai-admins,rhods-admins,cluster-admins"
-    allowedGroups: "system:authenticated"
+  hardwareProfileOrder: []
   notebookController:
     enabled: true
     notebookNamespace: rhods-notebooks
     pvcSize: 20Gi
   templateDisablement: []
   templateOrder: []
-  hardwareProfileOrder: []

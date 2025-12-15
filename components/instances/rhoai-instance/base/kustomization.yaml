@@ -9,5 +9,7 @@ resources:
   - datasciencecluster.yaml
   - odh-dashboard-config.yaml
   - notebook-controller-culler-config-cm.yaml
+  - hardwareprofile-cpu.yaml
+  - hardwareprofile-default-disabled.yaml
   - hardwareprofile-gpu.yaml
   - model-catalog-sources.yaml

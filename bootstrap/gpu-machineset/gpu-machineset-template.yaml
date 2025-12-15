@@ -22,6 +22,9 @@ spec:
       metadata:
         labels:
           node-role.kubernetes.io/gpu: ""
+      taints:
+        - key: nvidia.com/gpu
+          effect: NoSchedule
       providerSpec:
         value:
           apiVersion: machine.openshift.io/v1beta1

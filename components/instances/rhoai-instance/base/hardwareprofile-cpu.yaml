@@ -4,13 +4,13 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
     opendatahub.io/dashboard-feature-visibility: '[]'
-    opendatahub.io/description: GPU profile with 1 CPU, 12 GiB memory, and 1 NVIDIA GPU.
+    opendatahub.io/description: CPU profile with configurable CPU and memory (no limits).
     opendatahub.io/disabled: 'false'
-    opendatahub.io/display-name: GPU Profile
+    opendatahub.io/display-name: CPU Profile
   labels:
     app.kubernetes.io/part-of: hardwareprofile
     app.opendatahub.io/hardwareprofile: "true"
-  name: gpu-profile
+  name: cpu-profile
   namespace: redhat-ods-applications
 spec:
   identifiers:
@@ -19,20 +19,8 @@ spec:
       identifier: cpu
       minCount: 1
       resourceType: CPU
-    - defaultCount: 12Gi
+    - defaultCount: 8Gi
       displayName: Memory
       identifier: memory
       minCount: 1Gi
       resourceType: Memory
-    - defaultCount: 1
-      displayName: GPU
-      identifier: nvidia.com/gpu
-      minCount: 1
-      resourceType: Accelerator
-  scheduling:
-    type: Node
-    node:
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule

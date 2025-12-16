@@ -10,7 +10,9 @@ spec:
   replicas: 1
   listener:
     tls:
-      enabled: false
+      enabled: true
+      certSecretRef:
+        name: authorino-server-cert
   oidcServer:
     tls:
       enabled: false

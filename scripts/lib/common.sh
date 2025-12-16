@@ -29,6 +29,7 @@ SYNC_ORDER=(
     "instance-nvidia"
 
     # Phase 2: Dependent Operators
+    "cert-manager"                # Required by jobset-operator, kueue, trainer
     "openshift-service-mesh"
     "kueue-operator"
     "leader-worker-set"
@@ -64,6 +65,7 @@ MANAGED_NAMESPACES=(
     "openshift-kueue-operator"
     "openshift-lws-operator"
     "openshift-jobset-operator"
+    "cert-manager-operator"
 )
 
 # CRDs that must exist before syncing instance apps
@@ -120,6 +122,7 @@ OPERATOR_NAMESPACES=(
     "openshift-jobset-operator"
     "nvidia-gpu-operator"
     "openshift-nfd"
+    "cert-manager-operator"
 )
 
 # CSV info for operator apps: app-name -> "csv-prefix|namespace"
@@ -127,6 +130,7 @@ OPERATOR_NAMESPACES=(
 declare -A OPERATOR_CSV_INFO=(
     ["nfd"]="nfd|openshift-nfd"
     ["nvidia-operator"]="gpu-operator-certified|nvidia-gpu-operator"
+    ["cert-manager"]="cert-manager-operator|cert-manager-operator"
     ["openshift-service-mesh"]="servicemeshoperator3|openshift-operators"
     ["kueue-operator"]="kueue-operator|openshift-kueue-operator"
     ["leader-worker-set"]="leader-worker-set|openshift-lws-operator"

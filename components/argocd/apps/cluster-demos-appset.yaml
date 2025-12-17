@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-demos-applicationset
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  syncPolicy:
+    applicationsSync: create-only
+  generators:
+    - list:
+        elements:
+          - cluster: local
+            values:
+              name: demo-ai-bu-shared
+              path: components/demos/ai-bu-shared/base
+  template:
+    metadata:
+      name: "{{values.name}}"
+      annotations:
+        argocd.argoproj.io/compare-options: IgnoreExtraneous
+    spec:
+      project: default
+      syncPolicy: {}
+      source:
+        repoURL: https://github.com/cfchase/rhoai-nightly
+        targetRevision: main
+        path: "{{values.path}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: openshift-gitops

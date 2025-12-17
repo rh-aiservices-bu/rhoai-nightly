@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - cluster-operators-appset.yaml
   - cluster-oper-instances-appset.yaml
+  - cluster-demos-appset.yaml

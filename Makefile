@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu pull-secret icsp setup gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh sync sync-app sync-disable sync-enable refresh-apps dedicate-masters
+.PHONY: help check gpu cpu pull-secret icsp setup gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -45,6 +45,10 @@ help:
 	@echo "  make sync-disable - Disable auto-sync on all apps (for manual changes)"
 	@echo "  make sync-enable  - Re-enable auto-sync on all apps"
 	@echo "  make refresh-apps - Refresh and sync all apps (one-time, keeps current sync setting)"
+	@echo ""
+	@echo "Demos (optional):"
+	@echo "  make demos        - Deploy demos ApplicationSet (ai-bu-shared namespace, etc.)"
+	@echo "  make demos-delete - Remove demos ApplicationSet and apps"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make undeploy     - Remove ArgoCD apps with cascade deletion (keeps GitOps)"
@@ -202,3 +206,18 @@ dedicate-masters:
 	@oc label nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/worker- 2>/dev/null || true
 	@echo "Master nodes are now dedicated (no longer schedulable for regular workloads)"
 	@oc get nodes
+
+# Deploy demos ApplicationSet (optional)
+demos:
+	@echo "Deploying demos ApplicationSet..."
+	@oc apply -f components/argocd/apps/cluster-demos-appset.yaml
+	@echo "Demos ApplicationSet deployed. Syncing demo apps..."
+	@sleep 3
+	@oc get applications.argoproj.io -n openshift-gitops -l app.kubernetes.io/instance=cluster-demos-applicationset 2>/dev/null || \
+	  oc get applications.argoproj.io -n openshift-gitops | grep demo || echo "Waiting for apps to be created..."
+
+# Remove demos ApplicationSet and its apps
+demos-delete:
+	@echo "Removing demos ApplicationSet..."
+	@oc delete applicationset cluster-demos-applicationset -n openshift-gitops --cascade=foreground 2>/dev/null || true
+	@echo "Demos removed."

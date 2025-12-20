@@ -22,7 +22,9 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 # Application sync order (operators first, then instances)
 # Used by sync-apps.sh
 SYNC_ORDER=(
-    # Phase 1: Foundation
+    # Phase 1: Foundation (no dependencies)
+    "external-secrets-operator"   # Early - needed for secret management
+    "instance-external-secrets"
     "nfd"
     "instance-nfd"
     "nvidia-operator"
@@ -38,6 +40,8 @@ SYNC_ORDER=(
     "instance-jobset"
     "connectivity-link"
     "instance-kuadrant"
+    "nfs-provisioner"
+    "instance-nfs"
 
     # Phase 3: RHOAI
     "rhoai-operator"

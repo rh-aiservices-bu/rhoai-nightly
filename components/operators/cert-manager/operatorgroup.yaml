@@ -1,6 +1,9 @@
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
-  name: cert-manager-operator
+  name: cert-manager-operator-og
   namespace: cert-manager-operator
-spec: {}
+spec:
+  targetNamespaces:
+    - cert-manager-operator
+  upgradeStrategy: Default

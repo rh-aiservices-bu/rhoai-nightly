@@ -5,7 +5,7 @@
 # Usage:
 #   ./create-icsp.sh
 #
-# Note: This will trigger a node rollout (~5-10 min)
+# TODO: Consider migrating to IDMS (ImageDigestMirrorSet) for OpenShift 4.14+
 
 set -euo pipefail
 
@@ -38,8 +38,7 @@ log_info "Applying ImageContentSourcePolicy..."
 oc apply -f "$REPO_ROOT/bootstrap/icsp/icsp.yaml"
 
 log_info "ICSP applied!"
-log_info "Waiting for MachineConfigPools to update (this may take 10-15 minutes)..."
-log_info "Nodes will restart to apply the new mirror configuration."
+log_info "Waiting for MachineConfigPools to update..."
 
 # Wait for MCPs to start updating
 sleep 10

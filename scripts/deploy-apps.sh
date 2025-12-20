@@ -111,7 +111,7 @@ log_info "cluster-config app created (sync disabled)"
 
 # Step 2: Patch cluster-config with correct repo/branch
 log_step "Patching cluster-config with repo/branch..."
-oc patch application cluster-config -n openshift-gitops --type=merge -p "{
+oc patch application.argoproj.io/cluster-config -n openshift-gitops --type=merge -p "{
     \"spec\": {
         \"source\": {
             \"repoURL\": \"$REPO_URL\",
@@ -123,7 +123,7 @@ log_info "cluster-config patched: $REPO_URL @ $BRANCH"
 
 # Step 3: Manually sync cluster-config (no automated sync to prevent overwriting patches)
 log_step "Syncing cluster-config..."
-oc patch application cluster-config -n openshift-gitops --type=merge -p '{
+oc patch application.argoproj.io/cluster-config -n openshift-gitops --type=merge -p '{
     "operation": {
         "initiatedBy": { "username": "deploy-script" },
         "sync": {}
@@ -155,8 +155,8 @@ SYNC_WAIT_TIMEOUT=120
 start_time=$(date +%s)
 while true; do
     # Check if operation is still in progress
-    OP_PHASE=$(oc get application cluster-config -n openshift-gitops -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "Unknown")
-    if [[ "$OP_PHASE" == "Succeeded" || "$OP_PHASE" == "Running" && "$(oc get application cluster-config -n openshift-gitops -o jsonpath='{.status.sync.status}' 2>/dev/null)" == "Synced" ]]; then
+    OP_PHASE=$(oc get application.argoproj.io/cluster-config -n openshift-gitops -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "Unknown")
+    if [[ "$OP_PHASE" == "Succeeded" || "$OP_PHASE" == "Running" && "$(oc get application.argoproj.io/cluster-config -n openshift-gitops -o jsonpath='{.status.sync.status}' 2>/dev/null)" == "Synced" ]]; then
         break
     fi
     if [[ "$OP_PHASE" == "Failed" || "$OP_PHASE" == "Error" ]]; then
@@ -224,7 +224,7 @@ log_info "All ${#EXPECTED_APPS[@]} apps created!"
 # Step 8: Patch all generated apps with correct repo/branch
 # ApplicationSets use create-only policy, so existing apps need direct patching
 log_step "Patching all apps with repo/branch..."
-for app in $(oc get applications -n openshift-gitops -o name | grep -v cluster-config); do
+for app in $(oc get applications.argoproj.io -n openshift-gitops -o name | grep -v cluster-config); do
     oc patch "$app" -n openshift-gitops --type=merge -p "{
         \"spec\": {
             \"source\": {

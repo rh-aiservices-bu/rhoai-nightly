@@ -18,12 +18,17 @@ Order **AWS with OpenShift Open Environment** from [demo.redhat.com](https://cat
 oc login --token=<token> --server=https://api.<cluster>:6443
 ```
 
-### 3. Configure Credentials and customize any other settings
+### 3. Configure Credentials (Choose One)
 
+**Option A: Manual Credentials**
 ```bash
 cp .env.example .env
 # Edit .env with your quay.io credentials for quay.io/rhoai access
 ```
+
+**Option B: External Secrets (Automatic)**
+
+If you have git access to the [rh-aiservices-bu-bootstrap](https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap) private repo, credentials are configured automatically via AWS Secrets Manager. No `.env` configuration needed.
 
 ### 4. Deploy
 
@@ -37,19 +42,25 @@ Or, to disable auto-sync after deployment (for manual cluster changes):
 make all sync-disable
 ```
 
-`make` (or `make all`) runs three phases:
+`make` (or `make all`) runs these phases:
 
-**Phase 1: `setup`** - Cluster preparation
-- `pull-secret` - Add quay.io/rhoai credentials
-- `icsp` - Configure registry mirror (waits ~10-15 min for node restart)
+**Phase 1: `infra`** - Infrastructure setup
+- `icsp` - Configure registry mirror
 - `cpu` - Create CPU MachineSet m6a.4xlarge (waits for node Ready)
 - `gpu` - Create GPU MachineSet g5.2xlarge (waits for node Ready)
 
-**Phase 2: `bootstrap`** - GitOps installation
-- `gitops` - Install GitOps operator + ArgoCD
-- `deploy` - Deploy ArgoCD apps (sync disabled by default)
+**Phase 2: `secrets`** - Pull-secret configuration (auto-detects mode)
+- If `QUAY_USER`/`QUAY_TOKEN` set → uses manual credentials
+- If git access to bootstrap repo → uses External Secrets from AWS
+- Installs External Secrets Operator if needed (self-contained, doesn't need GitOps)
 
-**Phase 3: `sync`** - Staged deployment
+**Phase 3: `gitops`** - GitOps installation
+- Install GitOps operator + ArgoCD instance
+
+**Phase 4: `deploy`** - ArgoCD apps
+- Deploy cluster-config and ApplicationSets (sync disabled by default)
+
+**Phase 5: `sync`** - Staged deployment
 - Syncs all apps one-by-one in dependency order
 - Enables auto-sync on each app after it's healthy
 
@@ -62,16 +73,26 @@ Optionally run `make dedicate-masters` to remove worker role from master nodes.
 Run steps individually if needed:
 
 ```bash
-make pull-secret      # Add credentials
-make icsp             # Apply ICSP (triggers node restart)
+# Infrastructure
+make icsp             # Apply ICSP (configure registry mirror)
 make cpu              # Create CPU workers
 make gpu              # Create GPU workers
-make setup            # Run pull-secret + icsp + cpu + gpu
+make infra            # Run icsp + cpu + gpu
 
+# Secrets (auto-detects mode)
+make secrets          # Setup pull-secret (External Secrets or manual)
+
+# GitOps
 make gitops           # Install GitOps operator + ArgoCD
-make deploy           # Deploy ArgoCD apps (sync disabled)
-make bootstrap        # Run gitops + deploy together
 
+# Deploy
+make deploy           # Deploy ArgoCD apps (sync disabled)
+
+# Shortcuts
+make setup            # Run infra + secrets (pre-GitOps setup)
+make bootstrap        # Run gitops + deploy
+
+# Sync
 make sync             # Staged sync all apps in order (RECOMMENDED)
 make sync-app APP=nfd # Sync a single app
 ```
@@ -130,4 +151,33 @@ make sync-app APP=<app-name>
 
 - OpenShift 4.17+
 - `oc` CLI
-- quay.io credentials with access to `quay.io/rhoai` repos
+- One of:
+  - quay.io credentials with access to `quay.io/rhoai` repos (manual mode)
+  - Git access to [rh-aiservices-bu-bootstrap](https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap) (External Secrets mode)
+
+## External Secrets Mode
+
+When you have access to the private bootstrap repo but no local credentials, the deployment automatically:
+
+1. Installs External Secrets Operator
+2. Creates ClusterSecretStore for AWS Secrets Manager
+3. Applies AWS credentials from the bootstrap repo
+4. Applies ExternalSecret to sync pull-secret from AWS
+5. Pull-secret contains all required registry credentials
+
+The External Secrets Operator is then adopted by ArgoCD during the sync phase.
+
+**Verify External Secrets mode:**
+
+```bash
+oc get externalsecret pull-secret -n openshift-config
+oc get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq '.auths | keys'
+```
+
+**Switch to manual mode:**
+
+Set `QUAY_USER` and `QUAY_TOKEN` in `.env`, then run:
+
+```bash
+make secrets  # Detects credentials, deletes ExternalSecret, uses manual mode
+```

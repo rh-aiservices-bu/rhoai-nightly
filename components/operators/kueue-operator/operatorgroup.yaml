@@ -1,6 +1,7 @@
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
-  name: kueue-operator
+  name: openshift-kueue-operator
   namespace: openshift-kueue-operator
-spec: {}
+spec:
+  upgradeStrategy: Default

@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu pull-secret icsp setup gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -17,23 +17,32 @@ endif
 help:
 	@echo "RHOAI 3.2 Nightly GitOps"
 	@echo ""
-	@echo "Pre-GitOps Setup (each step waits for completion):"
-	@echo "  make pull-secret  - Add quay.io/rhoai credentials"
-	@echo "  make icsp         - Create ICSP (waits for MCP update ~10-15 min)"
+	@echo "Autonomous (recommended for clean clusters):"
+	@echo "  make all          - Full setup: infra → secrets → gitops → deploy → sync"
+	@echo ""
+	@echo "Phase 1: Infrastructure"
+	@echo "  make infra        - Run icsp, cpu, gpu (no pull-secret, handled by secrets)"
+	@echo "  make icsp         - Create ICSP (configure registry mirror)"
 	@echo "  make gpu          - Create GPU MachineSet (waits for node Ready)"
 	@echo "  make cpu          - Create CPU MachineSet m6a.4xlarge (waits for node Ready)"
-	@echo "  make setup        - Run all above (except dedicate-masters)"
 	@echo "  make dedicate-masters - Remove worker role from masters (optional)"
 	@echo ""
-	@echo "Credentials: Copy .env.example to .env and fill in values"
-	@echo "             Or: QUAY_USER=x QUAY_TOKEN=y make pull-secret"
+	@echo "Phase 2: Secrets"
+	@echo "  make secrets      - Setup pull-secret (auto-detects mode)"
+	@echo "                      Mode A: QUAY_USER/QUAY_TOKEN set → manual credentials"
+	@echo "                      Mode B: Bootstrap repo access → External Secrets"
 	@echo ""
-	@echo "Bootstrap GitOps:"
+	@echo "Phase 3: GitOps"
 	@echo "  make gitops       - Install GitOps operator + ArgoCD (waits for ready)"
+	@echo ""
+	@echo "Phase 4-5: Deploy and Sync"
 	@echo "  make deploy       - Deploy root app (creates apps with sync DISABLED)"
-	@echo "  make bootstrap    - Run gitops + deploy"
-	@echo "  make sync         - Sync all apps one-by-one in dependency order (RECOMMENDED)"
+	@echo "  make sync         - Sync all apps one-by-one in dependency order"
 	@echo "  make sync-app APP=<name> - Sync a single app (e.g., APP=nfd)"
+	@echo ""
+	@echo "Shortcuts:"
+	@echo "  make setup        - Run infra + secrets (pre-GitOps setup)"
+	@echo "  make bootstrap    - Run gitops + deploy"
 	@echo ""
 	@echo "Validation:"
 	@echo "  make check        - Verify cluster connection"
@@ -51,11 +60,8 @@ help:
 	@echo "  make demos-delete - Remove demos ApplicationSet and apps"
 	@echo ""
 	@echo "Cleanup:"
-	@echo "  make undeploy     - Remove ArgoCD apps with cascade deletion (keeps GitOps)"
-	@echo "  make clean        - Full cleanup including pre-installed operators"
-	@echo ""
-	@echo "Autonomous:"
-	@echo "  make all          - Run everything (setup + bootstrap)"
+	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
+	@echo "  make undeploy     - Remove ArgoCD apps only (keeps GitOps operator)"
 	@echo ""
 	@echo "Scaling:"
 	@echo "  make scale NAME=<machineset> REPLICAS=<N|+N|-N>"
@@ -80,18 +86,23 @@ gpu:
 cpu:
 	@scripts/create-cpu-machineset.sh
 
-# Pre-GitOps: Pull Secret
-pull-secret:
-	@scripts/add-pull-secret.sh
-
-# Pre-GitOps: ICSP (triggers node restart, waits for MCP update)
+# Pre-GitOps: ICSP (configure registry mirror)
 icsp:
 	@scripts/create-icsp.sh
 
-# All pre-GitOps setup (pull-secret, icsp, workers)
+# Infrastructure setup (icsp, workers - no pull-secret, handled by secrets target)
 # Each script waits for its resources to be ready before returning
 # CPU before GPU - cheaper instances provision faster
-setup: pull-secret icsp cpu gpu
+infra: icsp cpu gpu
+	@echo ""
+	@echo "Infrastructure setup complete!"
+
+# Secrets - auto-detects mode (manual credentials or External Secrets)
+secrets:
+	@scripts/setup-secrets.sh
+
+# All pre-GitOps setup (infra + secrets)
+setup: infra secrets
 	@echo ""
 	@echo "Pre-GitOps setup complete!"
 
@@ -115,6 +126,7 @@ validate:
 	@scripts/validate.sh
 
 # Full autonomous run
+# Workflow: setup (infra + secrets) → bootstrap (gitops + deploy) → sync
 all: setup bootstrap sync
 	@echo ""
 	@echo "Full setup complete!"

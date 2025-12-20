@@ -25,6 +25,14 @@ fi
 
 log_info "Connected to: $(oc whoami --show-server)"
 
+# Check if ExternalSecret is managing pull-secret
+if oc get externalsecret pull-secret -n openshift-config &>/dev/null; then
+    log_info "ExternalSecret is managing pull-secret. Skipping manual update."
+    log_info "To use manual mode, delete the ExternalSecret first:"
+    log_info "  oc delete externalsecret pull-secret -n openshift-config"
+    exit 0
+fi
+
 TMPFILE=$(mktemp)
 trap "rm -f $TMPFILE" EXIT
 

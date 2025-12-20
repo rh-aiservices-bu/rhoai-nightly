@@ -87,6 +87,18 @@ delete_app_with_cascade() {
     fi
 }
 
+disable_applicationsets() {
+    log_step "Disabling ApplicationSets (prevents app recreation)..."
+    local appsets
+    appsets=$(oc get applicationsets.argoproj.io -n openshift-gitops -o name 2>/dev/null || true)
+
+    for appset in $appsets; do
+        local name="${appset#applicationset.argoproj.io/}"
+        log_info "Disabling: $name"
+        run_cmd "oc patch $appset -n openshift-gitops --type=json -p='[{\"op\":\"replace\",\"path\":\"/spec/generators\",\"value\":[]}]' 2>/dev/null || true"
+    done
+}
+
 delete_applicationsets() {
     log_step "Deleting ArgoCD applicationsets..."
     run_cmd "oc delete applicationsets.argoproj.io --all -n openshift-gitops --ignore-not-found 2>/dev/null || true"
@@ -132,7 +144,10 @@ main() {
 
     echo ""
 
-    # Step 1: Delete applications in reverse dependency order
+    # Step 1: Disable ApplicationSets (prevents app recreation during deletion)
+    disable_applicationsets
+
+    # Step 2: Delete applications in reverse dependency order
     # ArgoCD cascade deletion handles resource cleanup
     log_step "Deleting applications in dependency order..."
     for app in "${CLEANUP_ORDER[@]}"; do
@@ -140,7 +155,7 @@ main() {
         echo ""
     done
 
-    # Step 2: Delete any remaining applications not in our list
+    # Step 3: Delete any remaining applications not in our list
     local remaining
     remaining=$(oc get applications.argoproj.io -n openshift-gitops -o name 2>/dev/null || true)
     if [[ -n "$remaining" ]]; then
@@ -151,10 +166,10 @@ main() {
         done
     fi
 
-    # Step 3: Delete applicationsets
+    # Step 4: Delete applicationsets
     delete_applicationsets
 
-    # Step 4: Clean up any remaining namespaces
+    # Step 5: Clean up any remaining namespaces
     cleanup_namespaces
 
     echo ""

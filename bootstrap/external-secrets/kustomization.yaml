@@ -1,5 +1,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# External Secrets ClusterSecretStore for AWS Secrets Manager
+# Only apply this if you have access to the bootstrap repo with AWS credentials
+#
+# Prerequisites:
+#   - external-secrets-operator installed (via GitOps)
+#   - awssm-secret created in external-secrets namespace (from bootstrap repo)
+#
+# Usage:
+#   oc apply -k bootstrap/external-secrets/
+
 resources:
+  - cluster-secret-store.yaml
   - pull-secret-external.yaml

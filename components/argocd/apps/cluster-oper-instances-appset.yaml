@@ -14,6 +14,11 @@ spec:
         elements:
           - cluster: local
             values:
+              name: instance-external-secrets
+              path: components/instances/external-secrets-instance
+              namespace: openshift-gitops
+          - cluster: local
+            values:
               name: instance-nfd
               path: components/instances/nfd-instance/overlays/nvidia
               namespace: openshift-gitops
@@ -46,11 +51,6 @@ spec:
             values:
               name: instance-nfs
               path: components/instances/nfs-instance/base
-              namespace: openshift-gitops
-          - cluster: local
-            values:
-              name: instance-external-secrets
-              path: components/instances/external-secrets-instance
               namespace: openshift-gitops
   template:
     metadata:

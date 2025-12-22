@@ -90,14 +90,19 @@ if git ls-remote "$BOOTSTRAP_REPO" &>/dev/null 2>&1; then
     done
     echo ""
 
-    # Install External Secrets Instance (ArgoCD will adopt later)
-    log_step "Installing External Secrets Instance..."
-    oc apply -k "$REPO_ROOT/components/instances/external-secrets-instance/"
-
     # Wait for External Secrets CRDs to be available
     log_info "Waiting for External Secrets CRDs..."
     oc wait --for=condition=Established crd/externalsecrets.external-secrets.io --timeout=60s 2>/dev/null || true
     oc wait --for=condition=Established crd/clustersecretstores.external-secrets.io --timeout=60s 2>/dev/null || true
+    oc wait --for=condition=Established crd/operatorconfigs.operator.external-secrets.io --timeout=60s 2>/dev/null || true
+
+    # Install External Secrets Instance (creates OperatorConfig which deploys controller + webhook)
+    log_step "Installing External Secrets Instance..."
+    oc apply -k "$REPO_ROOT/components/instances/external-secrets-instance/"
+
+    # Wait for webhook to be ready
+    log_info "Waiting for External Secrets webhook..."
+    oc wait --for=condition=Available deployment/cluster-external-secrets-webhook -n external-secrets --timeout=120s 2>/dev/null || true
 
     # Wait for ClusterSecretStore to be ready
     log_info "Waiting for ClusterSecretStore to be ready..."
@@ -123,6 +128,9 @@ if git ls-remote "$BOOTSTRAP_REPO" &>/dev/null 2>&1; then
 
     log_info "Cloning $BOOTSTRAP_REPO (branch: $BOOTSTRAP_BRANCH)..."
     git clone --depth 1 --branch "$BOOTSTRAP_BRANCH" "$BOOTSTRAP_REPO" "$TMPDIR/bootstrap" 2>/dev/null
+
+    # Create namespace for AWS credentials (idempotent)
+    oc create namespace external-secrets --dry-run=client -o yaml | oc apply -f -
 
     log_info "Applying AWS credentials from $BOOTSTRAP_SECRETS_PATH..."
     oc apply -k "$TMPDIR/bootstrap/$BOOTSTRAP_SECRETS_PATH"

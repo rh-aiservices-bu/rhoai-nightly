@@ -23,7 +23,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 # Used by sync-apps.sh
 SYNC_ORDER=(
     # Phase 1: Foundation (no dependencies)
-    "external-secrets-operator"   # Early - needed for secret management
+    "external-secrets-operator"
     "instance-external-secrets"
     "nfd"
     "instance-nfd"

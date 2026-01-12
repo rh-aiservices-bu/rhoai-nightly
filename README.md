@@ -8,9 +8,8 @@ Deploy RHOAI 3.2 nightly builds using GitOps on OpenShift.
 
 Order **AWS with OpenShift Open Environment** from [demo.redhat.com](https://catalog.demo.redhat.com/):
 
-- Recommended to allocate 3 master nodes and 3 worker nodes
-- Select region with GPU availability (us-east-2 recommended)
-- Wait for provisioning email with credentials
+- Recommended to allocate **3 master nodes** and **3 worker nodes**
+- Wait for provisioning to complete
 
 ### 2. Login
 

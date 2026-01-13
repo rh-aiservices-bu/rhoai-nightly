@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -48,7 +48,8 @@ help:
 	@echo "  make check        - Verify cluster connection"
 	@echo "  make status       - Show ArgoCD application status"
 	@echo "  make validate     - Full cluster validation"
-	@echo "  make refresh      - Force pull latest nightly images"
+	@echo "  make refresh      - Refresh all apps from git (hard refresh, no sync)"
+	@echo "  make restart-catalog - Restart catalog pod and operator (force image pull)"
 	@echo ""
 	@echo "ArgoCD Sync Control:"
 	@echo "  make sync-disable - Disable auto-sync on all apps (for manual changes)"
@@ -152,9 +153,20 @@ configure-repo:
 scale:
 	@scripts/scale-machineset.sh --name "$(NAME)" --replicas "$(REPLICAS)"
 
-# Force refresh of nightly images
+# GitOps refresh - pull latest from git without triggering sync
+# Use this to update ArgoCD's view of git state
 refresh:
-	@echo "Refreshing RHOAI nightly images..."
+	@echo "Refreshing all apps from git (hard refresh)..."
+	@oc get applications.argoproj.io -n openshift-gitops -o name | \
+	  xargs -I {} oc annotate {} -n openshift-gitops argocd.argoproj.io/refresh=hard --overwrite
+	@echo "All apps refreshed from git."
+	@echo "Apps will show OutOfSync if git differs from cluster."
+	@echo "Run 'make sync' to apply changes, or 'make status' to check."
+
+# Restart catalog and operator pods to force image pull
+# Use after updating catalog image and syncing from git
+restart-catalog:
+	@echo "Restarting RHOAI catalog and operator pods..."
 	@echo "Restarting catalog pod..."
 	@oc delete pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly 2>/dev/null || true
 	@echo "Waiting for catalog pod to restart..."
@@ -163,7 +175,7 @@ refresh:
 	@echo "Restarting RHOAI operator..."
 	@oc delete pod -n redhat-ods-operator -l name=rhods-operator 2>/dev/null || true
 	@echo ""
-	@echo "Refresh initiated! Operator will reconcile with latest images."
+	@echo "Pods restarted. Operator will reconcile with latest images."
 	@echo "Monitor with: oc get pods -n redhat-ods-operator -w"
 
 # Sync all apps one-by-one in dependency order (RECOMMENDED)
@@ -193,8 +205,8 @@ sync-enable:
 	@oc get applications.argoproj.io -n openshift-gitops -o name | xargs -I {} oc patch {} -n openshift-gitops --type=merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
 	@echo "Auto-sync re-enabled."
 
-# Refresh and sync all apps (one-time sync, does not change auto-sync setting)
-# Use when auto-sync is disabled and you want to pull latest from git
+# Refresh from git AND sync all apps (one-time, does not change auto-sync setting)
+# Use when auto-sync is disabled and you want to apply latest from git
 refresh-apps:
 	@echo "Refreshing all apps from git..."
 	@oc get applications.argoproj.io -n openshift-gitops -o name | \

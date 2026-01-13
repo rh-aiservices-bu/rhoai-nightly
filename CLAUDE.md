@@ -161,13 +161,16 @@ make validate        # Full cluster validation
 ### Maintenance Operations
 
 ```bash
-make refresh         # Force pull latest RHOAI nightly images
-                     # Restarts catalog pod and RHOAI operator
+make refresh         # GitOps refresh - pull latest from git (no sync)
+                     # Use to see what changed in git vs cluster
+
+make restart-catalog # Restart catalog pod and RHOAI operator
+                     # Use after syncing new catalog image from git
 
 make sync-disable    # Disable ArgoCD auto-sync (for manual changes)
 make sync-enable     # Re-enable ArgoCD auto-sync
-make refresh-apps    # Refresh and sync all apps (one-time, keeps current sync setting)
-                     # Use when auto-sync is disabled to pull latest from git
+make refresh-apps    # Refresh from git AND sync all apps (one-time)
+                     # Use when auto-sync is disabled to apply latest from git
 
 make scale NAME=<machineset> REPLICAS=<N|+N|-N>
                      # Scale a MachineSet
@@ -480,8 +483,8 @@ The `.gitignore` file is configured to prevent common secret files from being co
 - **Debug**: `oc get applicationsets -n openshift-gitops -o yaml`
 
 **Problem**: RHOAI operator stuck in "Installing"
-- **Cause**: Catalog pod may need refresh
-- **Solution**: Run `make refresh` to restart catalog and operator
+- **Cause**: Catalog pod may need restart to pull new image
+- **Solution**: Run `make restart-catalog` to restart catalog and operator pods
 - **Debug**: `oc get pods -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly`
 
 **Problem**: "error: Unknown command" when running make targets

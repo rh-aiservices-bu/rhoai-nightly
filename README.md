@@ -107,7 +107,8 @@ make validate # Full validation
 ## Other Commands
 
 ```bash
-make refresh                             # Force pull latest nightly images
+make refresh                             # GitOps refresh - pull latest from git (no sync)
+make restart-catalog                     # Restart catalog pod and operator (force image pull)
 make scale NAME=<machineset> REPLICAS=N  # Scale a MachineSet
 make dedicate-masters                    # Remove worker role from masters
 ```
@@ -120,7 +121,7 @@ After `make sync`, apps have auto-sync **ON** and will self-heal from git.
 make sync-disable                        # Disable auto-sync (for manual changes)
 make sync-enable                         # Re-enable auto-sync
 make sync-app APP=<name>                 # Sync single app + enable auto-sync on it
-make refresh-apps                        # Refresh and sync all apps (one-time, keeps current sync setting)
+make refresh-apps                        # Refresh from git AND sync all apps (one-time)
 ```
 
 ## Adding or Modifying Components

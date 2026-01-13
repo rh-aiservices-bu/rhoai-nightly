@@ -8,8 +8,9 @@
 set -euo pipefail
 
 echo "ArgoCD Applications:"
-oc get applications -n openshift-gitops 2>/dev/null || echo "ArgoCD not installed"
+# Use full resource name to avoid conflict with app.k8s.io/v1beta1 Application CRD
+oc get applications.argoproj.io -n openshift-gitops 2>/dev/null || echo "ArgoCD not installed"
 echo ""
 
 echo "ApplicationSets:"
-oc get applicationsets -n openshift-gitops 2>/dev/null || echo "No ApplicationSets"
+oc get applicationsets.argoproj.io -n openshift-gitops 2>/dev/null || echo "No ApplicationSets"

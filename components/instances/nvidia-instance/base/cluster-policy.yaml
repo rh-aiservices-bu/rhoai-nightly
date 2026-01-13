@@ -31,10 +31,6 @@ spec:
     default: false
     enabled: true
   driver:
-    # Pin driver version for stability
-    version: "580.95.05"
-    repository: "nvcr.io/nvidia"
-    image: "driver"
     licensingConfig:
       nlsEnabled: true
       secretName: ''

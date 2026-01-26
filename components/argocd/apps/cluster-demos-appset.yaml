@@ -25,7 +25,7 @@ spec:
       project: default
       syncPolicy: {}
       source:
-        repoURL: https://github.com/cfchase/rhoai-nightly
+        repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
         targetRevision: main
         path: "{{values.path}}"
       destination:

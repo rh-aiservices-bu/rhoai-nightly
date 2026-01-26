@@ -9,7 +9,7 @@
 #   ./deploy-apps.sh [OPTIONS]
 #
 # Options:
-#   --repo-url URL    Git repository URL (default: https://github.com/cfchase/rhoai-nightly)
+#   --repo-url URL    Git repository URL (default: https://github.com/rh-aiservices-bu/rhoai-nightly)
 #   --branch BRANCH   Git branch (default: main)
 #   --dry-run         Preview without applying
 #
@@ -34,7 +34,7 @@ log_step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Defaults (can be overridden by env vars or CLI args)
-REPO_URL="${GITOPS_REPO_URL:-https://github.com/cfchase/rhoai-nightly}"
+REPO_URL="${GITOPS_REPO_URL:-https://github.com/rh-aiservices-bu/rhoai-nightly}"
 BRANCH="${GITOPS_BRANCH:-main}"
 DRY_RUN=false
 
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 Usage: $0 [OPTIONS]
 
 Options:
-  --repo-url URL    Git repository URL (default: https://github.com/cfchase/rhoai-nightly)
+  --repo-url URL    Git repository URL (default: https://github.com/rh-aiservices-bu/rhoai-nightly)
   --branch BRANCH   Git branch (default: main)
   --dry-run         Preview without applying
 

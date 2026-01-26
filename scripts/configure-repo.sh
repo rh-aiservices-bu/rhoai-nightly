@@ -6,7 +6,7 @@
 #   ./configure-repo.sh
 #
 # Environment variables (can also be set in .env):
-#   GITOPS_REPO_URL  - Git repository URL (default: https://github.com/cfchase/rhoai-nightly)
+#   GITOPS_REPO_URL  - Git repository URL (default: https://github.com/rh-aiservices-bu/rhoai-nightly)
 #   GITOPS_BRANCH    - Git branch (default: main)
 
 set -euo pipefail
@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Defaults
-GITOPS_REPO_URL="${GITOPS_REPO_URL:-https://github.com/cfchase/rhoai-nightly}"
+GITOPS_REPO_URL="${GITOPS_REPO_URL:-https://github.com/rh-aiservices-bu/rhoai-nightly}"
 GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
 
 # Colors

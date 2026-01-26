@@ -4,7 +4,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.2 Nightly** builds on OpenShift clusters. It follows a hybrid approach:
+This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.x Nightly** builds on OpenShift clusters. It follows a hybrid approach:
 
 - **Pre-GitOps Scripts**: Shell scripts for initial cluster setup (GPU nodes, pull secrets, ICSP)
 - **GitOps Deployment**: ArgoCD ApplicationSets that automatically sync components from git
@@ -34,6 +34,7 @@ rhoai-nightly/
 │   ├── gpu-machineset/                  # GPU MachineSet templates
 │   ├── cpu-machineset/                  # CPU MachineSet templates
 │   ├── icsp/                            # ImageContentSourcePolicy
+│   ├── external-secrets/                # ExternalSecret for pull-secret (Merge mode)
 │   └── rhoaibu-cluster-nightly/         # Cluster-specific config
 │
 ├── clusters/                             # Cluster definitions
@@ -218,6 +219,55 @@ CPU_AZ=                          # Auto-detected if empty
 # Optional: GitOps configuration (for forks)
 GITOPS_REPO_URL=https://github.com/your-username/rhoai-nightly
 GITOPS_BRANCH=main
+```
+
+## Pull Secret Management
+
+The cluster pull-secret can be managed in two ways:
+
+### Manual Mode (QUAY_USER/QUAY_TOKEN set)
+
+When `QUAY_USER` and `QUAY_TOKEN` are set in `.env`:
+- `scripts/add-pull-secret.sh` directly patches the cluster pull-secret
+- Adds `quay.io/rhoai` credentials to the existing pull-secret
+- Script is idempotent - safe to re-run
+
+### External Secrets Mode (No credentials, bootstrap repo access)
+
+When credentials are not set but user has access to the private bootstrap repo:
+- External Secrets Operator is installed
+- ClusterSecretStore connects to AWS Secrets Manager
+- ExternalSecret syncs pull-secret from AWS
+
+**Key configuration in `bootstrap/external-secrets/pull-secret-external.yaml`:**
+
+```yaml
+spec:
+  target:
+    name: pull-secret
+    creationPolicy: Merge  # Critical: Merge into existing secret
+```
+
+**Why `creationPolicy: Merge`?**
+- `Owner` (default): ExternalSecret owns the secret; deleting ExternalSecret cascade-deletes the pull-secret
+- `Merge`: ExternalSecret merges data into existing pull-secret; secret survives ExternalSecret deletion
+
+This allows seamless switching between modes without losing credentials.
+
+### Switching Modes
+
+**From External Secrets to Manual:**
+```bash
+# ExternalSecret will be ignored when QUAY_USER/QUAY_TOKEN are set
+# The script detects ExternalSecret and skips if present, or you can delete it:
+oc delete externalsecret pull-secret -n openshift-config
+make pull-secret  # Uses manual mode
+```
+
+**From Manual to External Secrets:**
+```bash
+# Clear credentials from .env, ensure bootstrap repo access
+make pull-secret  # Detects no credentials, uses External Secrets
 ```
 
 ## GitOps Patterns
@@ -579,6 +629,7 @@ oc get mcp  # MachineConfigPool status
 | `CLAUDE.md` | AI assistant guidance (this file) |
 | `scripts/*.sh` | Pre-GitOps setup automation scripts |
 | `bootstrap/*/kustomization.yaml` | Bootstrap resource definitions |
+| `bootstrap/external-secrets/pull-secret-external.yaml` | ExternalSecret with Merge policy for pull-secret |
 | `clusters/base/kustomization.yaml` | Root cluster configuration |
 | `components/argocd/apps/*.yaml` | ApplicationSet definitions |
 | `components/operators/*/kustomization.yaml` | Operator subscriptions |
@@ -586,7 +637,8 @@ oc get mcp  # MachineConfigPool status
 
 ## Related Repositories
 
-- **Parent CI Repository**: [rhoai-ci](https://github.com/cfchase/rhoai-ci) - Contains Jenkins CI/CD, Robot Framework tests, and Ansible collections
+- **This Repository**: [rh-aiservices-bu/rhoai-nightly](https://github.com/rh-aiservices-bu/rhoai-nightly) - GitOps deployment for RHOAI nightly builds
+- **Bootstrap Repository**: [rh-aiservices-bu/rh-aiservices-bu-bootstrap](https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap) - Private bootstrap repo with External Secrets configuration
 - **Upstream Catalog**: [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) - Community GitOps catalog for OpenShift operators
 - **RHOAI Documentation**: [Red Hat OpenShift AI docs](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
 

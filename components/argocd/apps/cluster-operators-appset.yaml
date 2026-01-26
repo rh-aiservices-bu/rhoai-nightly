@@ -11,7 +11,7 @@ spec:
     applicationsSync: create-only
   generators:
     - git:
-        repoURL: https://github.com/cfchase/rhoai-nightly
+        repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
         revision: main
         directories:
           - path: components/operators/*
@@ -27,7 +27,7 @@ spec:
           jsonPointers:
             - /spec/installPlanApproval
       source:
-        repoURL: https://github.com/cfchase/rhoai-nightly
+        repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
         targetRevision: main
         path: "{{path}}"
       destination:

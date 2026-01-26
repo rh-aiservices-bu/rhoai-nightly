@@ -1,6 +1,6 @@
-# RHOAI 3.2 Nightly GitOps
+# RHOAI 3.x Nightly GitOps
 
-Deploy RHOAI 3.2 nightly builds using GitOps on OpenShift.
+Deploy RHOAI 3.x nightly builds using GitOps on OpenShift.
 
 ## Quick Start
 

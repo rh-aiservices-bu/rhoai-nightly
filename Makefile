@@ -1,4 +1,4 @@
-# Makefile for RHOAI 3.2 Nightly GitOps
+# Makefile for RHOAI 3.x Nightly GitOps
 #
 # Default workflow: Run targets individually and verify each step
 # Autonomous workflow: make all
@@ -15,7 +15,7 @@ endif
 .DEFAULT_GOAL := all
 
 help:
-	@echo "RHOAI 3.2 Nightly GitOps"
+	@echo "RHOAI 3.x Nightly GitOps"
 	@echo ""
 	@echo "Autonomous (recommended for clean clusters):"
 	@echo "  make all          - Full setup: infra → secrets → gitops → deploy → sync"
@@ -131,7 +131,7 @@ validate:
 all: setup bootstrap sync
 	@echo ""
 	@echo "Full setup complete!"
-	@echo "RHOAI 3.2 nightly is now deploying."
+	@echo "RHOAI 3.x nightly is now deploying."
 
 # Remove ArgoCD apps with cascade deletion (keeps GitOps operator)
 # ArgoCD deletes managed resources before removing the app

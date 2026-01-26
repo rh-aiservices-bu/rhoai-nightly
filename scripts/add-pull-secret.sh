@@ -36,9 +36,15 @@ fi
 TMPFILE=$(mktemp)
 trap "rm -f $TMPFILE" EXIT
 
-log_info "Extracting current pull-secret..."
-oc get secret/pull-secret -n openshift-config \
-    --template='{{index .data ".dockerconfigjson" | base64decode}}' > "$TMPFILE"
+# Check if pull-secret exists, create empty dockerconfig if not
+if oc get secret/pull-secret -n openshift-config &>/dev/null; then
+    log_info "Extracting current pull-secret..."
+    oc get secret/pull-secret -n openshift-config \
+        --template='{{index .data ".dockerconfigjson" | base64decode}}' > "$TMPFILE"
+else
+    log_warn "pull-secret not found, creating new one..."
+    echo '{"auths":{}}' > "$TMPFILE"
+fi
 
 # Credentials should be passed via environment variables
 if [[ -z "${QUAY_USER:-}" ]] || [[ -z "${QUAY_TOKEN:-}" ]]; then
@@ -61,7 +67,13 @@ oc registry login --registry=quay.io/rhoai \
     --to="$TMPFILE"
 
 log_info "Updating cluster pull-secret..."
-oc set data secret/pull-secret -n openshift-config --from-file=.dockerconfigjson="$TMPFILE"
+if oc get secret/pull-secret -n openshift-config &>/dev/null; then
+    oc set data secret/pull-secret -n openshift-config --from-file=.dockerconfigjson="$TMPFILE"
+else
+    oc create secret generic pull-secret -n openshift-config \
+        --from-file=.dockerconfigjson="$TMPFILE" \
+        --type=kubernetes.io/dockerconfigjson
+fi
 
 log_info "Pull secret updated!"
 log_info "Verify with: oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq '.auths | keys'"

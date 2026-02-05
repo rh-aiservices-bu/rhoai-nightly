@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-configs sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -55,6 +55,9 @@ help:
 	@echo "  make sync-disable - Disable auto-sync on all apps (for manual changes)"
 	@echo "  make sync-enable  - Re-enable auto-sync on all apps"
 	@echo "  make refresh-apps - Refresh and sync all apps (one-time, keeps current sync setting)"
+	@echo ""
+	@echo "Cluster Configs (RBAC, Gateway, MaaS):"
+	@echo "  make sync-configs - Sync cluster config apps (config-rbac, config-gateway, config-maas)"
 	@echo ""
 	@echo "Demos (optional):"
 	@echo "  make demos        - Deploy demos ApplicationSet (ai-bu-shared namespace, etc.)"
@@ -230,6 +233,10 @@ dedicate-masters:
 	@oc label nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/worker- 2>/dev/null || true
 	@echo "Master nodes are now dedicated (no longer schedulable for regular workloads)"
 	@oc get nodes
+
+# Sync cluster config apps (RBAC, Gateway, MaaS)
+sync-configs:
+	@scripts/sync-configs.sh
 
 # Deploy demos ApplicationSet (optional)
 demos:

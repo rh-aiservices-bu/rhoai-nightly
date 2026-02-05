@@ -1,0 +1,11 @@
+- op: replace
+  path: /users
+  value:
+    - jdemoss
+    - cgoern
+    - azaalouk
+    - kecook
+    - jzarecki
+    - mfentane
+    - pedouble
+    - abellusc

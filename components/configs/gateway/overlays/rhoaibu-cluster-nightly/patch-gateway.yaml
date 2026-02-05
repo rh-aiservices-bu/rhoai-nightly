@@ -1,0 +1,6 @@
+- op: replace
+  path: /spec/listeners/0/hostname
+  value: inference-gateway.apps.bu-nightly-2.pmew.p1.openshiftapps.com
+- op: replace
+  path: /spec/listeners/0/tls/certificateRefs/0/name
+  value: bu-nightly-2-primary-cert-bundle-secret

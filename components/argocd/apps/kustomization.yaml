@@ -4,4 +4,5 @@ kind: Kustomization
 resources:
   - cluster-operators-appset.yaml
   - cluster-oper-instances-appset.yaml
+  - cluster-config-appset.yaml
   # demos appset is optional - use 'make demos' to deploy

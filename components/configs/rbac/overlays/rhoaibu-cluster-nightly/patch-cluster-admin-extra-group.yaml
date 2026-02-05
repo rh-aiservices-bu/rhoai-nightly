@@ -1,0 +1,8 @@
+- op: replace
+  path: /users
+  value:
+    - cchase
+    - jharmiso
+    - ckavili
+    - egranger
+    - rcarrata

@@ -1,0 +1,23 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  labels:
+    istio.io/rev: openshift-gateway
+  name: openshift-ai-inference
+  namespace: openshift-ingress
+spec:
+  gatewayClassName: openshift-ai-inference
+  listeners:
+    - allowedRoutes:
+        namespaces:
+          from: All
+      hostname: inference-gateway.apps.CLUSTER_DOMAIN
+      name: https
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - group: ''
+            kind: Secret
+            name: CLUSTER_TLS_SECRET
+        mode: Terminate

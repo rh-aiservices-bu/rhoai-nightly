@@ -4,4 +4,8 @@ resources:
   - namespace.yaml
   - kuadrant.yaml
   - authorino.yaml
-  - service-annotation.yaml
+
+# Note: service-annotation.yaml removed because:
+# 1. It's an incomplete Service (missing spec.ports)
+# 2. The Service is created by Authorino operator
+# 3. Use a post-sync hook or manual patch if cert annotation is needed

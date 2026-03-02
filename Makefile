@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo configure-rhoai scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -71,6 +71,8 @@ help:
 	@echo "Configuration (for forks):"
 	@echo "  make configure-repo - Update repo URLs in applicationsets"
 	@echo "                        Set GITOPS_REPO_URL and GITOPS_BRANCH in .env"
+	@echo "  make configure-rhoai - Update RHOAI channel and catalog image"
+	@echo "                         Set RHOAI_CHANNEL and RHOAI_CATALOG_IMAGE in .env"
 	@echo ""
 
 # Verify cluster connection
@@ -148,6 +150,10 @@ clean: undeploy
 # Configure repo URLs for forks
 configure-repo:
 	@scripts/configure-repo.sh
+
+# Configure RHOAI channel and catalog image
+configure-rhoai:
+	@scripts/configure-rhoai.sh
 
 # Scale a MachineSet
 scale:

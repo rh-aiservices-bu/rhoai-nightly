@@ -191,6 +191,37 @@ make configure-repo  # Update ApplicationSet repo URLs
                      # Set GITOPS_REPO_URL and GITOPS_BRANCH in .env
 ```
 
+### RHOAI Channel and Catalog Configuration
+
+To use a different RHOAI version or channel:
+
+```bash
+# Set in .env (or export directly)
+RHOAI_CHANNEL=ea-3.x
+RHOAI_CATALOG_IMAGE=quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly
+
+# Run configuration script (modifies YAML files)
+make configure-rhoai
+
+# Review and commit changes
+git diff
+git add -A && git commit -m "Configure RHOAI ea-3.x"
+git push
+
+# If ArgoCD is already running, refresh to apply changes
+make refresh-apps
+make restart-catalog  # Force catalog pod to pull new image
+```
+
+**Channel options:**
+- `fast-3.x` - Nightly builds (default)
+- `ea-3.x` - Early Access builds
+- `stable-3.x` - Stable releases
+
+**Catalog image examples:**
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.3-nightly` (3.3 nightly)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly` (3.4 EA)
+
 ## Configuration (.env file)
 
 Copy `.env.example` to `.env` and configure:
@@ -219,6 +250,10 @@ CPU_AZ=                          # Auto-detected if empty
 # Optional: GitOps configuration (for forks)
 GITOPS_REPO_URL=https://github.com/your-username/rhoai-nightly
 GITOPS_BRANCH=main
+
+# Optional: RHOAI operator configuration
+RHOAI_CHANNEL=fast-3.x                                        # Channel: fast-3.x, ea-3.x, stable-3.x
+RHOAI_CATALOG_IMAGE=quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.3-nightly  # Catalog image
 ```
 
 ## Pull Secret Management

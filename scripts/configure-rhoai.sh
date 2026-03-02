@@ -36,8 +36,8 @@ echo ""
 # Update patch-channel.yaml
 PATCH_CHANNEL="$REPO_ROOT/components/operators/rhoai-operator/base/patch-channel.yaml"
 if [[ -f "$PATCH_CHANNEL" ]]; then
-    # Replace any existing channel value (handles fast-3.x, ea-3.x, stable-3.x, etc.)
-    sed -i '' "s|value: [a-z]*-[0-9]\.[a-z0-9]*|value: $RHOAI_CHANNEL|g" "$PATCH_CHANNEL"
+    # Replace any existing channel value (handles fast-3.x, beta, alpha, stable, etc.)
+    sed -i '' "s|value: [a-z0-9.-]*$|value: $RHOAI_CHANNEL|g" "$PATCH_CHANNEL"
     log_info "Updated: $PATCH_CHANNEL"
 fi
 

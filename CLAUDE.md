@@ -191,36 +191,33 @@ make configure-repo  # Update ApplicationSet repo URLs
                      # Set GITOPS_REPO_URL and GITOPS_BRANCH in .env
 ```
 
-### RHOAI Channel and Catalog Configuration
+### RHOAI Version Configuration
 
-To use a different RHOAI version or channel:
+To change the RHOAI version, edit `components/operators/rhoai-operator/base/catalogsource.yaml` directly:
+
+```yaml
+# catalogsource.yaml - change the image tag
+spec:
+  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly
+  displayName: RHOAI 3.4 ea.2 Nightly
+```
+
+The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently `beta` for EA builds).
 
 ```bash
-# Set in .env (or export directly)
-RHOAI_CHANNEL=ea-3.x
-RHOAI_CATALOG_IMAGE=quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly
-
-# Run configuration script (modifies YAML files)
-make configure-rhoai
-
-# Review and commit changes
+# After editing, commit and push
 git diff
-git add -A && git commit -m "Configure RHOAI ea-3.x"
+git add -A && git commit -m "Update RHOAI catalog image"
 git push
 
-# If ArgoCD is already running, refresh to apply changes
+# If ArgoCD is already running, apply changes
 make refresh-apps
 make restart-catalog  # Force catalog pod to pull new image
 ```
 
-**Channel options:**
-- `fast-3.x` - Nightly builds (default)
-- `ea-3.x` - Early Access builds
-- `stable-3.x` - Stable releases
-
 **Catalog image examples:**
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.3-nightly` (3.3 nightly)
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly` (3.4 EA)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.1-nightly`
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly`
 
 ## Configuration (.env file)
 
@@ -251,9 +248,8 @@ CPU_AZ=                          # Auto-detected if empty
 GITOPS_REPO_URL=https://github.com/your-username/rhoai-nightly
 GITOPS_BRANCH=main
 
-# Optional: RHOAI operator configuration
-RHOAI_CHANNEL=fast-3.x                                        # Channel: fast-3.x, ea-3.x, stable-3.x
-RHOAI_CATALOG_IMAGE=quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.3-nightly  # Catalog image
+# RHOAI version: edit components/operators/rhoai-operator/base/catalogsource.yaml
+# See "RHOAI Version Configuration" section above
 ```
 
 ## Pull Secret Management

@@ -3,7 +3,7 @@
   value: Automatic
 - op: replace
   path: /spec/channel
-  value: fast-3.x
+  value: beta
 - op: replace
   path: /spec/source
   value: rhoai-catalog-nightly

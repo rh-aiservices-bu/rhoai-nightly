@@ -14,5 +14,5 @@ patches:
     patch: |-
       - op: replace
         path: /spec/image
-        # Pinned to Feb 5 build (3.3)
-        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.3@sha256:352e38780ecee1298e927e3bc28b9d307dada2bb65ff0faa185ab15c455065a6
+        # Pinned to Mar 11 build (3.4 EA2)
+        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2@sha256:c0177f06608f4d2244c4998d5d4aaa5e377843226360b476f48a1f17fba06247

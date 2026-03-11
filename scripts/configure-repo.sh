@@ -14,11 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Defaults (trim trailing whitespace from env vars)
+# Defaults
 GITOPS_REPO_URL="${GITOPS_REPO_URL:-https://github.com/rh-aiservices-bu/rhoai-nightly}"
-GITOPS_REPO_URL="${GITOPS_REPO_URL%"${GITOPS_REPO_URL##*[![:space:]]}"}"
 GITOPS_BRANCH="${GITOPS_BRANCH:-main}"
-GITOPS_BRANCH="${GITOPS_BRANCH%"${GITOPS_BRANCH##*[![:space:]]}"}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -35,8 +33,8 @@ log_info "Updating branch to: $GITOPS_BRANCH"
 for file in "$REPO_ROOT"/components/argocd/apps/*.yaml; do
     if [[ -f "$file" && "$file" != *"kustomization.yaml" ]]; then
         sed -i '' "s|repoURL: https://github.com/[^/]*/rhoai-nightly|repoURL: $GITOPS_REPO_URL|g" "$file"
-        sed -i '' "s|revision: .*$|revision: $GITOPS_BRANCH|g" "$file"
-        sed -i '' "s|targetRevision: .*$|targetRevision: $GITOPS_BRANCH|g" "$file"
+        sed -i '' "s|revision: main|revision: $GITOPS_BRANCH|g" "$file"
+        sed -i '' "s|targetRevision: main|targetRevision: $GITOPS_BRANCH|g" "$file"
         log_info "Updated: $file"
     fi
 done
@@ -45,7 +43,7 @@ done
 for file in "$REPO_ROOT"/clusters/overlays/rhoaibu-cluster-nightly/patch-*.yaml; do
     if [[ -f "$file" ]]; then
         sed -i '' "s|value: https://github.com/[^/]*/rhoai-nightly|value: $GITOPS_REPO_URL|g" "$file"
-        sed -i '' "/https:/!s|value: [^ ]*$|value: $GITOPS_BRANCH|g" "$file"
+        sed -i '' "s|value: main|value: $GITOPS_BRANCH|g" "$file"
         log_info "Updated: $file"
     fi
 done
@@ -54,7 +52,7 @@ done
 CLUSTER_CONFIG="$REPO_ROOT/bootstrap/rhoaibu-cluster-nightly/cluster-config-app.yaml"
 if [[ -f "$CLUSTER_CONFIG" ]]; then
     sed -i '' "s|repoURL: https://github.com/[^/]*/rhoai-nightly|repoURL: $GITOPS_REPO_URL|g" "$CLUSTER_CONFIG"
-    sed -i '' "s|targetRevision: .*$|targetRevision: $GITOPS_BRANCH|g" "$CLUSTER_CONFIG"
+    sed -i '' "s|targetRevision: main|targetRevision: $GITOPS_BRANCH|g" "$CLUSTER_CONFIG"
     log_info "Updated: $CLUSTER_CONFIG"
 fi
 

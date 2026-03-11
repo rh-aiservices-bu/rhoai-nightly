@@ -1,0 +1,45 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cluster-config-applicationset
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  syncPolicy:
+    applicationsSync: create-only
+  generators:
+    - list:
+        elements:
+          - cluster: local
+            values:
+              name: config-rbac
+              path: components/configs/rbac
+              namespace: openshift-gitops
+          - cluster: local
+            values:
+              name: config-gateway
+              path: components/configs/gateway
+              namespace: openshift-gitops
+          - cluster: local
+            values:
+              name: config-maas
+              path: components/configs/maas
+              namespace: openshift-gitops
+  template:
+    metadata:
+      name: "{{values.name}}"
+      annotations:
+        argocd.argoproj.io/compare-options: IgnoreExtraneous
+        argocd.argoproj.io/sync-options: Prune=false
+    spec:
+      project: default
+      syncPolicy: {}
+      source:
+        repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
+        targetRevision: clusters
+        path: "{{values.path}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: openshift-gitops

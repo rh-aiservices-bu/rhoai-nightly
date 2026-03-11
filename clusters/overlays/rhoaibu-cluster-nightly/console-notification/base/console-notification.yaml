@@ -1,0 +1,9 @@
+apiVersion: console.openshift.io/v1
+kind: ConsoleNotification
+metadata:
+  name: banner-nightly
+spec:
+  text: "RHOAI 3.3 Nightly Build - Feb 5, 2026"
+  location: BannerTop
+  color: "#FFF"
+  backgroundColor: "#0066CC"

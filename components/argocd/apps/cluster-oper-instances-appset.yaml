@@ -68,7 +68,7 @@ spec:
             - /spec/driver/licensingConfig/secretName
       source:
         repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
-        targetRevision: main
+        targetRevision: clusters
         path: "{{values.path}}"
       destination:
         server: https://kubernetes.default.svc

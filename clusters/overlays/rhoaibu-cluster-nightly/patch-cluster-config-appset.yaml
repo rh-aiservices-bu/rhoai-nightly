@@ -1,0 +1,12 @@
+- op: replace
+  path: /spec/template/spec/source/targetRevision
+  value: clusters
+- op: replace
+  path: /spec/generators/0/list/elements/0/values/path
+  value: components/configs/rbac/overlays/rhoaibu-cluster-nightly
+- op: replace
+  path: /spec/generators/0/list/elements/1/values/path
+  value: components/configs/gateway/overlays/rhoaibu-cluster-nightly
+- op: replace
+  path: /spec/generators/0/list/elements/2/values/path
+  value: components/configs/maas/overlays/rhoaibu-cluster-nightly

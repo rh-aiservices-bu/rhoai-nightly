@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete maas maas-uninstall
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -59,6 +59,10 @@ help:
 	@echo "Demos (optional):"
 	@echo "  make demos        - Deploy demos ApplicationSet (ai-bu-shared namespace, etc.)"
 	@echo "  make demos-delete - Remove demos ApplicationSet and apps"
+	@echo ""
+	@echo "MaaS (Models as a Service):"
+	@echo "  make maas         - Install MaaS (PostgreSQL, Gateway, Authorino TLS)"
+	@echo "  make maas-uninstall - Remove MaaS resources created by install-maas.sh"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
@@ -232,6 +236,13 @@ dedicate-masters:
 	@oc label nodes -l node-role.kubernetes.io/master node-role.kubernetes.io/worker- 2>/dev/null || true
 	@echo "Master nodes are now dedicated (no longer schedulable for regular workloads)"
 	@oc get nodes
+
+# Install MaaS (Models as a Service)
+maas:
+	@scripts/install-maas.sh
+
+maas-uninstall:
+	@scripts/uninstall-maas.sh
 
 # Deploy demos ApplicationSet (optional)
 demos:

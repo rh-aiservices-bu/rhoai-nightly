@@ -2,7 +2,7 @@
 name: install-rhoai
 description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases.
 argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--force]"
-allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*)
+allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*), Bash(for *), Bash(date *), AskUserQuestion
 ---
 
 # Install RHOAI on Connected Cluster

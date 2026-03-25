@@ -99,6 +99,11 @@ delete_operator_instances() {
     fi
 }
 
+
+# Pattern matching operators we install or their OLM dependencies.
+# Used to scope cleanup in shared namespaces like openshift-operators.
+OUR_OPERATOR_PATTERN="servicemesh|istio|rhcl|kuadrant|authorino|limitador|dns-operator|nfs-provisioner|external-secrets"
+
 delete_subscriptions_and_csvs() {
     log_step "Deleting operator subscriptions and CSVs..."
 
@@ -107,28 +112,46 @@ delete_subscriptions_and_csvs() {
             continue
         fi
 
-        # Delete all subscriptions in the namespace
-        local subs
-        subs=$(oc get subscriptions.operators.coreos.com -n "$ns" -o name 2>/dev/null || true)
-        if [[ -n "$subs" ]]; then
-            log_info "Deleting subscriptions in $ns"
-            for sub in $subs; do
-                run_cmd "oc delete $sub -n $ns --ignore-not-found 2>/dev/null || true"
-            done
-        fi
+        if [[ "$ns" == "openshift-operators" ]]; then
+            # Shared namespace — only delete operators we installed or their dependencies
+            local subs
+            subs=$(oc get subscriptions.operators.coreos.com -n "$ns" -o name 2>/dev/null | grep -E "$OUR_OPERATOR_PATTERN" || true)
+            if [[ -n "$subs" ]]; then
+                log_info "Deleting our subscriptions in $ns"
+                for sub in $subs; do
+                    run_cmd "oc delete $sub -n $ns --ignore-not-found 2>/dev/null || true"
+                done
+            fi
 
-        # Delete all CSVs in the namespace
-        local csvs
-        csvs=$(oc get clusterserviceversions.operators.coreos.com -n "$ns" -o name 2>/dev/null || true)
-        if [[ -n "$csvs" ]]; then
-            log_info "Deleting CSVs in $ns"
-            for csv in $csvs; do
-                run_cmd "oc delete $csv -n $ns --ignore-not-found 2>/dev/null || true"
-            done
-        fi
+            local csvs
+            csvs=$(oc get clusterserviceversions.operators.coreos.com -n "$ns" -o name 2>/dev/null | grep -E "$OUR_OPERATOR_PATTERN" || true)
+            if [[ -n "$csvs" ]]; then
+                log_info "Deleting our CSVs in $ns"
+                for csv in $csvs; do
+                    run_cmd "oc delete $csv -n $ns --ignore-not-found 2>/dev/null || true"
+                done
+            fi
+        else
+            # Dedicated namespace we created — safe to delete everything
+            local subs
+            subs=$(oc get subscriptions.operators.coreos.com -n "$ns" -o name 2>/dev/null || true)
+            if [[ -n "$subs" ]]; then
+                log_info "Deleting subscriptions in $ns"
+                for sub in $subs; do
+                    run_cmd "oc delete $sub -n $ns --ignore-not-found 2>/dev/null || true"
+                done
+            fi
 
-        # Delete OperatorGroups (skip openshift-operators which has system global-operators)
-        if [[ "$ns" != "openshift-operators" ]]; then
+            local csvs
+            csvs=$(oc get clusterserviceversions.operators.coreos.com -n "$ns" -o name 2>/dev/null | grep -v openshift-gitops || true)
+            if [[ -n "$csvs" ]]; then
+                log_info "Deleting CSVs in $ns"
+                for csv in $csvs; do
+                    run_cmd "oc delete $csv -n $ns --ignore-not-found 2>/dev/null || true"
+                done
+            fi
+
+            # Delete OperatorGroups (not in openshift-operators which has system global-operators)
             local ogs
             ogs=$(oc get operatorgroups.operators.coreos.com -n "$ns" -o name 2>/dev/null || true)
             if [[ -n "$ogs" ]]; then
@@ -139,27 +162,43 @@ delete_subscriptions_and_csvs() {
             fi
         fi
     done
+}
 
-    # Also check openshift-operators for Service Mesh
-    if oc get namespace openshift-operators &>/dev/null; then
-        local sm_subs
-        sm_subs=$(oc get subscriptions.operators.coreos.com -n openshift-operators -o name 2>/dev/null | grep -E "servicemesh|istio" || true)
-        if [[ -n "$sm_subs" ]]; then
-            log_info "Deleting Service Mesh subscriptions"
-            for sub in $sm_subs; do
-                run_cmd "oc delete $sub -n openshift-operators --ignore-not-found 2>/dev/null || true"
-            done
-        fi
+cleanup_orphaned_deployments() {
+    log_step "Cleaning up orphaned deployments in openshift-operators..."
 
-        local sm_csvs
-        sm_csvs=$(oc get clusterserviceversions.operators.coreos.com -n openshift-operators -o name 2>/dev/null | grep -E "servicemesh|istio" || true)
-        if [[ -n "$sm_csvs" ]]; then
-            log_info "Deleting Service Mesh CSVs"
-            for csv in $sm_csvs; do
-                run_cmd "oc delete $csv -n openshift-operators --ignore-not-found 2>/dev/null || true"
-            done
-        fi
+    if ! oc get namespace openshift-operators &>/dev/null; then
+        return
     fi
+
+    # After CSVs are deleted, OLM dependency operators may leave behind
+    # deployments that are no longer managed by any CSV.
+    # Known orphans: kuadrant-console-plugin, kuadrant-operator-controller-manager,
+    # authorino-operator, dns-operator-controller-manager, etc.
+    local deployments
+    deployments=$(oc get deployments -n openshift-operators -o name 2>/dev/null || true)
+
+    for deploy in $deployments; do
+        local name="${deploy#deployment.apps/}"
+
+        # Check if this deployment is owned by a CSV (managed by OLM)
+        local owner_csv
+        owner_csv=$(oc get "$deploy" -n openshift-operators \
+            -o jsonpath='{.metadata.ownerReferences[?(@.kind=="ClusterServiceVersion")].name}' 2>/dev/null || true)
+
+        if [[ -n "$owner_csv" ]]; then
+            # Owned by a CSV — check if that CSV still exists
+            if oc get csv "$owner_csv" -n openshift-operators &>/dev/null 2>&1; then
+                continue  # CSV exists, skip
+            fi
+        fi
+
+        # No owning CSV or CSV is gone — check if it matches operators we installed
+        if echo "$name" | grep -qE "$OUR_OPERATOR_PATTERN"; then
+            log_info "Deleting orphaned deployment: $name"
+            run_cmd "oc delete $deploy -n openshift-operators --ignore-not-found 2>/dev/null || true"
+        fi
+    done
 }
 
 cleanup_cluster_resources() {
@@ -211,7 +250,10 @@ main() {
     # Step 2: Delete any remaining subscriptions and CSVs (pre-installed operators)
     delete_subscriptions_and_csvs
 
-    # Step 3: Clean up cluster-scoped resources (CatalogSources)
+    # Step 3: Clean up orphaned deployments (left behind after CSV deletion)
+    cleanup_orphaned_deployments
+
+    # Step 4: Clean up cluster-scoped resources (CatalogSources)
     cleanup_cluster_resources
 
     echo ""

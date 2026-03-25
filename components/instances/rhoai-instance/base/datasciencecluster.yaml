@@ -18,7 +18,9 @@ spec:
       managementState: Managed
       nim:
         managementState: Managed
-      rawDeploymentServiceConfig: Headless
+      rawDeploymentServiceConfig: Headed
+      modelsAsService:
+        managementState: Managed
     kueue:
       defaultClusterQueueName: default
       defaultLocalQueueName: default

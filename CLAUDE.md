@@ -222,34 +222,6 @@ make configure-repo  # Update ApplicationSet repo URLs
                      # Set GITOPS_REPO_URL and GITOPS_BRANCH in .env
 ```
 
-### RHOAI Version Configuration
-
-To change the RHOAI version, edit `components/operators/rhoai-operator/base/catalogsource.yaml` directly:
-
-```yaml
-# catalogsource.yaml - change the image tag
-spec:
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly
-  displayName: RHOAI 3.4 ea.2 Nightly
-```
-
-The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently `beta` for EA builds).
-
-```bash
-# After editing, commit and push
-git diff
-git add -A && git commit -m "Update RHOAI catalog image"
-git push
-
-# If ArgoCD is already running, apply changes
-make refresh-apps
-make restart-catalog  # Force catalog pod to pull new image
-```
-
-**Catalog image examples:**
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.1-nightly`
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly`
-
 ## Configuration (.env file)
 
 Copy `.env.example` to `.env` and configure:
@@ -278,9 +250,6 @@ CPU_AZ=                          # Auto-detected if empty
 # Optional: GitOps configuration (for forks)
 GITOPS_REPO_URL=https://github.com/your-username/rhoai-nightly
 GITOPS_BRANCH=main
-
-# RHOAI version: edit components/operators/rhoai-operator/base/catalogsource.yaml
-# See "RHOAI Version Configuration" section above
 ```
 
 ## Pull Secret Management

@@ -77,8 +77,6 @@ help:
 	@echo "  make configure-repo - Update repo URLs in applicationsets"
 	@echo "                        Set GITOPS_REPO_URL and GITOPS_BRANCH in .env"
 	@echo ""
-	@echo "To change RHOAI version, edit components/operators/rhoai-operator/base/catalogsource.yaml"
-	@echo ""
 
 # Pre-GitOps: GPU MachineSet
 gpu:

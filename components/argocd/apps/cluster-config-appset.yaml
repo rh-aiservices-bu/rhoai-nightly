@@ -1,35 +1,35 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: cluster-operators-applicationset
+  name: cluster-config-applicationset
   namespace: openshift-gitops
   annotations:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   syncPolicy:
     applicationsSync: create-only
   generators:
-    - git:
-        repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
-        revision: clusters
-        directories:
-          - path: components/operators/*
+    - list:
+        elements:
+          - cluster: local
+            values:
+              name: config-rbac
+              path: components/configs/rbac
+              namespace: openshift-gitops
   template:
     metadata:
-      name: "{{path.basename}}"
+      name: "{{values.name}}"
+      annotations:
+        argocd.argoproj.io/compare-options: IgnoreExtraneous
+        argocd.argoproj.io/sync-options: Prune=false
     spec:
       project: default
       syncPolicy: {}
-      ignoreDifferences:
-        - group: operators.coreos.com
-          kind: Subscription
-          jsonPointers:
-            - /spec/installPlanApproval
       source:
         repoURL: https://github.com/rh-aiservices-bu/rhoai-nightly
         targetRevision: clusters
-        path: "{{path}}"
+        path: "{{values.path}}"
       destination:
         server: https://kubernetes.default.svc
         namespace: openshift-gitops

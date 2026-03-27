@@ -46,15 +46,17 @@ SYNC_ORDER=(
     # Phase 3: RHOAI
     "rhoai-operator"
     "instance-rhoai"
+
+    # Phase 4: Cluster Config (ApplicationSets, console notification)
+    "cluster-config"
 )
 
-# Cleanup order: reverse of SYNC_ORDER + cluster-config
+# Cleanup order: reverse of SYNC_ORDER
 # Used by desync.sh, undeploy.sh
 CLEANUP_ORDER=()
 for ((i=${#SYNC_ORDER[@]}-1; i>=0; i--)); do
     CLEANUP_ORDER+=("${SYNC_ORDER[i]}")
 done
-CLEANUP_ORDER+=("cluster-config")
 
 # Namespaces created by our GitOps deployment
 MANAGED_NAMESPACES=(

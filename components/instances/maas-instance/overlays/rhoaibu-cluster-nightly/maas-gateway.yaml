@@ -13,14 +13,14 @@ spec:
   gatewayClassName: openshift-default
   listeners:
     - name: http
-      hostname: "maas.apps.cluster-nfbcg.nfbcg.sandbox1053.opentlc.com"
+      hostname: "maas.apps.bu-nightly-2.pmew.p1.openshiftapps.com"
       port: 80
       protocol: HTTP
       allowedRoutes:
         namespaces:
           from: All
     - name: https
-      hostname: "maas.apps.cluster-nfbcg.nfbcg.sandbox1053.opentlc.com"
+      hostname: "maas.apps.bu-nightly-2.pmew.p1.openshiftapps.com"
       port: 443
       protocol: HTTPS
       allowedRoutes:
@@ -30,5 +30,5 @@ spec:
         certificateRefs:
           - group: ""
             kind: Secret
-            name: cert-manager-ingress-cert
+            name: bu-nightly-2-primary-cert-bundle-secret
         mode: Terminate

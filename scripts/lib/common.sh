@@ -73,14 +73,18 @@ MANAGED_NAMESPACES=(
 )
 
 # CRDs that must exist before syncing instance apps
-declare -A REQUIRED_CRDS=(
-    ["instance-nfd"]="nodefeaturediscoveries.nfd.openshift.io"
-    ["instance-nvidia"]="clusterpolicies.nvidia.com"
-    ["instance-lws"]="leaderworkersetoperators.operator.openshift.io"
-    ["instance-jobset"]="jobsetoperators.operator.openshift.io"
-    ["instance-kuadrant"]="kuadrants.kuadrant.io"
-    ["instance-rhoai"]="datascienceclusters.datasciencecluster.opendatahub.io"
-)
+# Uses a function instead of associative array for bash 3.2 compatibility
+get_required_crd() {
+    case "$1" in
+        instance-nfd)     echo "nodefeaturediscoveries.nfd.openshift.io" ;;
+        instance-nvidia)  echo "clusterpolicies.nvidia.com" ;;
+        instance-lws)     echo "leaderworkersetoperators.operator.openshift.io" ;;
+        instance-jobset)  echo "jobsetoperators.operator.openshift.io" ;;
+        instance-kuadrant) echo "kuadrants.kuadrant.io" ;;
+        instance-rhoai)   echo "datascienceclusters.datasciencecluster.opendatahub.io" ;;
+        *)                echo "" ;;
+    esac
+}
 
 # Operators we deploy (and their potential conflicts)
 # Format: "namespace|subscription_pattern|instance_kind|instance_name"
@@ -131,17 +135,21 @@ OPERATOR_NAMESPACES=(
 
 # CSV info for operator apps: app-name -> "csv-prefix|namespace"
 # Used by sync-apps.sh to wait for CSV to be Succeeded before proceeding
-declare -A OPERATOR_CSV_INFO=(
-    ["nfd"]="nfd|openshift-nfd"
-    ["nvidia-operator"]="gpu-operator-certified|nvidia-gpu-operator"
-    ["cert-manager"]="cert-manager-operator|cert-manager-operator"
-    ["openshift-service-mesh"]="servicemeshoperator3|openshift-operators"
-    ["kueue-operator"]="kueue-operator|openshift-kueue-operator"
-    ["leader-worker-set"]="leader-worker-set|openshift-lws-operator"
-    ["jobset-operator"]="jobset-operator|openshift-jobset-operator"
-    ["connectivity-link"]="rhcl-operator|openshift-operators"
-    ["rhoai-operator"]="rhods-operator|redhat-ods-operator"
-)
+# Uses a function instead of associative array for bash 3.2 compatibility
+get_operator_csv_info() {
+    case "$1" in
+        nfd)                    echo "nfd|openshift-nfd" ;;
+        nvidia-operator)        echo "gpu-operator-certified|nvidia-gpu-operator" ;;
+        cert-manager)           echo "cert-manager-operator|cert-manager-operator" ;;
+        openshift-service-mesh) echo "servicemeshoperator3|openshift-operators" ;;
+        kueue-operator)         echo "kueue-operator|openshift-kueue-operator" ;;
+        leader-worker-set)      echo "leader-worker-set|openshift-lws-operator" ;;
+        jobset-operator)        echo "jobset-operator|openshift-jobset-operator" ;;
+        connectivity-link)      echo "rhcl-operator|openshift-operators" ;;
+        rhoai-operator)         echo "rhods-operator|redhat-ods-operator" ;;
+        *)                      echo "" ;;
+    esac
+}
 
 # Check cluster connection
 check_cluster_connection() {
@@ -160,7 +168,8 @@ wait_for_csv() {
     local timeout="${2:-300}"
 
     # Check if this app has CSV info (is it an operator?)
-    local csv_info="${OPERATOR_CSV_INFO[$app]:-}"
+    local csv_info
+    csv_info="$(get_operator_csv_info "$app")"
     [[ -z "$csv_info" ]] && return 1  # Not an operator app
 
     local csv_prefix="${csv_info%%|*}"
@@ -198,6 +207,30 @@ wait_for_csv() {
         fi
 
         sleep 5
+    done
+}
+
+# Retry a command with exponential backoff on transient failures
+# Usage: retry [max_attempts] command [args...]
+#   retry 3 oc apply -f foo.yaml
+#   echo "$YAML" | retry 3 oc apply -f -
+retry() {
+    local max_attempts="${1:-3}"
+    shift
+    local attempt=1
+    local wait_time=5
+    while true; do
+        if "$@"; then
+            return 0
+        fi
+        if [[ $attempt -ge $max_attempts ]]; then
+            log_error "Command failed after $max_attempts attempts: $*"
+            return 1
+        fi
+        log_warn "Attempt $attempt/$max_attempts failed, retrying in ${wait_time}s..."
+        sleep "$wait_time"
+        attempt=$((attempt + 1))
+        wait_time=$((wait_time * 2))
     done
 }
 

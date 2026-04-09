@@ -19,7 +19,8 @@ HEALTH_TIMEOUT="${SYNC_TIMEOUT:-300}"
 
 wait_for_crd() {
     local app="$1"
-    local crd="${REQUIRED_CRDS[$app]:-}"
+    local crd
+    crd="$(get_required_crd "$app")"
 
     # No CRD requirement for this app
     [[ -z "$crd" ]] && return 0
@@ -140,8 +141,8 @@ sync_app() {
         local sync=$(oc get application.argoproj.io/"$app" -n openshift-gitops \
             -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
 
-        if [[ "$health" == "Healthy" && "$sync" == "Synced" ]]; then
-            log_info "$app: Synced + Healthy"
+        if [[ "$health" == "Healthy" ]] && [[ "$sync" == "Synced" || "$sync" == "OutOfSync" ]]; then
+            log_info "$app: $sync + Healthy"
             # For operator apps, also wait for CSV to be Succeeded
             if wait_for_csv "$app" "$HEALTH_TIMEOUT"; then
                 echo ""  # Clear the progress line
@@ -211,10 +212,10 @@ main() {
 
     log_info "Sync complete: $success processed, $skipped skipped/warnings"
 
-    # Show final status
+    # Show final status (retry on API server timeout)
     echo ""
     log_step "Final status:"
-    oc get applications.argoproj.io -n openshift-gitops \
+    retry 3 oc get applications.argoproj.io -n openshift-gitops \
         -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status
     echo ""
     log_info "Auto-sync is ON. Apps will self-heal from git."

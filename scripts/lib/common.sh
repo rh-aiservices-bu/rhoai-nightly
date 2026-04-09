@@ -40,8 +40,6 @@ SYNC_ORDER=(
     "instance-jobset"
     "connectivity-link"
     "instance-kuadrant"
-    "nfs-provisioner"
-    "instance-nfs"
 
     # Phase 3: RHOAI
     "rhoai-operator"

@@ -47,11 +47,6 @@ spec:
               name: instance-rhoai
               path: components/instances/rhoai-instance/base
               namespace: openshift-gitops
-          - cluster: local
-            values:
-              name: instance-nfs
-              path: components/instances/nfs-instance/base
-              namespace: openshift-gitops
   template:
     metadata:
       name: "{{values.name}}"

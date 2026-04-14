@@ -23,16 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+source "$SCRIPT_DIR/lib/common.sh"
 
 # Defaults (can be overridden by env vars or CLI args)
 INSTANCE_TYPE="${GPU_INSTANCE_TYPE:-${INSTANCE_TYPE:-g5.2xlarge}}"
@@ -96,8 +87,19 @@ fi
 
 log_info "Connected to: $(oc whoami --show-server)"
 
-# Check if GPU MachineSet already exists
-if oc get machineset -n openshift-machine-api -o name 2>/dev/null | grep -q gpu; then
+# Check if GPU MachineSet already exists with Ready node
+EXISTING_GPU_MS=$(oc get machineset -n openshift-machine-api -o name 2>/dev/null | grep gpu || true)
+if [[ -n "$EXISTING_GPU_MS" ]]; then
+    EXISTING_READY=$(oc get machineset -n openshift-machine-api -o jsonpath='{.items[*].status.readyReplicas}' 2>/dev/null | tr ' ' '\n' | grep -v '^$' | head -1 || echo "0")
+    # Get readyReplicas specifically from the GPU machineset
+    GPU_MS_NAME=$(echo "$EXISTING_GPU_MS" | head -1 | cut -d/ -f2)
+    EXISTING_READY=$(oc get machineset "$GPU_MS_NAME" -n openshift-machine-api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    if [[ "${EXISTING_READY:-0}" -ge 1 ]]; then
+        log_info "GPU MachineSet '$GPU_MS_NAME' already has $EXISTING_READY Ready replica(s), skipping"
+        oc get machineset -n openshift-machine-api | grep gpu
+        oc get nodes -l node-role.kubernetes.io/gpu
+        exit 0
+    fi
     log_info "GPU MachineSet already exists, will update if needed"
     oc get machineset -n openshift-machine-api | grep gpu
 fi
@@ -169,7 +171,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-echo "$MACHINESET_YAML" | oc apply -f -
+echo "$MACHINESET_YAML" | retry 3 oc apply -f -
 log_info "GPU MachineSet created: $MS_NAME"
 
 # Create autoscaling resources if enabled

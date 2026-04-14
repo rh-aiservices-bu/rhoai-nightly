@@ -55,6 +55,57 @@ wait_for_app_deletion() {
     log_info "$app: Deleted"
 }
 
+# Clean up OLM state (orphan CSVs, dependency subscriptions, stale InstallPlans)
+# in all operator namespaces. Run after ArgoCD apps are deleted.
+#
+# Why: ArgoCD cascade deletion removes Subscriptions, but OLM may not clean up
+# CSVs in time. OLM also creates dependency subscriptions (e.g. authorino,
+# dns-operator, limitador for connectivity-link) that ArgoCD doesn't manage.
+# Leftover CSVs/subscriptions cause "not referenced by a subscription" errors
+# on redeploy, poisoning OLM resolution for the entire namespace.
+cleanup_olm_state() {
+    log_step "Cleaning up OLM state (orphan CSVs, Subscriptions, InstallPlans)..."
+
+    for ns in "${OPERATOR_NAMESPACES[@]}"; do
+        if ! oc get namespace "$ns" &>/dev/null; then
+            continue
+        fi
+
+        # Delete all Subscriptions first (official OLM uninstall order)
+        # This includes OLM-created dependency subscriptions that ArgoCD doesn't manage
+        local subs
+        subs=$(oc get subscription -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+            | grep -v "openshift-gitops" || true)
+        if [[ -n "$subs" ]]; then
+            for sub in $subs; do
+                log_info "Deleting Subscription: $sub (namespace: $ns)"
+                run_cmd "oc delete subscription '$sub' -n '$ns' --ignore-not-found 2>/dev/null || true"
+            done
+        fi
+
+        # Delete all CSVs (except GitOps operator)
+        local csvs
+        csvs=$(oc get csv -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
+            | grep -v "openshift-gitops" || true)
+        if [[ -n "$csvs" ]]; then
+            for csv in $csvs; do
+                log_info "Deleting CSV: $csv (namespace: $ns)"
+                run_cmd "oc delete csv '$csv' -n '$ns' --ignore-not-found --timeout=60s 2>/dev/null || true"
+            done
+        fi
+
+        # Delete all InstallPlans
+        local ips
+        ips=$(oc get installplan -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null || true)
+        if [[ -n "$ips" ]]; then
+            for ip in $ips; do
+                log_info "Deleting InstallPlan: $ip (namespace: $ns)"
+                run_cmd "oc delete installplan '$ip' -n '$ns' --ignore-not-found 2>/dev/null || true"
+            done
+        fi
+    done
+}
+
 delete_app_with_cascade() {
     local app="$1"
 
@@ -169,7 +220,12 @@ main() {
     # Step 4: Delete applicationsets
     delete_applicationsets
 
-    # Step 5: Clean up any remaining namespaces
+    # Step 5: Clean up OLM state (orphan CSVs, dependency subscriptions, InstallPlans)
+    if [[ "$DRY_RUN" != "true" ]]; then
+        cleanup_olm_state
+    fi
+
+    # Step 6: Clean up any remaining namespaces
     cleanup_namespaces
 
     echo ""

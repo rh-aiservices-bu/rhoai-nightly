@@ -26,16 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+source "$SCRIPT_DIR/lib/common.sh"
 
 # Defaults (can be overridden by env vars or CLI args)
 INSTANCE_TYPE="${CPU_INSTANCE_TYPE:-${INSTANCE_TYPE:-m6a.4xlarge}}"
@@ -104,8 +95,17 @@ fi
 
 log_info "Connected to: $(oc whoami --show-server)"
 
-# Check if CPU worker MachineSet already exists
-if oc get machineset -n openshift-machine-api -o name 2>/dev/null | grep -q "cpu-worker"; then
+# Check if CPU worker MachineSet already exists with Ready node
+EXISTING_CPU_MS=$(oc get machineset -n openshift-machine-api -o name 2>/dev/null | grep "cpu-worker" || true)
+if [[ -n "$EXISTING_CPU_MS" ]]; then
+    CPU_MS_NAME=$(echo "$EXISTING_CPU_MS" | head -1 | cut -d/ -f2)
+    EXISTING_READY=$(oc get machineset "$CPU_MS_NAME" -n openshift-machine-api -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    if [[ "${EXISTING_READY:-0}" -ge 1 ]]; then
+        log_info "CPU worker MachineSet '$CPU_MS_NAME' already has $EXISTING_READY Ready replica(s), skipping"
+        oc get machineset -n openshift-machine-api | grep cpu-worker
+        oc get nodes -l node-role.kubernetes.io/cpu-worker
+        exit 0
+    fi
     log_info "CPU worker MachineSet already exists, will update if needed"
     oc get machineset -n openshift-machine-api | grep cpu-worker
 fi
@@ -177,7 +177,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-echo "$MACHINESET_YAML" | oc apply -f -
+echo "$MACHINESET_YAML" | retry 3 oc apply -f -
 log_info "CPU worker MachineSet created: $MS_NAME"
 
 # Create autoscaling resources if enabled

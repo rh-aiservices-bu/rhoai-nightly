@@ -5,8 +5,8 @@
 # Modes (in priority order):
 #   1. QUAY_USER/QUAY_TOKEN set → use manual mode (deletes ExternalSecret if exists)
 #   2. ExternalSecret already exists → update config (re-applies AWS creds + template)
-#   3. Has access to bootstrap repo → install External Secrets
-#   4. Pull-secret already has rhoai creds → skip
+#   3. Pull-secret already has rhoai creds → skip
+#   4. Has access to bootstrap repo → install External Secrets
 #   5. None of above → error
 #
 # Usage:
@@ -20,12 +20,45 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 # Bootstrap repo configuration (for AWS credentials only)
 # Override via .env: BOOTSTRAP_REPO, BOOTSTRAP_BRANCH
-BOOTSTRAP_REPO="${BOOTSTRAP_REPO:-https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap.git}"
+BOOTSTRAP_REPO_DEFAULT="https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap.git"
+BOOTSTRAP_REPO="${BOOTSTRAP_REPO:-$BOOTSTRAP_REPO_DEFAULT}"
 BOOTSTRAP_BRANCH="${BOOTSTRAP_BRANCH:-dev}"
 BOOTSTRAP_SECRETS_PATH="external-secrets/rhoaibu-cluster-nightly"
 
 # Local ExternalSecret template (not managed by ArgoCD to avoid conflict with manual mode)
 LOCAL_EXTERNAL_SECRET="$REPO_ROOT/bootstrap/external-secrets"
+
+# Auto-detect git protocol from origin remote and convert bootstrap URL to match
+# Only applies when using the default bootstrap URL (not user-overridden)
+auto_detect_git_protocol() {
+    if [[ "$BOOTSTRAP_REPO" != "$BOOTSTRAP_REPO_DEFAULT" ]]; then
+        return  # User set a custom URL, don't override
+    fi
+
+    local origin_url
+    origin_url=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || echo "")
+
+    if [[ "$origin_url" == git@* ]]; then
+        # Origin uses SSH — convert bootstrap URL to SSH
+        BOOTSTRAP_REPO="git@github.com:rh-aiservices-bu/rh-aiservices-bu-bootstrap.git"
+        log_info "Detected SSH git protocol, using SSH for bootstrap repo"
+    fi
+}
+
+# Test git access to bootstrap repo (non-blocking)
+# Returns 0 if accessible, 1 if not
+test_bootstrap_access() {
+    local url="$1"
+
+    if [[ "$url" == git@* ]]; then
+        # SSH: use ConnectTimeout to fail fast
+        GIT_SSH_COMMAND="ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new" \
+            git ls-remote "$url" &>/dev/null 2>&1
+    else
+        # HTTPS: disable terminal prompt to prevent hanging
+        GIT_TERMINAL_PROMPT=0 git ls-remote "$url" &>/dev/null 2>&1
+    fi
+}
 
 check_cluster_connection
 
@@ -45,6 +78,8 @@ fi
 if oc get externalsecret pull-secret -n openshift-config &>/dev/null; then
     log_info "ExternalSecret exists, updating configuration..."
 
+    auto_detect_git_protocol
+
     # Re-apply AWS credentials (in case BOOTSTRAP_REPO changed)
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
@@ -58,8 +93,18 @@ if oc get externalsecret pull-secret -n openshift-config &>/dev/null; then
     exit 0
 fi
 
-# Mode 3: External Secrets via bootstrap repo
-if git ls-remote "$BOOTSTRAP_REPO" &>/dev/null 2>&1; then
+# Mode 3: Pull-secret already has rhoai creds (check before bootstrap repo)
+if oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | \
+   base64 -d 2>/dev/null | grep -q "quay.io/rhoai"; then
+    log_info "Pull-secret already has quay.io/rhoai credentials"
+    exit 0
+fi
+
+# Mode 4: External Secrets via bootstrap repo
+auto_detect_git_protocol
+
+log_info "Testing access to bootstrap repo: $BOOTSTRAP_REPO"
+if test_bootstrap_access "$BOOTSTRAP_REPO"; then
     log_info "No credentials set, using External Secrets from bootstrap repo"
 
     # Install External Secrets Operator (ArgoCD will adopt later)
@@ -170,19 +215,24 @@ if git ls-remote "$BOOTSTRAP_REPO" &>/dev/null 2>&1; then
     done
 fi
 
-# Mode 4: Pull-secret already has rhoai creds
-if oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | \
-   base64 -d 2>/dev/null | grep -q "quay.io/rhoai"; then
-    log_info "Pull-secret already has quay.io/rhoai credentials"
-    exit 0
-fi
-
 # Mode 5: No option available
 log_error "No pull-secret configuration available!"
 log_error ""
+log_error "Could not access bootstrap repo: $BOOTSTRAP_REPO"
+log_error ""
 log_error "Options:"
 log_error "  1. Set QUAY_USER and QUAY_TOKEN in .env (manual mode)"
-log_error "  2. Ensure git access to $BOOTSTRAP_REPO (External Secrets mode)"
+log_error "  2. Configure git access to the bootstrap repo:"
+if [[ "$BOOTSTRAP_REPO" == https://* ]]; then
+    log_error "     Your repo URL uses HTTPS. To authenticate:"
+    log_error "       gh auth login                    # GitHub CLI (recommended)"
+    log_error "       gh auth setup-git                # Configure git to use gh credentials"
+    log_error "     Or switch to SSH in .env:"
+    log_error "       BOOTSTRAP_REPO=git@github.com:rh-aiservices-bu/rh-aiservices-bu-bootstrap.git"
+else
+    log_error "     Ensure your SSH key has access to the repo:"
+    log_error "       ssh -T git@github.com"
+fi
 log_error ""
 log_error "For manual mode:"
 log_error "  cp .env.example .env"

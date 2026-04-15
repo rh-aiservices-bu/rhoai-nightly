@@ -3,7 +3,7 @@ kind: ConsoleNotification
 metadata:
   name: banner-nightly
 spec:
-  text: "RHOAI 3.4 EA2 Nightly Build - Mar 27, 2026"
+  text: "RHOAI 3.4 Nightly Build - Apr 15, 2026"
   location: BannerTop
   color: "#FFF"
   backgroundColor: "#0066CC"

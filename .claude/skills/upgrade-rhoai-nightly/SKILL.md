@@ -2,7 +2,7 @@
 name: upgrade-rhoai-nightly
 description: Upgrade RHOAI nightly on the rhoaibu-cluster-nightly cluster. Updates catalog image, subscription channel, console banner, commits, pushes, and executes the safe upgrade procedure with monitoring.
 argument-hint: "<image-with-digest> (e.g. quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2@sha256:abc123...)"
-allowed-tools: Bash(make *), Bash(oc *), Bash(git *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(sleep *), Bash(LOGDIR=*), Bash(for *), Bash(STATUS=*), Bash(date *), Read, Edit, Write, AskUserQuestion
+allowed-tools: Bash(make *), Bash(oc *), Bash(git *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(sleep *), Bash(LOGDIR=*), Bash(for *), Bash(STATUS=*), Bash(date *), Bash(GIT_EDITOR=*), Read, Edit, Write, AskUserQuestion, Agent, Monitor
 ---
 
 # Upgrade RHOAI Nightly on rhoaibu-cluster-nightly
@@ -25,8 +25,8 @@ Parse the image reference to extract:
 - **Banner text**: e.g., `RHOAI 3.4 EA2 Nightly Build - Mar 10, 2026` (with today's date)
 
 **Channel logic:**
-- If qualifier contains `ea` → channel is `beta`
-- Otherwise → channel is `fast-3.x`
+- Do NOT compute the channel from the qualifier. After the rebase step in Phase 0, read the channel value from `components/operators/rhoai-operator/base/patch-channel.yaml` — that file already contains the correct channel as maintained on main.
+- Only update the channel if the user explicitly requests a channel change. In that case, verify the target channel exists in the catalog: `oc get packagemanifest rhods-operator -n openshift-marketplace -o jsonpath='{range .status.channels[*]}{.name}{"\n"}{end}'`
 
 If the image reference is missing or cannot be parsed, ask the user for it. Do NOT guess.
 
@@ -79,7 +79,7 @@ Then check if `clusters` is behind `origin/main` (rev-list count > 0):
 **Upgrade path check:** Determine if OLM has a direct upgrade edge from the installed CSV to the target.
 
 1. Get the installed CSV version: `oc get subscription rhods-operator -n redhat-ods-operator -o jsonpath='{.status.installedCSV}'`
-2. Determine the target channel (beta for EA, fast-3.x otherwise)
+2. Read the target channel from `components/operators/rhoai-operator/base/patch-channel.yaml` (the channel value after rebase)
 3. Query the catalog for available versions on the target channel:
    ```
    oc get packagemanifest rhods-operator -n openshift-marketplace -o jsonpath='{range .status.channels[*]}{.name}: {.currentCSV}{"\n"}{end}'
@@ -110,7 +110,8 @@ Read each file before editing. Update these 4 files:
 - Update `spec.displayName` (e.g., `RHOAI 3.4 EA2 Nightly`)
 
 **2. `components/operators/rhoai-operator/base/patch-channel.yaml`**
-- Update `value` for the channel op (e.g., `beta` for EA builds, `fast-3.x` otherwise)
+- Do NOT change the channel unless the user explicitly requests it. The channel from main (after rebase) is already correct.
+- If the user requests a channel change, update the `value` for the channel op and verify the channel exists in the catalog first.
 
 **3. `components/operators/rhoai-operator/overlays/pinned/kustomization.yaml`**
 - Update the `value` with full image reference including digest: `quay.io/rhoai/rhoai-fbc-fragment:rhoai-X.Y@sha256:...`
@@ -131,6 +132,24 @@ git push
 ### Phase 2: Cluster Upgrade
 
 Follow the safe upgrade procedure from CLUSTERS.md exactly. Run each step sequentially.
+
+**Continuous Health Monitoring:** At the start of Phase 2, launch a background Monitor that polls cluster health every 30 seconds throughout the entire upgrade process. This runs concurrently with all other Phase 2 steps and provides real-time visibility into cluster state. Use the Monitor tool with a script like:
+
+```
+while true; do
+  echo "$(date +%H:%M:%S) CSV: $(oc get csv -n redhat-ods-operator --no-headers 2>/dev/null | grep rhods || echo 'none')"
+  echo "$(date +%H:%M:%S) App: $(oc get application.argoproj.io/rhoai-operator -n openshift-gitops -o custom-columns=SYNC:.status.sync.status,HEALTH:.status.health.status --no-headers 2>/dev/null)"
+  echo "$(date +%H:%M:%S) DSC: $(oc get datascienceclusters default-dsc -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' 2>/dev/null)"
+  problem_pods=$(oc get pods -n redhat-ods-applications --no-headers 2>/dev/null | grep -vE 'Running|Completed' | head -5)
+  [ -n "$problem_pods" ] && echo "$(date +%H:%M:%S) PROBLEM PODS: $problem_pods"
+  bad_nodes=$(oc get nodes --no-headers 2>/dev/null | grep -v ' Ready')
+  [ -n "$bad_nodes" ] && echo "$(date +%H:%M:%S) BAD NODES: $bad_nodes"
+  echo "---"
+  sleep 30
+done
+```
+
+Set `persistent: true` and stop the monitor after Phase 3 final verification is complete.
 
 **Step 1: Disable auto-sync**
 ```

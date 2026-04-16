@@ -152,7 +152,7 @@ Auto-detects cluster domain and TLS cert name, creates secrets, deploys the Helm
 ### Deploy Models
 
 ```bash
-make maas-model                         # Deploy all models (default)
+make maas-model                         # Deploy default model (gpt-oss-20b)
 make maas-model MODEL=simulator         # Deploy simulator only (CPU)
 make maas-model MODEL=gpt-oss-20b      # Deploy gpt-oss-20b (GPU)
 make maas-model MODEL=granite-tiny-gpu  # Deploy Granite tiny (GPU)

@@ -12,10 +12,25 @@ Run the full RHOAI nightly installation on a connected OpenShift cluster. This i
 ## Arguments
 
 Parse `$ARGUMENTS` for optional flags:
-- `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). Default: `main`
+- `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). If not specified, auto-detect (see below).
 - `--skip-gpu` — skip GPU MachineSet creation (`make gpu`)
 - `--skip-cpu` — skip CPU MachineSet creation (`make cpu`)
 - `--force` — run all phases even if they appear already completed
+
+## Branch Detection
+
+Determine the git branch to use, in priority order:
+1. `--branch <branch>` argument (explicit override)
+2. `GITOPS_BRANCH` from `.env` file
+3. **Auto-detect from current git state**: `git branch --show-current` — use the current local branch
+4. Fallback: `main`
+
+Also detect the repo URL:
+1. `GITOPS_REPO_URL` from `.env` file
+2. **Auto-detect from git remote**: `git remote get-url origin`
+3. Fallback: `https://github.com/rh-aiservices-bu/rhoai-nightly`
+
+Log the detected branch and repo URL so the user can verify before proceeding.
 
 ## Execution Model — Long-Running Commands
 

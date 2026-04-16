@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -59,6 +59,14 @@ help:
 	@echo "Demos (optional):"
 	@echo "  make demos        - Deploy demos ApplicationSet (ai-bu-shared namespace, etc.)"
 	@echo "  make demos-delete - Remove demos ApplicationSet and apps"
+	@echo ""
+	@echo "MaaS (Models as a Service):"
+	@echo "  make maas           - Install MaaS (PostgreSQL, Gateway, Authorino TLS)"
+	@echo "  make maas-model [MODEL=simulator] - Deploy a sample model (simulator, gpt-oss-20b, all)"
+	@echo "  make maas-model-status - Show deployed model status"
+	@echo "  make maas-model-delete [MODEL=simulator] - Remove a deployed model"
+	@echo "  make maas-verify    - Verify MaaS (deploy simulator, test API, auth, rate limits)"
+	@echo "  make maas-uninstall - Remove MaaS resources created by install-maas.sh"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
@@ -130,10 +138,10 @@ validate:
 
 # Full autonomous run
 # Workflow: setup (infra + secrets) → bootstrap (gitops + deploy) → sync
-all: setup bootstrap sync
+all: setup bootstrap sync maas
 	@echo ""
 	@echo "Full setup complete!"
-	@echo "RHOAI 3.x nightly is now deploying."
+	@echo "RHOAI 3.x nightly with MaaS is now deploying."
 
 # Remove ArgoCD apps with cascade deletion (keeps GitOps operator)
 # ArgoCD deletes managed resources before removing the app
@@ -241,6 +249,32 @@ demos:
 	@sleep 3
 	@oc get applications.argoproj.io -n openshift-gitops -l app.kubernetes.io/instance=cluster-demos-applicationset 2>/dev/null || \
 	  oc get applications.argoproj.io -n openshift-gitops | grep demo || echo "Waiting for apps to be created..."
+
+# Install MaaS (PostgreSQL, Gateway, Authorino TLS)
+maas:
+	@scripts/install-maas.sh
+
+# Deploy sample MaaS model(s) (default: simulator, or MAAS_MODELS from .env)
+# Usage: make maas-model [MODEL=simulator|gpt-oss-20b|granite-tiny-gpu|all]
+maas-model:
+	@scripts/setup-maas-model.sh $(or $(MODEL),)
+
+# Show status of deployed MaaS models
+maas-model-status:
+	@scripts/setup-maas-model.sh --status
+
+# Delete deployed MaaS model(s)
+# Usage: make maas-model-delete [MODEL=simulator|gpt-oss-20b|granite-tiny-gpu|all]
+maas-model-delete:
+	@scripts/setup-maas-model.sh --delete $(or $(MODEL),)
+
+# Verify MaaS deployment (deploy test model, test API, auth, rate limits)
+maas-verify:
+	@scripts/verify-maas.sh
+
+# Remove MaaS resources created by install-maas.sh
+maas-uninstall:
+	@scripts/uninstall-maas.sh
 
 # Remove demos ApplicationSet and its apps
 demos-delete:

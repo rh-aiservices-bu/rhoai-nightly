@@ -23,6 +23,10 @@ rhoai-nightly/
 │   ├── create-cpu-machineset.sh         # Create CPU worker MachineSet (m6a.4xlarge)
 │   ├── install-gitops.sh                # Install GitOps operator + ArgoCD
 │   ├── deploy-apps.sh                   # Deploy root app (triggers GitOps)
+│   ├── install-maas.sh                  # Install MaaS platform (secrets, ArgoCD app, Authorino)
+│   ├── uninstall-maas.sh               # Remove MaaS platform
+│   ├── setup-maas-model.sh             # Deploy/delete/status MaaS models
+│   ├── verify-maas.sh                  # End-to-end MaaS verification
 │   ├── status.sh                        # Show ArgoCD app status
 │   ├── validate.sh                      # Validate cluster state
 │   ├── scale-machineset.sh              # Scale MachineSets
@@ -58,8 +62,7 @@ rhoai-nightly/
 │   │   ├── kueue-operator/              # Kueue for job queueing
 │   │   ├── jobset-operator/             # JobSet for distributed workloads
 │   │   ├── leader-worker-set/           # Leader-Worker pattern
-│   │   ├── connectivity-link/           # Connectivity Link
-│   │   └── nfs-provisioner/             # NFS Provisioner for RWX storage
+│   │   └── connectivity-link/           # Connectivity Link
 │   │
 │   └── instances/                       # Operator instances/configs
 │       ├── nfd-instance/                # NFD NodeFeatureDiscovery CR
@@ -68,7 +71,11 @@ rhoai-nightly/
 │       ├── jobset-instance/             # JobSet config
 │       ├── leader-worker-set-instance/  # Leader-Worker config
 │       ├── connectivity-link-instance/  # Connectivity Link config
-│       └── nfs-instance/                # NFSProvisioner CR (creates 'nfs' StorageClass)
+│       ├── maas-instance/               # MaaS Helm chart (PostgreSQL, Gateway)
+│       └── maas-models/                # MaaS model manifests (kustomize)
+│           ├── simulator/              # CPU-only mock model
+│           ├── gpt-oss-20b/            # OpenAI gpt-oss-20b (GPU, vLLM CUDA)
+│           └── granite-tiny-gpu/       # Granite 4.0-h-tiny FP8 (GPU, vLLM CUDA)
 │
 ├── Makefile                             # Automation targets
 ├── .env.example                         # Configuration template
@@ -127,7 +134,7 @@ make validate        # Validate full cluster state
 Use only when explicitly requested with "run autonomously" or "don't stop".
 
 ```bash
-make all             # Runs: setup (pull-secret, icsp, gpu, cpu) + bootstrap (gitops, deploy)
+make all             # Runs: setup + bootstrap + sync + maas
                      # Each script waits for readiness before proceeding
 ```
 
@@ -183,6 +190,26 @@ make scale NAME=<machineset> REPLICAS=<N|+N|-N>
 make dedicate-masters # Remove worker role from master nodes
                       # Must have Ready worker nodes first
 ```
+
+### MaaS (Models as a Service)
+
+```bash
+make maas            # Install MaaS platform (secrets, ArgoCD app, Authorino SSL)
+make maas-model      # Deploy models (default: all — simulator, gpt-oss-20b, granite-tiny-gpu)
+                     # Override: make maas-model MODEL=simulator
+                     # Or set MAAS_MODELS in .env: MAAS_MODELS=simulator gpt-oss-20b
+make maas-model-status # Show deployed model status
+make maas-model-delete # Delete models (same MODEL= or MAAS_MODELS logic)
+make maas-verify     # Full end-to-end verification (deploys temp model, tests, cleans up)
+make maas-uninstall  # Remove MaaS platform (deletes ArgoCD app + secrets + Authorino SSL)
+```
+
+Available models:
+- `simulator` — CPU-only mock (~256Mi RAM, no real LLM)
+- `gpt-oss-20b` — OpenAI gpt-oss-20b on vLLM GPU (1 GPU, 24Gi RAM)
+- `granite-tiny-gpu` — RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU (1 GPU, 64Gi RAM)
+
+Each model gets free tier (100 tokens/min, all authenticated users) and premium tier (10000 tokens/min, all authenticated users).
 
 ### Repository Configuration (for forks)
 
@@ -427,6 +454,106 @@ Operators and instances have dependencies that must be respected:
 
 The ApplicationSets handle this by deploying all operators first, then all instances.
 
+## MaaS (Models as a Service)
+
+MaaS enables API key management, subscriptions, and rate limiting for LLM inference services. It uses a hybrid GitOps + imperative approach.
+
+### Architecture
+
+MaaS has three layers:
+
+1. **GitOps (Helm chart)** - `components/instances/maas-instance/chart/`
+   - PostgreSQL deployment and service (POC, emptyDir storage)
+   - GatewayClass `openshift-default`
+   - Gateway `maas-default-gateway` (LoadBalancer with cluster-specific hostname)
+
+2. **Imperative (install-maas.sh)** - Things that can't be in git:
+   - PostgreSQL secrets (`postgres-creds`, `maas-db-config`) — generated password
+   - Authorino SSL env vars — no CR field, must `oc set env`
+   - ArgoCD Application creation — injects cluster-specific values (`clusterDomain`, `certName`) into Helm chart
+
+3. **Operator-managed** - Deployed automatically when DSC has `modelsAsService: Managed`:
+   - maas-api, maas-controller, payload-processing deployments
+   - HTTPRoutes, AuthPolicies, NetworkPolicies
+
+### Why Helm (not Kustomize)
+
+The MaaS Gateway needs cluster-specific values (domain, TLS cert name) that vary per cluster. The instances ApplicationSet template assumes Kustomize and can't express Helm values. Instead, `install-maas.sh` creates the `instance-maas` ArgoCD Application directly with Helm source and injected values, bypassing the ApplicationSet.
+
+### MaaS Install Flow
+
+```
+install-maas.sh:
+  1. Preflight: check cluster, detect domain/cert/repo/branch
+  2. Create PostgreSQL secrets (idempotent)
+  3. Create instance-maas ArgoCD Application (Helm source with values)
+     → ArgoCD syncs: GatewayClass, Gateway, PostgreSQL
+  4. Configure Authorino SSL env vars
+  5. Validate: wait for maas-api, check health endpoint
+```
+
+### MaaS Uninstall Flow
+
+```
+uninstall-maas.sh:
+  1. Remove Authorino SSL env vars
+  2. Delete instance-maas ArgoCD Application (cascade-deletes all Helm resources)
+  3. Delete PostgreSQL secrets
+  4. Clean up stale DNS records
+```
+
+### DSC Configuration
+
+The DataScienceCluster in `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `modelsAsService.managementState: Managed` and `rawDeploymentServiceConfig: Headed`. This means the RHOAI operator will attempt to deploy MaaS components as soon as the DSC syncs, even before `install-maas.sh` runs. The operator tolerates the missing Gateway and retries until it appears.
+
+### MaaS Model Management
+
+Models are defined as kustomize manifests in `components/instances/maas-models/`. Each model directory contains:
+- `llm/` — LLMInferenceService (the workload)
+- `maas/` — MaaSModelRef + MaaSAuthPolicy + MaaSSubscription (free + premium tiers)
+
+`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for default model selection (default: `all`).
+
+### MaaS Verification
+
+`verify-maas.sh` runs 6 phases:
+1. Infrastructure health (Gateway, PostgreSQL, maas-api, maas-controller, Authorino, health endpoint)
+2. Deploy temporary simulator model + MaaS resources
+3. API verification (create API key, list models, test inference)
+4. Auth enforcement (reject unauthenticated + invalid token requests)
+5. Rate limiting (trigger 429 responses)
+6. Cleanup (remove all temporary test resources)
+
+The verify script is self-contained — it deploys its own temporary model and does NOT affect persistently deployed models.
+
+### MaaS Debugging Commands
+
+```bash
+# Check MaaS infrastructure
+oc get application.argoproj.io/instance-maas -n openshift-gitops
+oc get gateway maas-default-gateway -n openshift-ingress
+oc get gatewayclass openshift-default
+
+# Check operator-managed MaaS
+oc get modelsasservice -A
+oc get deployment maas-api maas-controller -n redhat-ods-applications
+oc get pods -n redhat-ods-applications | grep -E "maas|postgres|payload"
+
+# Check models
+oc get llminferenceservice -n llm
+oc get maasmodelref -n llm -o wide
+oc get maassubscription -n models-as-a-service
+oc get maasauthpolicy -n models-as-a-service
+oc get pods -n llm
+
+# Check health
+curl -sk https://maas.<cluster-domain>/maas-api/health
+# 200 = healthy, 401 = auth working (unauthenticated)
+
+# Check Authorino SSL
+oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec.containers[0].env}'
+```
+
 ## Script Implementation Details
 
 ### Script Behavior
@@ -449,6 +576,11 @@ Expected wait times for each script:
 - `cpu`: 5-10 minutes (waits for CPU worker node Ready)
 - `gitops`: 2-3 minutes (waits for GitOps operator + ArgoCD)
 - `deploy`: Immediate (creates apps, sync happens async)
+- `maas`: 3-5 minutes (creates secrets, ArgoCD app, waits for Gateway + maas-api)
+- `maas-model` (simulator): ~30 seconds (CPU, no image pull needed after first time)
+- `maas-model` (GPU models): 5-15 minutes (image pull ~8GB + vLLM model loading)
+- `maas-verify`: ~3 minutes (deploys temp model, runs tests, cleans up)
+- `maas-uninstall`: ~30 seconds (deletes ArgoCD app + secrets)
 
 ### Script Options
 
@@ -665,19 +797,24 @@ oc get mcp  # MachineConfigPool status
 | `components/argocd/apps/*.yaml` | ApplicationSet definitions |
 | `components/operators/*/kustomization.yaml` | Operator subscriptions |
 | `components/instances/*/kustomization.yaml` | Operator instance configurations |
+| `components/instances/maas-instance/chart/` | MaaS Helm chart (PostgreSQL, Gateway) |
+| `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app, Authorino) |
+| `scripts/uninstall-maas.sh` | MaaS uninstall (cascade delete + cleanup) |
 
 ## Related Repositories
 
 - **This Repository**: [rh-aiservices-bu/rhoai-nightly](https://github.com/rh-aiservices-bu/rhoai-nightly) - GitOps deployment for RHOAI nightly builds
 - **Bootstrap Repository**: [rh-aiservices-bu/rh-aiservices-bu-bootstrap](https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap) - Private bootstrap repo with External Secrets configuration
 - **Upstream Catalog**: [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) - Community GitOps catalog for OpenShift operators
+- **MaaS Upstream**: [opendatahub-io/models-as-a-service](https://github.com/opendatahub-io/models-as-a-service) - MaaS docs, samples, and deployment manifests
 - **RHOAI Documentation**: [Red Hat OpenShift AI docs](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
 
 ## Notes for AI Assistants
 
 - This repository uses **GitOps** - changes are deployed by committing to git, not by running oc commands
 - Scripts in `scripts/` are **pre-GitOps only** - they run before ArgoCD is installed
-- After ArgoCD is running, **all changes go through git commits**, not scripts
+- **Exception**: `install-maas.sh` and `uninstall-maas.sh` run **after** ArgoCD — they create secrets and an ArgoCD Application that can't be purely declarative
+- After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets/Authorino)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
 - **Never commit secrets** - this is a public repository
 - All file paths should be **absolute** when referencing in responses

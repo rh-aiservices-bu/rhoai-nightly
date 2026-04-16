@@ -251,45 +251,37 @@ oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l
 
 Use this decision table:
 
-| GPU Nodes | Instance Type | RAM | Recommendation |
-|-----------|--------------|-----|----------------|
-| 0 | — | — | simulator only |
-| 1 | g5.2xlarge | 32GB | simulator + granite-tiny-gpu (24Gi limit fits). gpt-oss-20b won't fit (60Gi limit > 32GB). |
-| 1 | g6e.2xlarge | 64GB | simulator + gpt-oss-20b + granite-tiny-gpu (both fit). One GPU model at a time with 1 node. |
-| 1 | g5.4xlarge+ | 64GB+ | simulator + gpt-oss-20b + granite-tiny-gpu (but only 1 GPU, models share) |
-| 2+ | any | — | all models (each GPU model gets its own node) |
+**Rule: Deploy 1 GPU model per GPU node.** Pick the best model that fits.
+
+| GPU Nodes | Allocatable RAM | Recommended Model |
+|-----------|----------------|-------------------|
+| 0 | — | No GPU model (simulator only for verify) |
+| 1 | 60Gi+ (g6e.2xlarge, g5.4xlarge+) | **gpt-oss-20b** (16Gi request, 60Gi limit) |
+| 1 | < 60Gi (g5.2xlarge ~30Gi) | **granite-tiny-gpu** (8Gi request, 24Gi limit) |
+| 2+ | any | **gpt-oss-20b** on each node (or mix gpt-oss-20b + granite-tiny-gpu) |
 
 Model resource requirements:
-- **simulator**: CPU only, 256Mi — runs anywhere
-- **gpt-oss-20b**: 1 GPU, 60Gi RAM limit (48Gi request) — needs 64GB+ system RAM
-- **granite-tiny-gpu**: 1 GPU, 24Gi RAM limit (8Gi request) — fits on any GPU node
+- **gpt-oss-20b**: 1 GPU, 16Gi request / 60Gi limit — 20B param model, needs larger GPU nodes
+- **granite-tiny-gpu**: 1 GPU, 8Gi request / 24Gi limit — 7B FP8 model, fits on any GPU node
+- **simulator**: CPU only, 256Mi — used by `make maas-verify`, not deployed as a persistent model
 
 **Step 3: Present recommendation and ask**
 
-Present the GPU-aware recommendation to the user. Example for 1x g6e.2xlarge:
+Present the GPU-aware recommendation. Example for 1x g6e.2xlarge:
 
-> "RHOAI is installed. Would you like to install MaaS with sample models?"
+> "RHOAI is installed. Would you like to install MaaS with a model?"
 >
-> **Your GPU**: 1x g6e.2xlarge (48GB VRAM, 64GB RAM)
->
-> **Recommended models:**
-> - **simulator** — CPU-only mock (instant)
-> - **gpt-oss-20b** — GPU model, 60Gi RAM limit (fits on your 64GB node)
-> - **granite-tiny-gpu** — GPU model, 24Gi RAM limit (fits easily)
->
-> Note: Only one GPU model runs at a time with 1 GPU node.
+> **Your GPU**: 1x g6e.2xlarge (60Gi allocatable RAM)
+> **Recommended**: gpt-oss-20b (20B model, fits your GPU)
 >
 > Options:
-> 1. Install all models (simulator + gpt-oss-20b + granite-tiny-gpu)
-> 2. Let me choose specific models
+> 1. Install gpt-oss-20b (recommended for your GPU)
+> 2. Install granite-tiny-gpu instead (smaller 7B model)
 > 3. Skip MaaS
 
 **Step 4: Apply choice**
 
-Based on the user's choice, set `MAAS_MODELS` in `.env` accordingly:
-- Option 1: `MAAS_MODELS=simulator gpt-oss-20b granite-tiny-gpu`
-- Option 2: Ask which models, then set `MAAS_MODELS`
-- Option 3: Skip to final report
+Set `MAAS_MODELS` in `.env` to the chosen model, then invoke `/install-maas` with the same branch.
 
 Then invoke `/install-maas` with the same branch: `Skill(install-maas, "--branch <detected-branch>")`
 

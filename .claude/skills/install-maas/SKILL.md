@@ -155,20 +155,14 @@ cat .env 2>/dev/null | grep MAAS_MODELS || echo "MAAS_MODELS not set"
 
 **Step 3: If MAAS_MODELS is NOT set**, make a GPU-aware recommendation and ask:
 
-Model resource requirements:
-- **simulator**: CPU only, 256Mi — runs anywhere
-- **gpt-oss-20b**: 1 GPU, 60Gi RAM limit (48Gi request) — needs 64GB+ system RAM
-- **granite-tiny-gpu**: 1 GPU, 24Gi RAM limit (8Gi request) — fits on any GPU node
+**Rule: Deploy 1 GPU model per GPU node.** Pick the best model that fits.
 
-Decision table:
-
-| GPU Nodes | Instance Type | RAM | Recommendation |
-|-----------|--------------|-----|----------------|
-| 0 | — | — | simulator only |
-| 1 | g5.2xlarge | 32GB | simulator + granite-tiny-gpu (24Gi fits). gpt-oss-20b won't fit (60Gi limit > 32GB). |
-| 1 | g6e.2xlarge | 64GB | simulator + gpt-oss-20b + granite-tiny-gpu (both fit). One GPU model at a time. |
-| 1 | g5.4xlarge+ | 64GB+ | simulator + gpt-oss-20b + granite-tiny-gpu (but 1 GPU, models share) |
-| 2+ | any | — | all models |
+| GPU Nodes | Allocatable RAM | Recommended Model |
+|-----------|----------------|-------------------|
+| 0 | — | No GPU model (simulator only for verify) |
+| 1 | 60Gi+ (g6e.2xlarge, g5.4xlarge+) | **gpt-oss-20b** (16Gi request, 60Gi limit) |
+| 1 | < 60Gi (g5.2xlarge ~30Gi) | **granite-tiny-gpu** (8Gi request, 24Gi limit) |
+| 2+ | any | **gpt-oss-20b** on each node (or mix gpt-oss-20b + granite-tiny-gpu) |
 
 Present the recommendation and let the user choose. Then update `MAAS_MODELS` in `.env` accordingly.
 

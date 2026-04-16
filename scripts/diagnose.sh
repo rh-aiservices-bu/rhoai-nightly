@@ -146,11 +146,19 @@ MASTER_NODES=$(oc get nodes -l node-role.kubernetes.io/master --no-headers 2>/de
 WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker,\!node-role.kubernetes.io/master --no-headers 2>/dev/null | wc -l | tr -d ' ')
 GPU_NODES=$(oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l | tr -d ' ')
 
-if [[ "$READY_NODES" -eq "$TOTAL_NODES" ]] && [[ "$TOTAL_NODES" -gt 0 ]]; then
+READY_NODES=${READY_NODES:-0}
+TOTAL_NODES=${TOTAL_NODES:-0}
+if [[ "$TOTAL_NODES" -eq 0 ]]; then
+    fail "Nodes" "No nodes found"
+elif [[ "$READY_NODES" -eq "$TOTAL_NODES" ]]; then
     pass "Nodes" "$TOTAL_NODES total ($MASTER_NODES master, $WORKER_NODES worker, $GPU_NODES gpu) — all Ready"
 else
     NOTREADY=$((TOTAL_NODES - READY_NODES))
-    warn "Nodes" "$NOTREADY node(s) not Ready"
+    if [[ "$NOTREADY" -gt 0 ]]; then
+        warn "Nodes" "$NOTREADY of $TOTAL_NODES node(s) not Ready"
+    else
+        pass "Nodes" "$TOTAL_NODES total ($MASTER_NODES master, $WORKER_NODES worker, $GPU_NODES gpu) — all Ready"
+    fi
 fi
 
 # ICSP
@@ -166,9 +174,15 @@ if [[ "$GPU_NODES" -gt 0 ]]; then
     GPU_INSTANCE=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")
     GPU_MEM=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].status.allocatable.memory}' 2>/dev/null || echo "unknown")
     pass "GPU" "$GPU_NODES node(s) — $GPU_INSTANCE ($GPU_MEM allocatable)"
+
+    # Check for cordoned GPU nodes (Issue 10)
+    GPU_CORDONED=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{range .items[*]}{.spec.unschedulable}{"\n"}{end}' 2>/dev/null | count_matches "true")
+    if [[ "$GPU_CORDONED" -gt 0 ]]; then
+        warn "GPU Cordoned" "$GPU_CORDONED GPU node(s) are cordoned (unschedulable) — pods can't schedule"
+        recommend "Uncordon GPU node: oc adm uncordon \$(oc get node -l node-role.kubernetes.io/gpu -o name)"
+    fi
 else
     info "GPU" "No GPU nodes"
-    recommend "Run: make gpu"
 fi
 
 # MCP
@@ -281,6 +295,41 @@ if [[ -n "$PENDING_PLANS" ]]; then
     done
 else
     pass "Install Plans" "All Complete"
+fi
+
+# Check for duplicate OperatorGroups (Issue 9a — OLM silently fails with duplicates)
+DUP_OG_FOUND=false
+for ns in nvidia-gpu-operator openshift-nfd cert-manager-operator openshift-operators; do
+    OG_COUNT=$(oc get operatorgroup -n "$ns" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$OG_COUNT" -gt 1 ]]; then
+        warn "OperatorGroup" "Duplicate in $ns ($OG_COUNT found) — OLM won't resolve subscriptions"
+        recommend "Delete extra OperatorGroup in $ns: oc get operatorgroup -n $ns"
+        DUP_OG_FOUND=true
+    fi
+done
+if [[ "$DUP_OG_FOUND" == "false" ]] && [[ "$APP_COUNT" -gt 0 ]]; then
+    pass "OperatorGroups" "No duplicates"
+fi
+
+# Verify key operator CSVs are actually installed (Issue 9b — Synced+Healthy ≠ operator working)
+if [[ "$APP_COUNT" -gt 0 ]]; then
+    MISSING_CSVS=""
+    for op_check in "nvidia-gpu-operator:gpu-operator" "openshift-nfd:nfd" "redhat-ods-operator:rhods"; do
+        NS="${op_check%%:*}"
+        PATTERN="${op_check##*:}"
+        HAS_SUB=$({ oc get subscription -n "$NS" --no-headers 2>/dev/null || true; } | grep -c . || echo 0)
+        HAS_CSV=$({ oc get csv -n "$NS" --no-headers 2>/dev/null || true; } | grep -c "$PATTERN" || echo 0)
+        HAS_SUB=$(echo "$HAS_SUB" | tr -d '[:space:]')
+        HAS_CSV=$(echo "$HAS_CSV" | tr -d '[:space:]')
+        if [[ "$HAS_SUB" -gt 0 ]] && [[ "$HAS_CSV" -eq 0 ]]; then
+            MISSING_CSVS="$MISSING_CSVS $NS"
+        fi
+    done
+    if [[ -n "$MISSING_CSVS" ]]; then
+        warn "Operator CSVs" "Subscriptions exist but CSVs missing in:$MISSING_CSVS — check OperatorGroups and install plans"
+    else
+        pass "Operator CSVs" "All key operators have CSVs installed"
+    fi
 fi
 
 # ═══════════════════════════════════════════════

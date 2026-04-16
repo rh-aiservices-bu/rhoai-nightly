@@ -139,7 +139,7 @@ get_gpu_specs() {
 get_model_requirements() {
     case "$1" in
         simulator)        echo "0|0|1|CPU-only mock model" ;;
-        gpt-oss-20b)      echo "1|48|60|OpenAI gpt-oss-20b on vLLM CUDA" ;;
+        gpt-oss-20b)      echo "1|16|60|OpenAI gpt-oss-20b on vLLM CUDA" ;;
         granite-tiny-gpu)  echo "1|8|24|Granite 4.0-h-tiny FP8 on vLLM CUDA" ;;
         *)                echo "0|0|0|Unknown model" ;;
     esac

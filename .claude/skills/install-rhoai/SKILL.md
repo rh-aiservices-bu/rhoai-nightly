@@ -1,21 +1,37 @@
 ---
 name: install-rhoai
-description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases.
-argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--force]"
-allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*), Bash(for *), Bash(date *), AskUserQuestion
+description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases. Optionally installs MaaS with sample models.
+argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--skip-maas] [--force]"
+allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*), Bash(for *), Bash(date *), Bash(cp *), Bash(git *), Bash(sed *), AskUserQuestion, Skill(install-maas)
 ---
 
 # Install RHOAI on Connected Cluster
 
-Run the full RHOAI nightly installation on a connected OpenShift cluster. This is equivalent to running `make all` (infra + secrets + gitops + deploy + sync), but with intelligent detection of already-completed phases.
+Run the full RHOAI nightly installation on a connected OpenShift cluster. This is equivalent to running `make all` (infra + secrets + gitops + deploy + sync), but with intelligent detection of already-completed phases. After RHOAI is installed, optionally installs MaaS (Models as a Service) with sample models.
 
 ## Arguments
 
 Parse `$ARGUMENTS` for optional flags:
-- `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). Default: `main`
+- `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). If not specified, auto-detect (see below).
 - `--skip-gpu` — skip GPU MachineSet creation (`make gpu`)
 - `--skip-cpu` — skip CPU MachineSet creation (`make cpu`)
+- `--skip-maas` — skip MaaS installation prompt at the end
 - `--force` — run all phases even if they appear already completed
+
+## Branch Detection
+
+Determine the git branch to use, in priority order:
+1. `--branch <branch>` argument (explicit override)
+2. `GITOPS_BRANCH` from `.env` file
+3. **Auto-detect from current git state**: `git branch --show-current` — use the current local branch
+4. Fallback: `main`
+
+Also detect the repo URL:
+1. `GITOPS_REPO_URL` from `.env` file
+2. **Auto-detect from git remote**: `git remote get-url origin`
+3. Fallback: `https://github.com/rh-aiservices-bu/rhoai-nightly`
+
+Log the detected branch and repo URL so the user can verify before proceeding.
 
 ## Execution Model — Long-Running Commands
 
@@ -65,7 +81,49 @@ You MUST run this from the repository root.
 
 Run each phase sequentially using `make` targets. After each phase, verify success before continuing. If any phase fails, STOP and ask the user how to proceed.
 
-### Phase 0: Preflight — Cluster Assessment
+### Phase 0: Configuration Check — .env Setup
+
+Before anything else, check the `.env` file and confirm settings with the user.
+
+**Step 1: Check if .env exists**
+
+```bash
+ls -la .env 2>/dev/null || echo "NO_ENV_FILE"
+```
+
+If `.env` does not exist, create it from the example:
+```bash
+cp .env.example .env
+```
+
+**Step 2: Read current .env and show configuration summary**
+
+Read the `.env` file and present the user with a summary of current settings:
+
+```
+Configuration Summary:
+  Credentials:   [Manual (QUAY_USER set) | External Secrets (no credentials) | Not configured]
+  GitOps Branch:  [<branch from .env> | auto-detect: <current git branch>]
+  GitOps Repo:    [<repo from .env> | auto-detect: <git remote origin>]
+  GPU Nodes:      [<instance type> min=<min> max=<max> | defaults (g6e.2xlarge, 1-3)]
+  CPU Workers:    [<instance type> min=<min> max=<max> | defaults (m6a.4xlarge, 1-3)]
+  MaaS Models:    [<model list from .env> | default: all]
+```
+
+**Step 3: Ask if changes are needed**
+
+Ask the user: "Does this configuration look correct? Would you like to change anything before proceeding?"
+
+If the user wants changes, help them update `.env` accordingly. Key things they might want to change:
+- **Credentials**: Set `QUAY_USER`/`QUAY_TOKEN` for manual mode, or leave empty for External Secrets
+- **Branch/Repo**: Set `GITOPS_BRANCH` and `GITOPS_REPO_URL` if different from auto-detected values
+- **GPU config**: Instance type, min/max replicas, availability zone
+- **CPU config**: Instance type, min/max replicas
+- **MaaS models**: Which models to deploy (simulator, gpt-oss-20b, granite-tiny-gpu)
+
+Once confirmed, proceed to preflight.
+
+### Phase 1: Preflight — Cluster Assessment
 
 First, verify cluster connection and assess what's already installed. Run ALL of these checks in parallel:
 
@@ -90,7 +148,7 @@ Based on the results, build a plan of which phases to run and which to skip. Rep
 
 Unless `--force` was passed, skip any phase where the resources already exist and are healthy. The scripts themselves are idempotent, so re-running is safe — but skipping saves time on long waits (especially ICSP node restarts).
 
-### Phase 1: ICSP (Registry Mirror)
+### Phase 2: ICSP (Registry Mirror)
 
 **Skip if:** `oc get imagecontentsourcepolicy` shows an ICSP already exists and all nodes are Ready.
 
@@ -98,7 +156,7 @@ Run `make icsp` in the background. Monitor with `oc get mcp` and `oc get nodes` 
 
 After completion, verify: `oc get nodes` — all nodes should be Ready.
 
-### Phase 2: CPU Workers
+### Phase 3: CPU Workers
 
 **Skip if:** `--skip-cpu` was passed, or a CPU worker MachineSet already exists with Ready replicas in `oc get machinesets -n openshift-machine-api`.
 
@@ -106,7 +164,7 @@ Run `make cpu` in the background. Monitor with `oc get machinesets -n openshift-
 
 After completion, verify: `oc get nodes -l node-role.kubernetes.io/worker` — at least one dedicated worker node Ready.
 
-### Phase 3: GPU Workers
+### Phase 4: GPU Workers
 
 **Skip if:** `--skip-gpu` was passed, or a GPU MachineSet already exists with Ready replicas.
 
@@ -114,7 +172,7 @@ Run `make gpu` in the background. Monitor with `oc get machinesets -n openshift-
 
 After completion, verify: `oc get nodes -l node-role.kubernetes.io/gpu` — GPU node Ready.
 
-### Phase 4: Pull Secret
+### Phase 5: Pull Secret
 
 **Skip if:** pull-secret already contains `quay.io/rhoai` credentials (detected in Phase 0).
 
@@ -125,7 +183,7 @@ After completion, verify the pull-secret has quay.io/rhoai credentials:
 oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths | keys[]' | grep -c quay
 ```
 
-### Phase 5: GitOps Operator + ArgoCD
+### Phase 6: GitOps Operator + ArgoCD
 
 **Skip if:** GitOps operator CSV exists and ArgoCD pods are Running in `openshift-gitops`.
 
@@ -133,7 +191,7 @@ Run `make gitops` in the background. Monitor with `oc get csv -n openshift-gitop
 
 After completion, verify: `oc get pods -n openshift-gitops` — all pods Running/Ready.
 
-### Phase 6: Deploy Apps
+### Phase 7: Deploy Apps
 
 **Skip if:** ArgoCD Applications already exist AND are already pointed at the correct branch. If apps exist but point at wrong branch, run deploy anyway to re-patch them.
 
@@ -147,7 +205,7 @@ The deploy script creates all ArgoCD Applications with sync DISABLED, patches th
 
 After completion, verify: `oc get applications.argoproj.io -n openshift-gitops` — all expected apps exist.
 
-### Phase 7: Sync Apps
+### Phase 8: Sync Apps
 
 **Skip if:** All apps are already Synced + Healthy (rare on a fresh install).
 
@@ -165,9 +223,9 @@ Report progress to the user as apps transition from Unknown → Progressing → 
 
 After completion, verify all apps are Synced + Healthy (some may show Progressing if operators are still installing).
 
-### Phase 8: Validate
+### Phase 9: Validate
 
-Run `make validate` to show final cluster state.
+Run `make diagnose` to show final cluster state.
 
 Then run these additional checks:
 ```
@@ -175,6 +233,57 @@ oc get catalogsource rhoai-catalog-nightly -n openshift-marketplace
 oc get csv -n redhat-ods-operator | grep rhods
 oc get datascienceclusters
 ```
+
+### Phase 10: MaaS (Models as a Service) — Optional
+
+**Skip if:** `--skip-maas` was passed.
+
+After RHOAI validation succeeds, assess GPU capabilities and make a smart model recommendation.
+
+**Step 1: Check GPU state**
+
+```bash
+oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{range .items[*]}{.metadata.labels.node\.kubernetes\.io/instance-type}{"\n"}{end}' 2>/dev/null
+oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l
+```
+
+**Step 2: Build a recommendation based on GPU capabilities**
+
+Use this decision table:
+
+**Rule: Deploy 1 GPU model per GPU node.** Pick the best model that fits.
+
+| GPU Nodes | Allocatable RAM | Recommended Model |
+|-----------|----------------|-------------------|
+| 0 | — | No GPU model (simulator only for verify) |
+| 1 | 60Gi+ (g6e.2xlarge, g5.4xlarge+) | **gpt-oss-20b** (16Gi request, 60Gi limit) |
+| 1 | < 60Gi (g5.2xlarge ~30Gi) | **granite-tiny-gpu** (8Gi request, 24Gi limit) |
+| 2+ | any | **gpt-oss-20b** on each node (or mix gpt-oss-20b + granite-tiny-gpu) |
+
+Model resource requirements:
+- **gpt-oss-20b**: 1 GPU, 16Gi request / 60Gi limit — 20B param model, needs larger GPU nodes
+- **granite-tiny-gpu**: 1 GPU, 8Gi request / 24Gi limit — 7B FP8 model, fits on any GPU node
+- **simulator**: CPU only, 256Mi — used by `make maas-verify`, not deployed as a persistent model
+
+**Step 3: Present recommendation and ask**
+
+Present the GPU-aware recommendation. Example for 1x g6e.2xlarge:
+
+> "RHOAI is installed. Would you like to install MaaS with a model?"
+>
+> **Your GPU**: 1x g6e.2xlarge (60Gi allocatable RAM)
+> **Recommended**: gpt-oss-20b (20B model, fits your GPU)
+>
+> Options:
+> 1. Install gpt-oss-20b (recommended for your GPU)
+> 2. Install granite-tiny-gpu instead (smaller 7B model)
+> 3. Skip MaaS
+
+**Step 4: Apply choice**
+
+Set `MAAS_MODELS` in `.env` to the chosen model, then invoke `/install-maas` with the same branch.
+
+Then invoke `/install-maas` with the same branch: `Skill(install-maas, "--branch <detected-branch>")`
 
 ### Final Report
 
@@ -185,5 +294,6 @@ Summarize the installation result:
 - ArgoCD app status (how many Synced+Healthy, any degraded)
 - RHOAI operator CSV status
 - DataScienceCluster status
+- MaaS status (installed/skipped, which models deployed, verification result)
 - Any warnings or issues encountered
 - Phases that were skipped (and why)

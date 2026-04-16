@@ -40,8 +40,26 @@ oc apply -f "$REPO_ROOT/bootstrap/icsp/icsp.yaml"
 log_info "ICSP applied!"
 log_info "Waiting for MachineConfigPools to update..."
 
-# Wait for MCPs to start updating
-sleep 10
+# Wait for MCPs to start updating (MachineConfig controller needs time to render new config)
+log_info "Waiting for MachineConfigPools to begin updating..."
+MCP_WAIT=0
+MCP_WAIT_MAX=120  # 2 minutes to start
+while [[ $MCP_WAIT -lt $MCP_WAIT_MAX ]]; do
+    MASTER_UPDATING=$(oc get mcp master -o jsonpath='{.status.conditions[?(@.type=="Updating")].status}' 2>/dev/null || echo "Unknown")
+    WORKER_UPDATING=$(oc get mcp worker -o jsonpath='{.status.conditions[?(@.type=="Updating")].status}' 2>/dev/null || echo "Unknown")
+    if [[ "$MASTER_UPDATING" == "True" || "$WORKER_UPDATING" == "True" ]]; then
+        log_info "MCP update started (master=$MASTER_UPDATING, worker=$WORKER_UPDATING)"
+        break
+    fi
+    sleep 10
+    MCP_WAIT=$((MCP_WAIT + 10))
+done
+if [[ $MCP_WAIT -ge $MCP_WAIT_MAX ]]; then
+    log_warn "MCPs did not start updating within ${MCP_WAIT_MAX}s — checking if already up-to-date"
+    MASTER_RENDERED=$(oc get mcp master -o jsonpath='{.spec.configuration.name}' 2>/dev/null)
+    WORKER_RENDERED=$(oc get mcp worker -o jsonpath='{.spec.configuration.name}' 2>/dev/null)
+    log_info "Master config: $MASTER_RENDERED, Worker config: $WORKER_RENDERED"
+fi
 
 # Wait for both master and worker MCPs to be Updated
 # Use a loop with timeout since MCP updates can take a while

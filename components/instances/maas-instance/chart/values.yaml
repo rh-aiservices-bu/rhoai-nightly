@@ -1,0 +1,3 @@
+clusterDomain: ""              # Required — set by install-maas.sh
+certName: router-certs-default # Overridable, auto-detected by script
+namespace: redhat-ods-applications

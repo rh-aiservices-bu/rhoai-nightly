@@ -6,7 +6,7 @@
 #   ./create-gpu-machineset.sh [OPTIONS]
 #
 # Options:
-#   --instance-type TYPE   GPU instance type (default: g5.2xlarge)
+#   --instance-type TYPE   GPU instance type (default: g6e.2xlarge)
 #   --replicas N           Number of replicas (default: 1)
 #   --az ZONE              Availability zone (default: auto-detected)
 #   --access-type TYPE     SHARED or PRIVATE (default: SHARED)
@@ -26,7 +26,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
 # Defaults (can be overridden by env vars or CLI args)
-INSTANCE_TYPE="${GPU_INSTANCE_TYPE:-${INSTANCE_TYPE:-g5.2xlarge}}"
+INSTANCE_TYPE="${GPU_INSTANCE_TYPE:-${INSTANCE_TYPE:-g6e.2xlarge}}"
 REPLICAS="${GPU_REPLICAS:-${REPLICAS:-1}}"
 ACCESS_TYPE="${GPU_ACCESS_TYPE:-${ACCESS_TYPE:-SHARED}}"
 AZ="${GPU_AZ:-}"
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
 Usage: $0 [OPTIONS]
 
 Options:
-  --instance-type TYPE   GPU instance type (default: g5.2xlarge)
+  --instance-type TYPE   GPU instance type (default: g6e.2xlarge)
   --replicas N           Number of replicas (default: 1)
   --az ZONE              Availability zone (default: auto-detected)
   --access-type TYPE     SHARED or PRIVATE (default: SHARED)

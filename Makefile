@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help check gpu cpu icsp setup infra secrets gitops deploy bootstrap status validate all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters demos demos-delete
+.PHONY: help gpu cpu icsp setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete diagnose preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -44,11 +44,12 @@ help:
 	@echo "  make setup        - Run infra + secrets (pre-GitOps setup)"
 	@echo "  make bootstrap    - Run gitops + deploy"
 	@echo ""
-	@echo "Validation:"
-	@echo "  make check        - Verify cluster connection"
-	@echo "  make status       - Show ArgoCD application status"
-	@echo "  make validate     - Full cluster validation"
-	@echo "  make refresh      - Refresh all apps from git (hard refresh, no sync)"
+	@echo "Diagnostics & Validation:"
+	@echo "  make diagnose       - Full cluster diagnosis (connectivity, config, RHOAI, MaaS)"
+	@echo "  make preflight      - Quick readiness check (pass/warn/fail)"
+	@echo "  make validate-config - Validate .env against cluster capabilities"
+	@echo "  make status         - Show ArgoCD application status"
+	@echo "  make refresh        - Refresh all apps from git (hard refresh, no sync)"
 	@echo "  make restart-catalog - Restart catalog pod and operator (force image pull)"
 	@echo ""
 	@echo "ArgoCD Sync Control:"
@@ -56,9 +57,13 @@ help:
 	@echo "  make sync-enable  - Re-enable auto-sync on all apps"
 	@echo "  make refresh-apps - Refresh and sync all apps (one-time, keeps current sync setting)"
 	@echo ""
-	@echo "Demos (optional):"
-	@echo "  make demos        - Deploy demos ApplicationSet (ai-bu-shared namespace, etc.)"
-	@echo "  make demos-delete - Remove demos ApplicationSet and apps"
+	@echo "MaaS (Models as a Service):"
+	@echo "  make maas           - Install MaaS (PostgreSQL, Gateway, Authorino TLS)"
+	@echo "  make maas-model [MODEL=gpt-oss-20b] - Deploy model (gpt-oss-20b, granite-tiny-gpu, simulator, all)"
+	@echo "  make maas-model-status - Show deployed model status"
+	@echo "  make maas-model-delete [MODEL=gpt-oss-20b] - Remove a deployed model"
+	@echo "  make maas-verify    - Verify MaaS (deploy simulator, test API, auth, rate limits)"
+	@echo "  make maas-uninstall - Remove MaaS resources created by install-maas.sh"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
@@ -74,12 +79,6 @@ help:
 	@echo ""
 	@echo "To change RHOAI version, edit components/operators/rhoai-operator/base/catalogsource.yaml"
 	@echo ""
-
-# Verify cluster connection
-check:
-	@echo "Checking cluster connection..."
-	@oc whoami --show-server
-	@oc get nodes
 
 # Pre-GitOps: GPU MachineSet
 gpu:
@@ -124,16 +123,24 @@ bootstrap: gitops deploy
 status:
 	@scripts/status.sh
 
-# Full validation
-validate:
-	@scripts/validate.sh
+# Comprehensive cluster diagnosis (exit 2 = warnings only, still OK)
+diagnose:
+	@scripts/diagnose.sh || [ $$? -eq 2 ]
+
+# Quick cluster readiness check (exit 2 = warnings only, still OK)
+preflight:
+	@scripts/preflight-check.sh || [ $$? -eq 2 ]
+
+# Validate .env against cluster capabilities (exit 2 = warnings only, still OK)
+validate-config:
+	@scripts/validate-config.sh || [ $$? -eq 2 ]
 
 # Full autonomous run
 # Workflow: setup (infra + secrets) → bootstrap (gitops + deploy) → sync
-all: setup bootstrap sync
+all: setup bootstrap sync maas
 	@echo ""
 	@echo "Full setup complete!"
-	@echo "RHOAI 3.x nightly is now deploying."
+	@echo "RHOAI 3.x nightly with MaaS is now deploying."
 
 # Remove ArgoCD apps with cascade deletion (keeps GitOps operator)
 # ArgoCD deletes managed resources before removing the app
@@ -233,17 +240,29 @@ dedicate-masters:
 	@echo "Master nodes are now dedicated (no longer schedulable for regular workloads)"
 	@oc get nodes
 
-# Deploy demos ApplicationSet (optional)
-demos:
-	@echo "Deploying demos ApplicationSet..."
-	@oc apply -f components/argocd/apps/cluster-demos-appset.yaml
-	@echo "Demos ApplicationSet deployed. Syncing demo apps..."
-	@sleep 3
-	@oc get applications.argoproj.io -n openshift-gitops -l app.kubernetes.io/instance=cluster-demos-applicationset 2>/dev/null || \
-	  oc get applications.argoproj.io -n openshift-gitops | grep demo || echo "Waiting for apps to be created..."
+# Install MaaS (PostgreSQL, Gateway, Authorino TLS)
+maas:
+	@scripts/install-maas.sh
 
-# Remove demos ApplicationSet and its apps
-demos-delete:
-	@echo "Removing demos ApplicationSet..."
-	@oc delete applicationset cluster-demos-applicationset -n openshift-gitops --cascade=foreground 2>/dev/null || true
-	@echo "Demos removed."
+# Deploy MaaS model(s) (default: gpt-oss-20b, or MAAS_MODELS from .env)
+# Usage: make maas-model [MODEL=gpt-oss-20b|granite-tiny-gpu|simulator|all]
+maas-model:
+	@scripts/setup-maas-model.sh $(or $(MODEL),)
+
+# Show status of deployed MaaS models
+maas-model-status:
+	@scripts/setup-maas-model.sh --status
+
+# Delete deployed MaaS model(s)
+# Usage: make maas-model-delete [MODEL=gpt-oss-20b|granite-tiny-gpu|simulator|all]
+maas-model-delete:
+	@scripts/setup-maas-model.sh --delete $(or $(MODEL),)
+
+# Verify MaaS deployment (deploy test model, test API, auth, rate limits)
+maas-verify:
+	@scripts/verify-maas.sh
+
+# Remove MaaS resources created by install-maas.sh
+maas-uninstall:
+	@scripts/uninstall-maas.sh
+

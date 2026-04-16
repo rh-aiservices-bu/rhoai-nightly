@@ -16,9 +16,11 @@ spec:
       managementState: Managed
     kserve:
       managementState: Managed
+      modelsAsService:
+        managementState: Managed
       nim:
         managementState: Managed
-      rawDeploymentServiceConfig: Headless
+      rawDeploymentServiceConfig: Headed
     kueue:
       defaultClusterQueueName: default
       defaultLocalQueueName: default

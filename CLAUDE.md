@@ -19,7 +19,7 @@ rhoai-nightly/
 ├── scripts/                              # Pre-GitOps setup scripts
 │   ├── add-pull-secret.sh               # Add quay.io/rhoai pull credentials
 │   ├── create-icsp.sh                   # Create ImageContentSourcePolicy
-│   ├── create-gpu-machineset.sh         # Create GPU MachineSet (g5.2xlarge)
+│   ├── create-gpu-machineset.sh         # Create GPU MachineSet (g6e.2xlarge)
 │   ├── create-cpu-machineset.sh         # Create CPU worker MachineSet (m6a.4xlarge)
 │   ├── install-gitops.sh                # Install GitOps operator + ArgoCD
 │   ├── deploy-apps.sh                   # Deploy root app (triggers GitOps)
@@ -102,7 +102,7 @@ make icsp            # Create ImageContentSourcePolicy
                      # WAITS: ~10-15 min for all nodes to restart
                      # VERIFY: oc get nodes (all Ready)
 
-make gpu             # Create GPU MachineSet (g5.2xlarge, autoscale 1-3)
+make gpu             # Create GPU MachineSet (g6e.2xlarge, autoscale 1-3)
                      # WAITS: Until GPU node is Ready
                      # VERIFY: oc get nodes -l node-role.kubernetes.io/gpu
 
@@ -256,7 +256,7 @@ QUAY_USER=your-username
 QUAY_TOKEN=your-token
 
 # Optional: GPU MachineSet configuration
-GPU_INSTANCE_TYPE=g5.2xlarge    # GPU instance type
+GPU_INSTANCE_TYPE=g6e.2xlarge    # GPU instance type
 GPU_REPLICAS=1                   # Initial replicas
 GPU_ACCESS_TYPE=SHARED           # SHARED or PRIVATE
 GPU_MIN=1                        # Minimum replicas (autoscaling)
@@ -688,7 +688,7 @@ The `.gitignore` file is configured to prevent common secret files from being co
 **Problem**: GPU node not appearing
 - **Cause**: Availability zone has no GPU capacity
 - **Solution**: Specify different AZ with `--az` or `GPU_AZ` env var
-- **Debug**: Check AWS EC2 console for g5.2xlarge availability
+- **Debug**: Check AWS EC2 console for g6e.2xlarge availability
 
 **Problem**: ArgoCD apps not syncing
 - **Cause**: ApplicationSet repo URL may be incorrect
@@ -745,7 +745,7 @@ oc get mcp  # MachineConfigPool status
 - **CLI**: `oc` (OpenShift CLI)
 - **Credentials**: quay.io credentials with access to `quay.io/rhoai` repos
 - **Cluster**: AWS cluster with GPU availability (us-east-2 recommended)
-- **Resources**: Sufficient quota for GPU instances (g5.2xlarge) and CPU workers (m6a.4xlarge)
+- **Resources**: Sufficient quota for GPU instances (g6e.2xlarge) and CPU workers (m6a.4xlarge)
 
 ## Best Practices
 

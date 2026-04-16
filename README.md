@@ -46,7 +46,7 @@ make all sync-disable
 **Phase 1: `infra`** - Infrastructure setup
 - `icsp` - Configure registry mirror
 - `cpu` - Create CPU MachineSet m6a.4xlarge (waits for node Ready)
-- `gpu` - Create GPU MachineSet g5.2xlarge (waits for node Ready)
+- `gpu` - Create GPU MachineSet g6e.2xlarge (waits for node Ready)
 
 **Phase 2: `secrets`** - Pull-secret configuration (auto-detects mode)
 - If `QUAY_USER`/`QUAY_TOKEN` set → uses manual credentials

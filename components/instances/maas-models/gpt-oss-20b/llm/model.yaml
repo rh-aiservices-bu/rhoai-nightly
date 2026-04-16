@@ -68,11 +68,11 @@ spec:
         resources:
           requests:
             cpu: "2"
-            memory: 16Gi
+            memory: 48Gi
             nvidia.com/gpu: "1"
           limits:
             cpu: "4"
-            memory: 24Gi
+            memory: 60Gi
             nvidia.com/gpu: "1"
         volumeMounts:
           - mountPath: /dev/shm

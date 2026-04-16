@@ -142,15 +142,37 @@ After completion, verify:
 
 **Skip if:** `--skip-models` or `--verify-only`.
 
-Check if `MAAS_MODELS` is set in `.env`. If not, the default deploys all models (simulator, gpt-oss-20b, granite-tiny-gpu).
+**Step 1: Check GPU capabilities and MAAS_MODELS setting**
 
-**Important:** GPU models require `nvidia.com/gpu` nodes. Check:
+```bash
+oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{range .items[*]}{.metadata.labels.node\.kubernetes\.io/instance-type}{"\n"}{end}' 2>/dev/null
+oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{range .items[*]}{.status.allocatable.memory}{"\n"}{end}' 2>/dev/null
+oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l
+cat .env 2>/dev/null | grep MAAS_MODELS || echo "MAAS_MODELS not set"
 ```
-oc get nodes -l nvidia.com/gpu.present=true --no-headers | wc -l
-```
-- If 0 GPU nodes: warn the user and ask if they want to skip GPU models
-- If 1 GPU node: warn that only one GPU model can run at a time
-- If 2+ GPU nodes: proceed with all models
+
+**Step 2: If MAAS_MODELS is already set in .env**, use it as-is (user has already chosen).
+
+**Step 3: If MAAS_MODELS is NOT set**, make a GPU-aware recommendation and ask:
+
+Model resource requirements:
+- **simulator**: CPU only, 256Mi — runs anywhere
+- **gpt-oss-20b**: 1 GPU, 60Gi RAM limit (48Gi request) — needs 64GB+ system RAM
+- **granite-tiny-gpu**: 1 GPU, 24Gi RAM limit (8Gi request) — fits on any GPU node
+
+Decision table:
+
+| GPU Nodes | Instance Type | RAM | Recommendation |
+|-----------|--------------|-----|----------------|
+| 0 | — | — | simulator only |
+| 1 | g5.2xlarge | 32GB | simulator + granite-tiny-gpu (24Gi fits). gpt-oss-20b won't fit (60Gi limit > 32GB). |
+| 1 | g6e.2xlarge | 64GB | simulator + gpt-oss-20b + granite-tiny-gpu (both fit). One GPU model at a time. |
+| 1 | g5.4xlarge+ | 64GB+ | simulator + gpt-oss-20b + granite-tiny-gpu (but 1 GPU, models share) |
+| 2+ | any | — | all models |
+
+Present the recommendation and let the user choose. Then update `MAAS_MODELS` in `.env` accordingly.
+
+**Step 4: Deploy**
 
 Run `make maas-model` in the background. Monitor with:
 ```

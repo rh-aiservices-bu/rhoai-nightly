@@ -242,15 +242,28 @@ log_step "Waiting for models to be ready"
 # Wait for pods
 log_info "Waiting for model pods..."
 TIMEOUT=300
-# GPU models need more time to download weights
+# GPU models need more time (image pull ~8GB + vLLM model loading)
+# Check by nvidia.com/gpu resource request, not directory name
 for path in $MODEL_PATHS; do
-    if [[ "$(basename "$path")" == *gpu* ]]; then
-        TIMEOUT=600
+    if grep -rq "nvidia.com/gpu" "$path" 2>/dev/null; then
+        TIMEOUT=900
         log_info "GPU model detected, extending timeout to ${TIMEOUT}s"
         break
     fi
 done
 
+# First wait for at least one pod to appear (controller needs time to create deployment)
+ELAPSED=0
+while [ $ELAPSED -lt 60 ]; do
+    TOTAL_PODS=$(oc get pods -n llm --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$TOTAL_PODS" -ge 1 ]; then
+        break
+    fi
+    sleep 5
+    ELAPSED=$((ELAPSED + 5))
+done
+
+# Then wait for all pods to be Running
 ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
     TOTAL_PODS=$(oc get pods -n llm --no-headers 2>/dev/null | wc -l | tr -d ' ')
@@ -261,8 +274,8 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         log_info "All model pods running ($READY_PODS/$TOTAL_PODS)"
         break
     fi
-    sleep 10
-    ELAPSED=$((ELAPSED + 10))
+    sleep 15
+    ELAPSED=$((ELAPSED + 15))
     if [ $((ELAPSED % 30)) -eq 0 ]; then
         log_info "Waiting for model pods... (${ELAPSED}s, running: $READY_PODS/$TOTAL_PODS)"
     fi

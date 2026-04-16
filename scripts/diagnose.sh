@@ -144,7 +144,13 @@ TOTAL_NODES=$(oc get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
 READY_NODES=$(oc get nodes --no-headers 2>/dev/null | count_matches " Ready")
 MASTER_NODES=$(oc get nodes -l node-role.kubernetes.io/master --no-headers 2>/dev/null | wc -l | tr -d ' ')
 WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker,\!node-role.kubernetes.io/master --no-headers 2>/dev/null | wc -l | tr -d ' ')
-GPU_NODES=$(oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l | tr -d ' ')
+# Check for GPU nodes using nvidia label (works on all clusters) with role label as fallback
+GPU_NODES=$(oc get nodes -l nvidia.com/gpu.present=true --no-headers 2>/dev/null | wc -l | tr -d ' ')
+GPU_SELECTOR="nvidia.com/gpu.present=true"
+if [[ "$GPU_NODES" -eq 0 ]]; then
+    GPU_NODES=$(oc get nodes -l $GPU_SELECTOR --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    GPU_SELECTOR="node-role.kubernetes.io/gpu"
+fi
 
 READY_NODES=${READY_NODES:-0}
 TOTAL_NODES=${TOTAL_NODES:-0}
@@ -171,12 +177,12 @@ fi
 
 # GPU details
 if [[ "$GPU_NODES" -gt 0 ]]; then
-    GPU_INSTANCE=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")
-    GPU_MEM=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].status.allocatable.memory}' 2>/dev/null || echo "unknown")
+    GPU_INSTANCE=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")
+    GPU_MEM=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].status.allocatable.memory}' 2>/dev/null || echo "unknown")
     pass "GPU" "$GPU_NODES node(s) — $GPU_INSTANCE ($GPU_MEM allocatable)"
 
     # Check for cordoned GPU nodes (Issue 10)
-    GPU_CORDONED=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{range .items[*]}{.spec.unschedulable}{"\n"}{end}' 2>/dev/null | count_matches "true")
+    GPU_CORDONED=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{range .items[*]}{.spec.unschedulable}{"\n"}{end}' 2>/dev/null | count_matches "true")
     if [[ "$GPU_CORDONED" -gt 0 ]]; then
         warn "GPU Cordoned" "$GPU_CORDONED GPU node(s) are cordoned (unschedulable) — pods can't schedule"
         recommend "Uncordon GPU node: oc adm uncordon \$(oc get node -l node-role.kubernetes.io/gpu -o name)"
@@ -375,7 +381,13 @@ if [[ -n "$DSC_PHASE" ]]; then
     if [[ "$DSC_PHASE" == "Ready" ]]; then
         pass "DSC" "Ready"
     else
-        warn "DSC" "$DSC_PHASE"
+        # Check if Not Ready is just due to missing MaaS prereqs (expected before make maas)
+        MAAS_MSG=$(oc get datascienceclusters -o jsonpath='{.items[0].status.conditions[?(@.type=="ModelsAsServiceReady")].message}' 2>/dev/null || echo "")
+        if echo "$MAAS_MSG" | grep -q "maas-db-config.*not found\|database Secret"; then
+            info "DSC" "$DSC_PHASE (MaaS prereqs missing — run 'make maas' to fix)"
+        else
+            warn "DSC" "$DSC_PHASE"
+        fi
     fi
 
     if [[ "$VERBOSE" == "true" ]]; then

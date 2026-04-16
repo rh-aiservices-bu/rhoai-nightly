@@ -95,7 +95,12 @@ TOTAL_NODES=$(oc get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
 READY_NODES=$(oc get nodes --no-headers 2>/dev/null | count_matches " Ready")
 MASTER_NODES=$(oc get nodes -l node-role.kubernetes.io/master --no-headers 2>/dev/null | wc -l | tr -d ' ')
 WORKER_NODES=$(oc get nodes -l node-role.kubernetes.io/worker,\!node-role.kubernetes.io/master --no-headers 2>/dev/null | wc -l | tr -d ' ')
-GPU_NODES=$(oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l | tr -d ' ')
+GPU_NODES=$(oc get nodes -l nvidia.com/gpu.present=true --no-headers 2>/dev/null | wc -l | tr -d ' ')
+GPU_SELECTOR="nvidia.com/gpu.present=true"
+if [[ "$GPU_NODES" -eq 0 ]]; then
+    GPU_NODES=$(oc get nodes -l $GPU_SELECTOR --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    GPU_SELECTOR="node-role.kubernetes.io/gpu"
+fi
 
 if [[ "$TOTAL_NODES" -eq 0 ]]; then
     fail "Nodes" "No nodes found"
@@ -120,7 +125,7 @@ fi
 
 # GPU — warn only (not required for basic install, just for GPU models)
 if [[ "$GPU_NODES" -gt 0 ]]; then
-    GPU_INSTANCE=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")
+    GPU_INSTANCE=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")
     pass "GPU Nodes" "$GPU_NODES node(s) ($GPU_INSTANCE)"
 else
     info "GPU Nodes" "None — 'make gpu' will create during install"

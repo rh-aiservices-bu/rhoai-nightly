@@ -146,7 +146,12 @@ get_model_requirements() {
 }
 
 # Determine GPU type — from cluster first, then .env, then default
-GPU_INSTANCE_ON_CLUSTER=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "")
+# Check nvidia label first (works on all clusters), fall back to role label
+GPU_SELECTOR="nvidia.com/gpu.present=true"
+if ! oc get nodes -l "$GPU_SELECTOR" --no-headers 2>/dev/null | grep -q .; then
+    GPU_SELECTOR="node-role.kubernetes.io/gpu"
+fi
+GPU_INSTANCE_ON_CLUSTER=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "")
 GPU_INSTANCE_IN_ENV="${GPU_INSTANCE_TYPE:-}"
 GPU_INSTANCE_DEFAULT="g6e.2xlarge"
 
@@ -164,15 +169,15 @@ fi
 GPU_SPECS=$(get_gpu_specs "$GPU_TYPE")
 GPU_VRAM="${GPU_SPECS%%|*}"
 GPU_RAM="${GPU_SPECS##*|}"
-GPU_NODE_COUNT=$(oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l | tr -d ' ')
+GPU_NODE_COUNT=$(oc get nodes -l $GPU_SELECTOR --no-headers 2>/dev/null | wc -l | tr -d ' ')
 
 info "GPU Type" "$GPU_TYPE — from $GPU_SOURCE"
 info "GPU Nodes" "$GPU_NODE_COUNT on cluster"
 
 # Get actual specs from the GPU node (more accurate than instance type table)
-NODE_ALLOC_KI=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].status.allocatable.memory}' 2>/dev/null | sed 's/Ki//' || echo "0")
-GPU_VRAM_MIB=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.memory}' 2>/dev/null || echo "0")
-GPU_PRODUCT=$(oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.product}' 2>/dev/null || echo "unknown")
+NODE_ALLOC_KI=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].status.allocatable.memory}' 2>/dev/null | sed 's/Ki//' || echo "0")
+GPU_VRAM_MIB=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.memory}' 2>/dev/null || echo "0")
+GPU_PRODUCT=$(oc get nodes -l $GPU_SELECTOR -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.product}' 2>/dev/null || echo "unknown")
 
 if [[ "$NODE_ALLOC_KI" -gt 0 ]]; then
     NODE_ALLOC_GI=$((NODE_ALLOC_KI / 1024 / 1024))

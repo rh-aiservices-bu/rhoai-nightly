@@ -103,7 +103,7 @@ make sync-app APP=nfd # Sync a single app
 
 # MaaS (Models as a Service)
 make maas             # Install MaaS platform (secrets, Gateway, Authorino SSL)
-make maas-model       # Deploy models (default: all — simulator + GPU models)
+make maas-model       # Deploy models (default: gpt-oss-20b)
 make maas-model-status # Show deployed model status
 make maas-verify      # Full end-to-end verification
 make maas-uninstall   # Remove MaaS platform
@@ -112,9 +112,10 @@ make maas-uninstall   # Remove MaaS platform
 ## Validation
 
 ```bash
-make check    # Verify cluster connection
-make status   # Show ArgoCD app status
-make validate # Full validation
+make preflight       # Quick cluster readiness check
+make validate-config # Validate .env against cluster capabilities
+make status          # Show ArgoCD app status
+make diagnose        # Comprehensive cluster diagnosis
 ```
 
 ## Other Commands
@@ -159,8 +160,8 @@ make maas-model MODEL=granite-tiny-gpu  # Deploy Granite tiny (GPU)
 
 Available models:
 - **simulator** — CPU-only mock (~256Mi RAM, instant startup)
-- **gpt-oss-20b** — OpenAI gpt-oss-20b on vLLM CUDA (1 GPU, 24Gi RAM, 5-15 min startup)
-- **granite-tiny-gpu** — RedHatAI Granite 4.0-h-tiny FP8 on vLLM CUDA (1 GPU, 64Gi RAM)
+- **gpt-oss-20b** — OpenAI gpt-oss-20b on vLLM CUDA (1 GPU, 60Gi RAM, 5-15 min startup)
+- **granite-tiny-gpu** — RedHatAI Granite 4.0-h-tiny FP8 on vLLM CUDA (1 GPU, 24Gi RAM)
 
 Each model gets two subscription tiers:
 - **Free**: 100 tokens/min (all authenticated users)
@@ -168,7 +169,7 @@ Each model gets two subscription tiers:
 
 Configure default models in `.env`:
 ```bash
-MAAS_MODELS=simulator gpt-oss-20b
+MAAS_MODELS=gpt-oss-20b granite-tiny-gpu
 ```
 
 ### Verify

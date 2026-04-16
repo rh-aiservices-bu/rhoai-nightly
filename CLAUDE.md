@@ -28,7 +28,9 @@ rhoai-nightly/
 │   ├── setup-maas-model.sh             # Deploy/delete/status MaaS models
 │   ├── verify-maas.sh                  # End-to-end MaaS verification
 │   ├── status.sh                        # Show ArgoCD app status
-│   ├── validate.sh                      # Validate cluster state
+│   ├── diagnose.sh                      # Comprehensive cluster diagnosis
+│   ├── preflight-check.sh              # Quick cluster readiness check
+│   ├── validate-config.sh              # Validate .env against cluster capabilities
 │   ├── scale-machineset.sh              # Scale MachineSets
 │   └── configure-repo.sh                # Update repo URLs for forks
 │
@@ -91,8 +93,9 @@ rhoai-nightly/
 
 ```bash
 # Phase 0: Cluster Preparation
-make check           # Verify cluster connection
+make preflight       # Quick cluster readiness check
 cp .env.example .env # Configure credentials (edit .env)
+make validate-config # Validate .env against cluster capabilities
 
 # Phase 1: Pre-GitOps Setup (run individually, verify each)
 make pull-secret     # Add quay.io/rhoai credentials
@@ -124,7 +127,7 @@ make deploy          # Deploy root app (triggers all ApplicationSets)
 
 # Phase 3: Monitor Deployment
 make status          # Show ArgoCD application sync status
-make validate        # Validate full cluster state
+make diagnose        # Comprehensive cluster diagnosis
 ```
 
 **Key principle**: After each step, STOP and verify before continuing. This allows for troubleshooting if issues occur.
@@ -161,9 +164,10 @@ make bootstrap       # Run gitops + deploy together
 ### Validation & Monitoring
 
 ```bash
-make check           # Verify cluster connection (oc whoami, oc get nodes)
+make preflight       # Quick cluster readiness check (connection, nodes, basics)
+make validate-config # Validate .env against cluster capabilities
 make status          # Show ArgoCD application sync status
-make validate        # Full cluster validation
+make diagnose        # Comprehensive cluster diagnosis (full health check)
 ```
 
 ### Maintenance Operations
@@ -183,8 +187,8 @@ make refresh-apps    # Refresh from git AND sync all apps (one-time)
 make scale NAME=<machineset> REPLICAS=<N|+N|-N>
                      # Scale a MachineSet
                      # Examples:
-                     #   make scale NAME=gpu-g5-2xlarge REPLICAS=2
-                     #   make scale NAME=gpu-g5-2xlarge REPLICAS=+1
+                     #   make scale NAME=gpu-g6e-2xlarge REPLICAS=2
+                     #   make scale NAME=gpu-g6e-2xlarge REPLICAS=+1
                      #   make scale NAME=cpu-m6a-4xlarge REPLICAS=-1
 
 make dedicate-masters # Remove worker role from master nodes
@@ -195,9 +199,9 @@ make dedicate-masters # Remove worker role from master nodes
 
 ```bash
 make maas            # Install MaaS platform (secrets, ArgoCD app, Authorino SSL)
-make maas-model      # Deploy models (default: all — simulator, gpt-oss-20b, granite-tiny-gpu)
+make maas-model      # Deploy models (default: gpt-oss-20b)
                      # Override: make maas-model MODEL=simulator
-                     # Or set MAAS_MODELS in .env: MAAS_MODELS=simulator gpt-oss-20b
+                     # Or set MAAS_MODELS in .env: MAAS_MODELS=gpt-oss-20b granite-tiny-gpu
 make maas-model-status # Show deployed model status
 make maas-model-delete # Delete models (same MODEL= or MAAS_MODELS logic)
 make maas-verify     # Full end-to-end verification (deploys temp model, tests, cleans up)
@@ -206,8 +210,8 @@ make maas-uninstall  # Remove MaaS platform (deletes ArgoCD app + secrets + Auth
 
 Available models:
 - `simulator` — CPU-only mock (~256Mi RAM, no real LLM)
-- `gpt-oss-20b` — OpenAI gpt-oss-20b on vLLM GPU (1 GPU, 24Gi RAM)
-- `granite-tiny-gpu` — RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU (1 GPU, 64Gi RAM)
+- `gpt-oss-20b` — OpenAI gpt-oss-20b on vLLM GPU (1 GPU, 60Gi RAM)
+- `granite-tiny-gpu` — RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU (1 GPU, 24Gi RAM)
 
 Each model gets free tier (100 tokens/min, all authenticated users) and premium tier (100000 tokens/min, all authenticated users).
 
@@ -512,7 +516,7 @@ Models are defined as kustomize manifests in `components/instances/maas-models/`
 - `llm/` — LLMInferenceService (the workload)
 - `maas/` — MaaSModelRef + MaaSAuthPolicy + MaaSSubscription (free + premium tiers)
 
-`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for default model selection (default: `all`).
+`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for default model selection (default: `gpt-oss-20b`).
 
 ### MaaS Verification
 
@@ -588,10 +592,10 @@ Most scripts support both CLI arguments and environment variables:
 
 ```bash
 # Via CLI arguments
-scripts/create-gpu-machineset.sh --instance-type g5.4xlarge --replicas 2
+scripts/create-gpu-machineset.sh --instance-type g6e.4xlarge --replicas 2
 
 # Via environment variables
-GPU_INSTANCE_TYPE=g5.4xlarge GPU_REPLICAS=2 scripts/create-gpu-machineset.sh
+GPU_INSTANCE_TYPE=g6e.4xlarge GPU_REPLICAS=2 scripts/create-gpu-machineset.sh
 
 # Via .env file (loaded by Makefile)
 # Edit .env, then run:
@@ -751,7 +755,7 @@ oc get mcp  # MachineConfigPool status
 
 ### When Working with This Repository
 
-1. **Always verify cluster connection** before running commands (`make check`)
+1. **Always verify cluster connection** before running commands (`make preflight`)
 2. **Use incremental workflow** unless explicitly requested to run autonomously
 3. **Wait for each phase to complete** before proceeding to the next
 4. **Review git diffs** before committing to ensure no secrets are included

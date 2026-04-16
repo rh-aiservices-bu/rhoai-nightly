@@ -164,7 +164,7 @@ Available models:
 
 Each model gets two subscription tiers:
 - **Free**: 100 tokens/min (all authenticated users)
-- **Premium**: 10000 tokens/min (all authenticated users)
+- **Premium**: 100000 tokens/min (all authenticated users)
 
 Configure default models in `.env`:
 ```bash

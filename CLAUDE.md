@@ -209,7 +209,7 @@ Available models:
 - `gpt-oss-20b` — OpenAI gpt-oss-20b on vLLM GPU (1 GPU, 24Gi RAM)
 - `granite-tiny-gpu` — RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU (1 GPU, 64Gi RAM)
 
-Each model gets free tier (100 tokens/min, all authenticated users) and premium tier (10000 tokens/min, all authenticated users).
+Each model gets free tier (100 tokens/min, all authenticated users) and premium tier (100000 tokens/min, all authenticated users).
 
 ### Repository Configuration (for forks)
 

@@ -15,6 +15,6 @@ spec:
     - name: gpt-oss-20b
       namespace: llm
       tokenRateLimits:
-        - limit: 10000
+        - limit: 100000
           window: 1m
   priority: 20

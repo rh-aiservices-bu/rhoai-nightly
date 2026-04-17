@@ -62,6 +62,7 @@ rhoai-nightly/
 │   │       └── kustomization.yaml
 │   │
 │   ├── operators/                       # Operator subscriptions
+│   │   ├── nfs-provisioner/             # NFS Provisioner for RWX PVCs
 │   │   ├── nfd/                         # Node Feature Discovery
 │   │   ├── nvidia-operator/             # NVIDIA GPU Operator
 │   │   ├── rhoai-operator/              # RHOAI operator + nightly catalog
@@ -73,6 +74,7 @@ rhoai-nightly/
 │   │   └── cluster-observability-operator/ # COO (Perses CRDs for Observability dashboard)
 │   │
 │   └── instances/                       # Operator instances/configs
+│       ├── nfs-instance/                # NFSProvisioner CR (RWX StorageClass)
 │       ├── nfd-instance/                # NFD NodeFeatureDiscovery CR
 │       ├── nvidia-instance/             # ClusterPolicy for GPU
 │       ├── rhoai-instance/              # base + overlays (maas, maas-observability)
@@ -487,6 +489,7 @@ Operators and instances have dependencies that must be respected:
 - `nvidia-instance` requires `nfd-instance` (NFD must label GPU nodes first)
 - `rhoai-instance` requires `rhoai-operator` to be ready
 - Service Mesh instances require Service Mesh operator
+- `nfs-instance` requires `nfs-provisioner` operator (no other dependencies)
 
 The ApplicationSets handle this by deploying all operators first, then all instances.
 

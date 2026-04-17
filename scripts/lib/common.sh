@@ -25,6 +25,8 @@ SYNC_ORDER=(
     # Phase 1: Foundation (no dependencies)
     "external-secrets-operator"
     "instance-external-secrets"
+    "nfs-provisioner"
+    "instance-nfs"
     "nfd"
     "instance-nfd"
     "nvidia-operator"
@@ -77,12 +79,14 @@ MANAGED_NAMESPACES=(
     "openshift-lws-operator"
     "openshift-jobset-operator"
     "cert-manager-operator"
+    "nfs-provisioner"
 )
 
 # CRDs that must exist before syncing instance apps
 # Uses a function instead of associative array for bash 3.2 compatibility
 get_required_crd() {
     case "$1" in
+        instance-nfs)     echo "nfsprovisioners.cache.jhouse.com" ;;
         instance-nfd)     echo "nodefeaturediscoveries.nfd.openshift.io" ;;
         instance-nvidia)  echo "clusterpolicies.nvidia.com" ;;
         instance-lws)     echo "leaderworkersetoperators.operator.openshift.io" ;;
@@ -145,6 +149,7 @@ OPERATOR_NAMESPACES=(
 # Uses a function instead of associative array for bash 3.2 compatibility
 get_operator_csv_info() {
     case "$1" in
+        nfs-provisioner)        echo "nfs-provisioner-operator|nfs-provisioner" ;;
         nfd)                    echo "nfd|openshift-nfd" ;;
         nvidia-operator)        echo "gpu-operator-certified|nvidia-gpu-operator" ;;
         cert-manager)           echo "cert-manager-operator|cert-manager-operator" ;;

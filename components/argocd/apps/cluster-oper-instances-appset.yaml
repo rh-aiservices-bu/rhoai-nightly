@@ -56,6 +56,11 @@ spec:
           # observability is off.
           - cluster: local
             values:
+              name: instance-nfs
+              path: components/instances/nfs-instance/base
+              namespace: openshift-gitops
+          - cluster: local
+            values:
               name: instance-rhoai
               path: components/instances/rhoai-instance/overlays/maas
               namespace: openshift-gitops

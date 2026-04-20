@@ -46,7 +46,7 @@ make all sync-disable
 **Phase 1: `infra`** - Infrastructure setup
 - `icsp` - Configure registry mirror
 - `cpu` - Create CPU MachineSet m6a.4xlarge (waits for node Ready)
-- `gpu` - Create GPU MachineSet g5.2xlarge (waits for node Ready)
+- `gpu` - Create GPU MachineSet g6e.2xlarge (waits for node Ready)
 
 **Phase 2: `secrets`** - Pull-secret configuration (auto-detects mode)
 - If `QUAY_USER`/`QUAY_TOKEN` set → uses manual credentials
@@ -62,6 +62,12 @@ make all sync-disable
 **Phase 5: `sync`** - Staged deployment
 - Syncs all apps one-by-one in dependency order
 - Enables auto-sync on each app after it's healthy
+
+**Phase 6: `maas`** - Models as a Service
+- Creates PostgreSQL secrets (generated password)
+- Creates ArgoCD Application with Helm chart (Gateway, GatewayClass, PostgreSQL)
+- Configures Authorino SSL for MaaS API authentication
+- Waits for Gateway and maas-api to be ready
 
 Optionally run `make dedicate-masters` to remove worker role from master nodes.
 
@@ -94,14 +100,22 @@ make bootstrap        # Run gitops + deploy
 # Sync
 make sync             # Staged sync all apps in order (RECOMMENDED)
 make sync-app APP=nfd # Sync a single app
+
+# MaaS (Models as a Service)
+make maas             # Install MaaS platform (secrets, Gateway, Authorino SSL)
+make maas-model       # Deploy models (default: gpt-oss-20b)
+make maas-model-status # Show deployed model status
+make maas-verify      # Full end-to-end verification
+make maas-uninstall   # Remove MaaS platform
 ```
 
 ## Validation
 
 ```bash
-make check    # Verify cluster connection
-make status   # Show ArgoCD app status
-make validate # Full validation
+make preflight       # Quick cluster readiness check
+make validate-config # Validate .env against cluster capabilities
+make status          # Show ArgoCD app status
+make diagnose        # Comprehensive cluster diagnosis
 ```
 
 ## Other Commands
@@ -111,6 +125,78 @@ make refresh                             # GitOps refresh - pull latest from git
 make restart-catalog                     # Restart catalog pod and operator (force image pull)
 make scale NAME=<machineset> REPLICAS=N  # Scale a MachineSet
 make dedicate-masters                    # Remove worker role from masters
+```
+
+## MaaS (Models as a Service)
+
+MaaS provides API key management, subscriptions, and rate limiting for LLM inference services on RHOAI.
+
+### What Gets Deployed
+
+| Component | Managed By | Description |
+|-----------|-----------|-------------|
+| PostgreSQL | Helm chart (ArgoCD) | Database for API key storage (POC, emptyDir) |
+| Gateway + GatewayClass | Helm chart (ArgoCD) | LoadBalancer gateway for MaaS traffic |
+| PostgreSQL secrets | install-maas.sh | Generated password, DB connection URL |
+| Authorino SSL | install-maas.sh | Env vars for TLS trust |
+| maas-api, maas-controller | RHOAI operator | Deployed automatically when DSC has modelsAsService: Managed |
+
+### Install Platform
+
+```bash
+make maas
+```
+
+Auto-detects cluster domain and TLS cert name, creates secrets, deploys the Helm chart via ArgoCD, and configures Authorino. ELB DNS propagation may take 2-5 minutes after install.
+
+### Deploy Models
+
+```bash
+make maas-model                         # Deploy default model (gpt-oss-20b)
+make maas-model MODEL=simulator         # Deploy simulator only (CPU)
+make maas-model MODEL=gpt-oss-20b      # Deploy gpt-oss-20b (GPU)
+make maas-model MODEL=granite-tiny-gpu  # Deploy Granite tiny (GPU)
+```
+
+Available models:
+- **simulator** — CPU-only mock (~256Mi RAM, instant startup)
+- **gpt-oss-20b** — OpenAI gpt-oss-20b on vLLM CUDA (1 GPU, 60Gi RAM, 5-15 min startup)
+- **granite-tiny-gpu** — RedHatAI Granite 4.0-h-tiny FP8 on vLLM CUDA (1 GPU, 24Gi RAM)
+
+Each model gets two subscription tiers:
+- **Free**: 100 tokens/min (all authenticated users)
+- **Premium**: 100000 tokens/min (all authenticated users)
+
+Configure default models in `.env`:
+```bash
+MAAS_MODELS=gpt-oss-20b granite-tiny-gpu
+```
+
+### Verify
+
+```bash
+make maas-verify   # Full end-to-end test (deploys temp model, tests API/auth/rate limits, cleans up)
+```
+
+### Manage Models
+
+```bash
+make maas-model-status                   # Show all deployed models
+make maas-model-delete MODEL=simulator   # Delete one model
+make maas-model-delete MODEL=all         # Delete all models
+```
+
+### Uninstall
+
+```bash
+make maas-uninstall   # Remove MaaS platform (cascade-deletes Gateway, PostgreSQL, secrets)
+```
+
+### Dry Run
+
+```bash
+make maas -- --dry-run        # Preview install without applying
+make maas-uninstall -- --dry-run  # Preview uninstall
 ```
 
 ## Sync Control

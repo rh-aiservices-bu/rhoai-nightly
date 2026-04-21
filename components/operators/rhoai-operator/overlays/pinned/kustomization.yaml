@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Pinned RHOAI catalog overlay
+# Uses a specific catalog image instead of floating nightly tag
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: CatalogSource
+      name: rhoai-catalog-nightly
+    patch: |-
+      - op: replace
+        path: /spec/image
+        # Pinned to Apr 21 nightly build (sha256:be75732f)
+        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4@sha256:be75732f630028b781c1d84cf2d70fbeac9c5929cc7b92df1b84dbf3fcc0a61f

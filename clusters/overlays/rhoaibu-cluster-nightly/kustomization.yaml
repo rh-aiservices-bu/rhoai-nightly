@@ -1,17 +1,48 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# rhoaibu-cluster-nightly overlay
+# Apply with: kubectl apply -k clusters/overlays/rhoaibu-cluster-nightly
+#
+# Customizations:
+# - Pinned RHOAI catalog (stable sha256 instead of floating nightly)
+# - Console notification banner
+
 resources:
   - ../../base
+  - console-notification     # Direct resource, not via ApplicationSet
 
 patches:
+  # Exclude rhoai-operator from auto-discovery (will be added explicitly with pinned path)
   - target:
       group: argoproj.io
       kind: ApplicationSet
       name: cluster-operators-applicationset
-    path: patch-cluster-operators-appset.yaml
+    patch: |-
+      - op: add
+        path: /spec/generators/0/git/directories/-
+        value:
+          path: components/operators/rhoai-operator
+          exclude: true
+
+  # Add pinned rhoai-operator only (no console-notification here - it's a direct resource)
   - target:
       group: argoproj.io
       kind: ApplicationSet
       name: cluster-oper-instances-applicationset
-    path: patch-cluster-oper-instances-appset.yaml
+    patch: |-
+      - op: add
+        path: /spec/generators/0/list/elements/-
+        value:
+          cluster: local
+          values:
+            name: rhoai-operator
+            path: components/operators/rhoai-operator/overlays/pinned
+            namespace: openshift-gitops
+
+  # Cluster config ApplicationSet - sets paths to rhoaibu-cluster-nightly overlays
+  - target:
+      group: argoproj.io
+      kind: ApplicationSet
+      name: cluster-config-applicationset
+    path: patch-cluster-config-appset.yaml

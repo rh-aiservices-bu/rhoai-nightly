@@ -17,6 +17,7 @@ spec:
     disableTracking: false
     genAiStudio: true
     modelAsService: true
+    observabilityDashboard: true
   hardwareProfileOrder: []
   notebookController:
     enabled: true

@@ -6,10 +6,15 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 spec:
   applicationsNamespace: redhat-ods-applications
+  # Monitoring is Managed (the rhods-operator owns its monitoring CRs), but no
+  # `metrics` block here — populating `metrics.storage` triggers the operator's
+  # full observability cascade (MonitoringStack, ThanosQuerier, Perses, Tempo,
+  # OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint). That cascade is
+  # substantial memory pressure on the control plane and is applied via the
+  # `overlays/maas-observability/` overlay (by `make observability`) AFTER a
+  # settle-gate confirms the cluster can handle it.
   monitoring:
     managementState: Managed
-    metrics: {}
-    namespace: redhat-ods-monitoring
   trustedCABundle:
     customCABundle: ""
     managementState: Managed

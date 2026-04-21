@@ -20,8 +20,14 @@
 #   ./install-maas.sh [OPTIONS]
 #
 # Options:
-#   --dry-run         Preview without applying
-#   -h, --help        Show this help message
+#   --dry-run   Preview without applying
+#   -h, --help  Show this help message
+#
+# This script installs ONLY the MaaS platform. The Observability dashboard
+# backend (Perses, Tempo, OTel, Kuadrant observability, ServiceMonitors,
+# TelemetryPolicy) is a separate operation because its monitoring cascade
+# puts significant memory pressure on the control plane. Run
+# 'make observability' after the cluster is healthy to enable it.
 #
 
 set -euo pipefail
@@ -50,8 +56,16 @@ while [[ $# -gt 0 ]]; do
 Usage: $0 [OPTIONS]
 
 Options:
-  --dry-run         Preview without applying
-  -h, --help        Show this help message
+  --dry-run   Preview without applying
+  -h, --help  Show this help message
+
+install-maas.sh installs only the MaaS platform (Postgres+PVC, Gateway,
+Authorino SSL, ArgoCD Application pinned to the no-cascade 'maas' overlay).
+
+The MaaS Observability dashboard backend (Perses, Tempo, OTel, ServiceMonitors,
+TelemetryPolicy) is no longer installed as part of 'make maas'. That cascade is
+heavy on the control plane, so it's gated behind its own entrypoint with a
+settle-gate. Run 'make observability' separately after the cluster is healthy.
 EOF
             exit 0
             ;;
@@ -246,10 +260,12 @@ log_step "Phase 5: Validate MaaS deployment"
 
 if [ "$DRY_RUN" = true ]; then
     log_info "[DRY RUN] Skipping validation"
+
     log_info "========================================="
     log_info "MaaS Installation Summary (DRY RUN)"
     log_info "========================================="
-    log_info "MaaS API URL: https://maas.${CLUSTER_DOMAIN}"
+    log_info "MaaS API URL:  https://maas.${CLUSTER_DOMAIN}"
+    log_info "Observability: NOT installed — run 'make observability' separately"
     log_info "All phases completed in dry-run mode"
     log_info "========================================="
     exit 0
@@ -302,14 +318,20 @@ HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://maas.${CLUSTER_DOMA
 log_info "========================================="
 log_info "MaaS Installation Summary"
 log_info "========================================="
-log_info "MaaS API URL: https://maas.${CLUSTER_DOMAIN}"
-log_info "PostgreSQL:   deployed in ${NAMESPACE}"
-log_info "Gateway:      Programmed=${GATEWAY_STATUS}"
-log_info "Health check: HTTP ${HTTP_CODE}"
+log_info "MaaS API URL:  https://maas.${CLUSTER_DOMAIN}"
+log_info "PostgreSQL:    deployed in ${NAMESPACE}"
+log_info "Gateway:       Programmed=${GATEWAY_STATUS}"
+log_info "Health check:  HTTP ${HTTP_CODE}"
+log_info "Observability: NOT installed — run 'make observability' separately when cluster is healthy"
 if [ "$HTTP_CODE" = "401" ]; then
     log_info "Auth is working (401 = unauthenticated request rejected)"
 elif [ "$HTTP_CODE" = "000" ]; then
     log_info "Health check failed (DNS may still be propagating for LoadBalancer)"
     log_info "ELB DNS typically takes 2-5 minutes to propagate"
 fi
+log_info "========================================="
+log_info "Next steps:"
+log_info "  - Deploy models:    make maas-model"
+log_info "  - Verify install:   make maas-verify"
+log_info "  - Diagnose:         make diagnose   (section 9 covers observability)"
 log_info "========================================="

@@ -1,0 +1,21 @@
+# MaaS observability label/telemetry policies.
+#
+# NOTE: This component only enriches gateway metrics with MaaS-specific
+# labels. The RHOAI console "Observability" dashboard tab is rendered by a
+# Perses backend that the RHOAI operator's Monitoring controller deploys
+# and owns end-to-end. The only prerequisite from this repo is the Cluster
+# Observability Operator — see components/operators/cluster-observability-operator/.
+# Without COO installed, the Perses CRDs aren't registered and the
+# Observability tab shows "Service Unavailable" even with MaaS
+# observability fully applied.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+commonAnnotations:
+  argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+resources:
+  - gateway-telemetry-policy.yaml
+  - istio-gateway-telemetry.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: maas-observability
+      app.kubernetes.io/managed-by: maas-observability

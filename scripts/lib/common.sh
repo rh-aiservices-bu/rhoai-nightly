@@ -44,6 +44,15 @@ SYNC_ORDER=(
     # Phase 3: RHOAI
     "rhoai-operator"
     "instance-rhoai"
+
+    # Phase 4: Observability backend for the RHOAI dashboard Observability tab.
+    # COO provides the Perses CRDs; opentelemetry-operator provides the
+    # OpenTelemetryCollector CRD that the rhods-operator's Monitoring controller
+    # requires when DSCI spec.monitoring.metrics is populated. The RHOAI
+    # operator then creates and owns the Perses CR + datasources + dashboards
+    # in redhat-ods-monitoring automatically. No custom Perses instance needed.
+    "cluster-observability-operator"
+    "opentelemetry-operator"
 )
 
 # Cleanup order: reverse of SYNC_ORDER + cluster-config
@@ -145,6 +154,7 @@ get_operator_csv_info() {
         jobset-operator)        echo "jobset-operator|openshift-jobset-operator" ;;
         connectivity-link)      echo "rhcl-operator|openshift-operators" ;;
         rhoai-operator)         echo "rhods-operator|redhat-ods-operator" ;;
+        cluster-observability-operator) echo "cluster-observability-operator|openshift-operators" ;;
         *)                      echo "" ;;
     esac
 }

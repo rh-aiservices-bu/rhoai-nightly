@@ -24,16 +24,26 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/cluster-health.sh"
 
 QUIET=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quiet) QUIET=true; shift ;;
+        --skip-sizing-check) export SKIP_SIZING_CHECK=1; shift ;;
         -h|--help)
-            echo "Usage: $0 [--quiet]"
+            echo "Usage: $0 [--quiet] [--skip-sizing-check]"
             echo "Checks if the cluster is ready for RHOAI installation."
             echo "Use 'make diagnose' for a full health check."
+            echo ""
+            echo "Options:"
+            echo "  --skip-sizing-check   Downgrade master-sizing FAIL to WARN"
+            echo "  --quiet               Only show warnings and failures"
+            echo ""
+            echo "Env vars:"
+            echo "  PREFLIGHT_SKIP_SIZING=1        Same as --skip-sizing-check"
+            echo "  PREFLIGHT_SIM_INSTANCE_TYPE=…  Simulate a master instance type"
             exit 0
             ;;
         *) shift ;;
@@ -85,7 +95,18 @@ else
 fi
 
 # ─────────────────────────────────────────
-# 2. Node Health (REQUIRED)
+# 2. Control Plane Health (REQUIRED)
+# ─────────────────────────────────────────
+echo ""
+echo -e "${BLUE}Control Plane Health${NC}"
+echo "────────────────────"
+
+check_master_sizing --fail-hard
+check_master_pressure --fail-hard
+check_cluster_operators --fail-hard
+
+# ─────────────────────────────────────────
+# 3. Node Health (REQUIRED)
 # ─────────────────────────────────────────
 echo ""
 echo -e "${BLUE}Node Health${NC}"
@@ -142,7 +163,7 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
     pass ".env File" "Present"
     source "$REPO_ROOT/.env" 2>/dev/null || true
 else
-    warn ".env File" "Not found — will be created from .env.example during install"
+    info ".env File" "Not present — using defaults (override by copying .env.example to .env if needed)"
 fi
 
 # Check credentials availability — one of these must work

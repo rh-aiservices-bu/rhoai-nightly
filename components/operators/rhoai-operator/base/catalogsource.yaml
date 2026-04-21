@@ -5,7 +5,7 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-nightly
+  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4
   displayName: RHOAI 3.4 Nightly
   publisher: RHOAI Dev
   updateStrategy:

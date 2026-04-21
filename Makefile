@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete diagnose preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall diagnose preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -21,10 +21,11 @@ help:
 	@echo "  make all          - Full setup: infra → secrets → gitops → deploy → sync"
 	@echo ""
 	@echo "Phase 1: Infrastructure"
-	@echo "  make infra        - Run icsp, cpu, gpu (no pull-secret, handled by secrets)"
+	@echo "  make infra        - Run icsp, cpu, gpu, uwm (no pull-secret, handled by secrets)"
 	@echo "  make icsp         - Create ICSP (configure registry mirror)"
 	@echo "  make gpu          - Create GPU MachineSet (waits for node Ready)"
 	@echo "  make cpu          - Create CPU MachineSet m6a.4xlarge (waits for node Ready)"
+	@echo "  make uwm          - Enable User Workload Monitoring (waits for Prometheus pod)"
 	@echo "  make dedicate-masters - Remove worker role from masters (optional)"
 	@echo ""
 	@echo "Phase 2: Secrets"
@@ -58,12 +59,17 @@ help:
 	@echo "  make refresh-apps - Refresh and sync all apps (one-time, keeps current sync setting)"
 	@echo ""
 	@echo "MaaS (Models as a Service):"
-	@echo "  make maas           - Install MaaS (PostgreSQL, Gateway, Authorino TLS)"
-	@echo "  make maas-model [MODEL=gpt-oss-20b] - Deploy model (gpt-oss-20b, granite-tiny-gpu, simulator, all)"
+	@echo "  make maas           - Install MaaS platform (PostgreSQL+PVC, Gateway, Authorino TLS)"
+	@echo "                        Does NOT install the observability cascade — run 'make observability'"
+	@echo "                        separately once the cluster is healthy (settle-gate protects masters)."
+	@echo "  make maas-model [MODEL=auto] - Deploy model (auto, gpt-oss-20b, granite-tiny-gpu, simulator, all)"
+	@echo "                                 Default 'auto' picks by GPU VRAM: >=40Gi->gpt-oss-20b, GPU<40Gi->granite-tiny-gpu, no GPU->simulator"
 	@echo "  make maas-model-status - Show deployed model status"
 	@echo "  make maas-model-delete [MODEL=gpt-oss-20b] - Remove a deployed model"
 	@echo "  make maas-verify    - Verify MaaS (deploy simulator, test API, auth, rate limits)"
 	@echo "  make maas-uninstall - Remove MaaS resources created by install-maas.sh"
+	@echo "  make observability  - (Re-)install MaaS observability only (UWM + monitors + Kuadrant)"
+	@echo "  make observability-uninstall - Uninstall MaaS observability (leaves UWM ConfigMap in place)"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
@@ -92,10 +98,17 @@ cpu:
 icsp:
 	@scripts/create-icsp.sh
 
-# Infrastructure setup (icsp, workers - no pull-secret, handled by secrets target)
+# Pre-GitOps: User Workload Monitoring
+# Owned here (not in install-observability.sh) because UWM is a foundational
+# capability other workloads depend on, and its rollout adds measurable
+# memory pressure best applied while the control plane is idle.
+uwm:
+	@scripts/enable-uwm.sh
+
+# Infrastructure setup (icsp, workers, UWM — pull-secret handled by secrets)
 # Each script waits for its resources to be ready before returning
 # CPU before GPU - cheaper instances provision faster
-infra: icsp cpu gpu
+infra: icsp cpu gpu uwm
 	@echo ""
 	@echo "Infrastructure setup complete!"
 
@@ -172,20 +185,11 @@ refresh:
 	@echo "Apps will show OutOfSync if git differs from cluster."
 	@echo "Run 'make sync' to apply changes, or 'make status' to check."
 
-# Restart catalog and operator pods to force image pull
+# Restart catalog and operator pods + re-resolve Subscription
 # Use after updating catalog image and syncing from git
+# Pass RESUB=false to skip the Subscription delete (just bounce pods)
 restart-catalog:
-	@echo "Restarting RHOAI catalog and operator pods..."
-	@echo "Restarting catalog pod..."
-	@oc delete pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly 2>/dev/null || true
-	@echo "Waiting for catalog pod to restart..."
-	@sleep 5
-	@oc wait --for=condition=Ready pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly --timeout=120s 2>/dev/null || true
-	@echo "Restarting RHOAI operator..."
-	@oc delete pod -n redhat-ods-operator -l name=rhods-operator 2>/dev/null || true
-	@echo ""
-	@echo "Pods restarted. Operator will reconcile with latest images."
-	@echo "Monitor with: oc get pods -n redhat-ods-operator -w"
+	@scripts/restart-catalog.sh $(if $(filter false,$(RESUB)),--no-resub)
 
 # Sync all apps one-by-one in dependency order (RECOMMENDED)
 sync:
@@ -265,4 +269,14 @@ maas-verify:
 # Remove MaaS resources created by install-maas.sh
 maas-uninstall:
 	@scripts/uninstall-maas.sh
+
+# Install MaaS observability (UWM + monitors + Kuadrant)
+observability: ## Install MaaS observability (UWM + monitors + Kuadrant)
+	@chmod +x scripts/install-observability.sh
+	@scripts/install-observability.sh
+
+# Uninstall MaaS observability
+observability-uninstall: ## Uninstall MaaS observability
+	@chmod +x scripts/install-observability.sh
+	@scripts/install-observability.sh --uninstall
 

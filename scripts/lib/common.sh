@@ -53,15 +53,19 @@ SYNC_ORDER=(
     # in redhat-ods-monitoring automatically. No custom Perses instance needed.
     "cluster-observability-operator"
     "opentelemetry-operator"
+
+    # Phase 5: Cluster config (ApplicationSets, console notification, cluster RBAC)
+    # Only used on the clusters branch where a cluster-config Application exists.
+    # On main/feature branches this app doesn't exist; sync-app will simply no-op.
+    "cluster-config"
 )
 
-# Cleanup order: reverse of SYNC_ORDER + cluster-config
+# Cleanup order: reverse of SYNC_ORDER
 # Used by desync.sh, undeploy.sh
 CLEANUP_ORDER=()
 for ((i=${#SYNC_ORDER[@]}-1; i>=0; i--)); do
     CLEANUP_ORDER+=("${SYNC_ORDER[i]}")
 done
-CLEANUP_ORDER+=("cluster-config")
 
 # Namespaces created by our GitOps deployment
 MANAGED_NAMESPACES=(

@@ -1,0 +1,32 @@
+# Cluster Observability Operator (COO)
+#
+# Provides the Perses CRDs (Perses, PersesDatasource, PersesDashboard) that
+# back the RHOAI "Observability" dashboard tab in the OpenShift AI console
+# (Observe & monitor -> Dashboard). The console proxies to
+# data-science-perses.redhat-ods-monitoring:8080, which is a Perses instance
+# managed by the perses-operator (packaged inside COO).
+#
+# Install namespace: openshift-cluster-observability-operator
+#
+# This is the upstream-default namespace the RHOAI operator's Monitoring
+# controller assumes. Specifically the rhods-operator creates the
+# NetworkPolicy `perses-operator-access` in redhat-ods-monitoring that only
+# allows ingress from namespace `openshift-cluster-observability-operator`.
+# Installing COO anywhere else (e.g. `openshift-operators`) breaks the
+# perses-operator → Perses backend path, causing PersesDashboard reconciles
+# to fail with "project error: ... context deadline exceeded" and the
+# dashboard UI to error "bad request: metadata.project doesn't exist".
+#
+# COO only supports AllNamespaces install mode, so the OperatorGroup we
+# create here omits spec.targetNamespaces (which means AllNamespaces).
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cluster-observability-operator
+  namespace: openshift-cluster-observability-operator
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: cluster-observability-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

@@ -42,10 +42,18 @@ spec:
               name: instance-kuadrant
               path: components/instances/connectivity-link-instance/base
               namespace: openshift-gitops
+          # instance-rhoai defaults to the `maas` overlay (MaaS on, observability off).
+          # `make observability` flips this to `overlays/maas-observability` after a
+          # settle-gate; `install-observability.sh --uninstall` flips it back.
           - cluster: local
             values:
               name: instance-rhoai
-              path: components/instances/rhoai-instance/base
+              path: components/instances/rhoai-instance/overlays/maas
+              namespace: openshift-gitops
+          - cluster: local
+            values:
+              name: instance-maas-observability
+              path: components/instances/maas-observability/base
               namespace: openshift-gitops
   template:
     metadata:

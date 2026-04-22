@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Overlay: MaaS enabled, monitoring cascade NOT triggered.
+# Base has modelsAsService: Removed and DSCI monitoring.metrics unset.
+# This overlay re-enables MaaS via the operator; observability stays off.
+# To enable the full monitoring cascade, `make observability` flips the
+# ArgoCD Application source to overlays/maas-observability.
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: DataScienceCluster
+      name: default-dsc
+    patch: |-
+      - op: replace
+        path: /spec/components/kserve/modelsAsService/managementState
+        value: Managed

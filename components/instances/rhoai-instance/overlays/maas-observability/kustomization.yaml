@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Overlay: MaaS enabled AND monitoring cascade triggered.
+# Layered on the `maas` overlay: MaaS is Managed, and DSCI monitoring.metrics
+# is populated so the rhods-operator Monitoring controller provisions
+# Perses, TempoStack, OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint,
+# MonitoringStack, ThanosQuerier.
+#
+# This cascade puts substantial memory pressure on the control plane.
+# `scripts/install-observability.sh` runs a settle-gate before flipping the
+# instance-rhoai Application source here — do not hand-apply.
+
+resources:
+  - ../maas
+
+patches:
+  - target:
+      kind: DSCInitialization
+      name: default-dsci
+    patch: |-
+      - op: add
+        path: /spec/monitoring/metrics
+        value:
+          storage:
+            size: 5Gi
+            retention: 1d
+      - op: add
+        path: /spec/monitoring/namespace
+        value: redhat-ods-monitoring

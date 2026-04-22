@@ -1,0 +1,25 @@
+# Red Hat build of OpenTelemetry
+#
+# Provides the OpenTelemetryCollector CRD that the rhods-operator's Monitoring
+# controller requires when DSCI spec.monitoring.metrics is populated. Without
+# this operator the Monitoring CR fails to provision with the error:
+#   "OpenTelemetryCollector operator must be installed for OpenTelemetry configuration"
+#
+# That blocks the full rhods-operator observability chain: MonitoringStack,
+# ThanosQuerier, Perses, PrometheusDatasource, NodeMetricsEndpoint — none of
+# which are deployed until the OTel CRD is available and the Monitoring CR
+# reconciles successfully.
+#
+# Install mode: AllNamespaces — installs into openshift-operators (which
+# already has an OperatorGroup).
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: opentelemetry-product
+  namespace: openshift-operators
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: opentelemetry-product
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

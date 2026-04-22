@@ -16,9 +16,18 @@
 #   ./setup-maas-model.sh [OPTIONS] [MODEL]
 #
 # Models:
-#   simulator       CPU-only mock (default, ~256Mi RAM, no real LLM)
-#   granite-gpu     IBM Granite 3.1 2B on vLLM GPU (requires nvidia.com/gpu)
-#   all             Deploy all models
+#   auto              (default) Inspect cluster and pick the best-fit model:
+#                       no GPU nodes             -> simulator
+#                       GPU VRAM >= 40 GiB       -> gpt-oss-20b
+#                       otherwise                -> granite-tiny-gpu
+#                     VRAM is read from the `nvidia.com/gpu.memory` label set by
+#                     the NVIDIA GPU operator's node feature discovery (~3-5 min
+#                     after a GPU node becomes Ready). If labels aren't present
+#                     yet, falls back to granite-tiny-gpu with a warning.
+#   simulator         CPU-only mock (~256Mi RAM, no real LLM)
+#   granite-tiny-gpu  RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU
+#   gpt-oss-20b       OpenAI gpt-oss-20b on vLLM GPU
+#   all               Deploy all models
 #
 # Options:
 #   --delete        Delete the model instead of deploying
@@ -44,8 +53,8 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Default to MAAS_MODELS env var, then all models
-MODEL="${1:-${MAAS_MODELS:-all}}"
+# Default: CLI arg > MAAS_MODELS env > autodetect ('auto' resolves at runtime)
+MODEL="${1:-${MAAS_MODELS:-auto}}"
 DELETE=false
 STATUS_ONLY=false
 
@@ -61,14 +70,18 @@ Deploy sample models with MaaS access and rate limits.
 Each model gets free tier (100 tokens/min) and premium tier (10000 tokens/min).
 
 Models:
-  simulator         CPU-only mock (default, ~256Mi RAM)
-  gpt-oss-20b       OpenAI gpt-oss-20b on vLLM GPU (requires nvidia.com/gpu)
+  auto              (default) Pick a model based on cluster GPU capacity.
+                      no GPU           -> simulator
+                      GPU VRAM >= 40Gi -> gpt-oss-20b
+                      otherwise        -> granite-tiny-gpu
+  simulator         CPU-only mock (~256Mi RAM, no real LLM)
   granite-tiny-gpu  RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU
+  gpt-oss-20b       OpenAI gpt-oss-20b on vLLM GPU
   all               Deploy all models
 
 Config:
-  Set MAAS_MODELS in .env to deploy multiple models by default:
-    MAAS_MODELS=simulator gpt-oss-20b
+  Set MAAS_MODELS in .env to override the autodetect default:
+    MAAS_MODELS=gpt-oss-20b granite-tiny-gpu
 
 Options:
   --delete        Delete the model(s) instead of deploying
@@ -76,7 +89,8 @@ Options:
   -h, --help      Show this help message
 
 Examples:
-  ./setup-maas-model.sh                            # Deploy simulator (or MAAS_MODELS)
+  ./setup-maas-model.sh                            # Autodetect (or MAAS_MODELS)
+  ./setup-maas-model.sh auto                       # Same; explicit
   ./setup-maas-model.sh simulator gpt-oss-20b      # Deploy specific models
   ./setup-maas-model.sh all                        # Deploy all models
   ./setup-maas-model.sh --delete gpt-oss-20b       # Remove one model
@@ -88,7 +102,7 @@ EOF
         -*) log_error "Unknown option: $1"; exit 1 ;;
         *)
             # Collect all positional args as models (supports: simulator gpt-oss-20b)
-            if [ "$MODEL" = "${MAAS_MODELS:-simulator}" ] && [ -z "${POSITIONAL_SET:-}" ]; then
+            if [ "$MODEL" = "${MAAS_MODELS:-auto}" ] && [ -z "${POSITIONAL_SET:-}" ]; then
                 MODEL="$1"
                 POSITIONAL_SET=true
             else
@@ -98,6 +112,49 @@ EOF
             ;;
     esac
 done
+
+# =============================================================================
+# Autodetect: inspect the cluster and pick a model
+# =============================================================================
+# Requires: oc logged in. Returns ONE model name on stdout.
+autodetect_model() {
+    local gpu_count
+    gpu_count=$(oc get nodes -l nvidia.com/gpu.present=true --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${gpu_count:-0}" == "0" ]]; then
+        log_info "Autodetect: no GPU nodes found -> simulator" >&2
+        echo simulator
+        return
+    fi
+
+    # Largest per-GPU VRAM advertised by any GPU node, in MiB. The label is set
+    # by the NVIDIA GPU operator's node feature discovery and may lag ~3-5 min
+    # after a GPU node becomes Ready.
+    local max_mib
+    max_mib=$(oc get nodes -l nvidia.com/gpu.present=true \
+        -o jsonpath='{range .items[*]}{.metadata.labels.nvidia\.com/gpu\.memory}{"\n"}{end}' 2>/dev/null \
+        | grep -E '^[0-9]+$' | sort -n | tail -1)
+
+    if [[ -z "$max_mib" ]]; then
+        log_warn "Autodetect: $gpu_count GPU node(s) present but nvidia.com/gpu.memory label not found yet" >&2
+        log_warn "           (GPU operator feature discovery may still be catching up)" >&2
+        log_warn "           Falling back to granite-tiny-gpu — override with MAAS_MODELS=gpt-oss-20b if your GPUs are >=40 GiB" >&2
+        echo granite-tiny-gpu
+        return
+    fi
+
+    local max_gib=$(( max_mib / 1024 ))
+    local gpu_product
+    gpu_product=$(oc get nodes -l nvidia.com/gpu.present=true \
+        -o jsonpath='{.items[0].metadata.labels.nvidia\.com/gpu\.product}' 2>/dev/null || echo "unknown")
+
+    if (( max_mib >= 40960 )); then
+        log_info "Autodetect: largest GPU ${gpu_product} @ ${max_gib} GiB VRAM (>=40 GiB) -> gpt-oss-20b" >&2
+        echo gpt-oss-20b
+    else
+        log_info "Autodetect: largest GPU ${gpu_product} @ ${max_gib} GiB VRAM (<40 GiB) -> granite-tiny-gpu" >&2
+        echo granite-tiny-gpu
+    fi
+}
 
 # =============================================================================
 # Resolve model paths
@@ -177,6 +234,18 @@ if ! oc whoami &>/dev/null; then
     exit 1
 fi
 log_info "Connected to: $(oc whoami --show-server)"
+
+# Resolve 'auto' to a concrete model name now that we can talk to the cluster.
+# Handled here (not in arg parsing) because autodetect needs oc to be usable.
+# Use bash parameter expansion (not sed \b) for portability — BSD sed on macOS
+# doesn't understand \b word boundaries and would silently no-op the rewrite.
+# Safe: 'auto' is not a substring of any other valid model name (simulator,
+# granite-tiny-gpu, gpt-oss-20b, all).
+if [[ " $MODEL " == *" auto "* ]]; then
+    RESOLVED=$(autodetect_model)
+    MODEL="${MODEL//auto/$RESOLVED}"
+    log_info "Resolved model list: $MODEL"
+fi
 
 MODEL_PATHS=$(resolve_model_paths "$MODEL") || exit 1
 

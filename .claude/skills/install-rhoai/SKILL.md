@@ -1,35 +1,35 @@
 ---
 name: install-rhoai
-description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases. Optionally installs MaaS with sample models.
-argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--skip-maas] [--force]"
-allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*), Bash(for *), Bash(date *), Bash(cp *), Bash(git *), Bash(sed *), AskUserQuestion, Skill(install-maas)
+description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, UWM, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases. Optionally installs MaaS + observability with GPU-aware model selection.
+argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--skip-maas] [--with-observability] [--force]"
+allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*), Bash(GITOPS_REPO_URL=*), Bash(PREFLIGHT_SKIP_SIZING=*), Bash(PREFLIGHT_SIM_INSTANCE_TYPE=*), Bash(MAAS_MODELS=*), Bash(for *), Bash(date *), Bash(cp *), Bash(git *), Bash(sed *), Bash(tee *), Bash(jq *), Bash(scripts/*), AskUserQuestion, Edit, Skill(install-maas)
 ---
 
 # Install RHOAI on Connected Cluster
 
-Run the full RHOAI nightly installation on a connected OpenShift cluster. This is equivalent to running `make all` (infra + secrets + gitops + deploy + sync), but with intelligent detection of already-completed phases. After RHOAI is installed, optionally installs MaaS (Models as a Service) with sample models.
+Run the full RHOAI nightly installation on a connected OpenShift cluster. Equivalent to `make all` (infra + secrets + gitops + deploy + sync) but with skip detection for already-completed phases, structured logging, and problem tracking. After RHOAI, optionally installs MaaS (platform-only) and observability (gated by a settle-gate, installed separately from MaaS).
 
 ## Arguments
 
 Parse `$ARGUMENTS` for optional flags:
-- `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). If not specified, auto-detect (see below).
-- `--skip-gpu` — skip GPU MachineSet creation (`make gpu`)
-- `--skip-cpu` — skip CPU MachineSet creation (`make cpu`)
-- `--skip-maas` — skip MaaS installation prompt at the end
-- `--force` — run all phases even if they appear already completed
+- `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). If not specified, auto-detect (see Branch Detection).
+- `--skip-gpu` — skip GPU MachineSet creation (`make gpu`). Leaves `make maas-model` autodetect to pick `simulator`.
+- `--skip-cpu` — skip CPU MachineSet creation (`make cpu`).
+- `--skip-maas` — skip MaaS installation prompt at the end.
+- `--with-observability` — after MaaS platform + models + verify succeed, also run `make observability` (settle-gated). Default: off. Observability is opt-in because the monitoring cascade is heavy on the control plane.
+- `--force` — run all phases even if they appear already completed.
 
 ## Branch Detection
 
 Determine the git branch to use, in priority order:
 1. `--branch <branch>` argument (explicit override)
-2. `GITOPS_BRANCH` from `.env` file
-3. **Auto-detect from current git state**: `git branch --show-current` — use the current local branch
+2. `GITOPS_BRANCH` from `.env` file (if .env exists — **do NOT create one**)
+3. **Auto-detect from current git state**: `git branch --show-current`
 4. Fallback: `main`
 
-Also detect the repo URL:
-1. `GITOPS_REPO_URL` from `.env` file
-2. **Auto-detect from git remote**: `git remote get-url origin`
-3. Fallback: `https://github.com/rh-aiservices-bu/rhoai-nightly`
+Detect repo URL the same way: `--repo-url` → `.env`'s `GITOPS_REPO_URL` → `git remote get-url origin` → `https://github.com/rh-aiservices-bu/rhoai-nightly`.
+
+Inline env vars work end-to-end — `deploy-apps.sh` reads `GITOPS_BRANCH` at runtime and patches ArgoCD ApplicationSets + child Applications on the cluster. **No YAML commits are needed to test a feature branch.** `make configure-repo` (which mutates checked-in YAML) is reserved for permanent fork setups, not ephemeral test runs.
 
 Log the detected branch and repo URL so the user can verify before proceeding.
 
@@ -44,256 +44,264 @@ At the start of the install, create a timestamped log directory under `.tmp/logs
 LOGDIR=.tmp/logs/install-$(date +%Y%m%d-%H%M%S)
 mkdir -p $LOGDIR
 ```
-Save ALL make target output there. This gives the user a persistent, browsable record for debugging.
 
-### Rules for running make targets:
+**Save ALL make output there.** Also periodically snapshot cluster state to `$LOGDIR/monitoring.log` (see "Cluster-state monitoring" below). This gives the user a persistent, browsable record for debugging and a timeline of how the install progressed.
 
-1. **Pipe make targets to log files AND run in the background.** For example:
+### Rules for running make targets
+
+1. **Pipe make targets to log files AND run in the background.** Example:
    ```
-   make icsp 2>&1 | tee $LOGDIR/phase1-icsp.log
+   make icsp 2>&1 | tee $LOGDIR/phase2-icsp.log
    ```
-   Use Bash `run_in_background: true` so Claude can continue monitoring. This applies to: `make icsp`, `make cpu`, `make gpu`, `make secrets`, `make gitops`, `make deploy`, `make sync`.
+   Use Bash `run_in_background: true` so Claude can continue monitoring. This applies to: `make icsp`, `make cpu`, `make gpu`, `make uwm`, `make secrets`, `make gitops`, `make deploy`, `make sync`, `make maas`, `make maas-model`, `make observability`.
 
-2. **Monitor background tasks** by checking their log files with `tail -50 $LOGDIR/phase<N>-<name>.log`. Check every 30-60 seconds.
+2. **Monitor background tasks** by tailing their log files every 30-60 seconds. Don't poll faster — make targets have their own wait loops already.
 
-3. **While a background task is running**, run monitoring commands in parallel to give the user visibility into cluster state. Useful monitoring commands by phase:
-   - **ICSP**: `oc get mcp` (MachineConfigPool update progress), `oc get nodes` (node restart status)
+3. **Cluster-state monitoring (every 60-120 seconds while a phase is running)** — append to `$LOGDIR/monitoring.log`:
+   ```
+   echo "=== $(date) phase=<name> ===" >> $LOGDIR/monitoring.log
+   oc adm top nodes -l node-role.kubernetes.io/master --no-headers >> $LOGDIR/monitoring.log 2>&1
+   oc get co --no-headers | grep -E "False|True.*True" >> $LOGDIR/monitoring.log 2>&1
+   oc get pods -A --no-headers | grep -Ev "Running|Completed|Succeeded" >> $LOGDIR/monitoring.log 2>&1
+   ```
+   Useful per-phase commands:
+   - **ICSP**: `oc get mcp` (MCP update progress), `oc get nodes` (restart status)
    - **CPU/GPU**: `oc get machinesets -n openshift-machine-api`, `oc get machines -n openshift-machine-api`
+   - **UWM**: `oc get pods -n openshift-user-workload-monitoring`
    - **GitOps**: `oc get csv -n openshift-gitops-operator`, `oc get pods -n openshift-gitops`
    - **Deploy/Sync**: `oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status`
-   - **Operators**: `oc get csv -A | grep -E 'rhoai|nvidia|nfd|gitops|servicemesh'`
+   - **Operators**: `oc get csv -A --no-headers | grep -v Succeeded` (want empty)
+   - **Observability**: `oc get pods -n redhat-ods-monitoring`, `oc get perses -A`
 
-4. **Report progress to the user** after each monitoring check — don't just silently wait. Summarize what changed since the last check.
+4. **Report progress to the user** after each monitoring check — don't silently wait. Summarize what changed since the last snapshot. Call out anything concerning early (master memory climbing, a CO flipping Degraded, pods crashing).
 
-5. **Use timeout: 600000** (10 minutes) for any foreground commands that might take a while. Never use the default 2-minute timeout for make targets.
+5. **Use `timeout: 600000`** (10 minutes) for foreground make commands that might take a while. Never use the default 2-minute timeout for make targets.
 
-6. **Save monitoring snapshots** to the log directory — append timestamped cluster state to `$LOGDIR/monitoring.log` so there's a timeline of how the install progressed:
-   ```
-   echo "=== $(date) ===" >> $LOGDIR/monitoring.log
-   oc get nodes >> $LOGDIR/monitoring.log 2>&1
-   ```
+6. **On failure**, tell the user the log file path and continue to the problem-tracking step below.
 
-7. **On failure**, tell the user the log file path so they can review the full output.
+## Problem Tracking — Fix in Repo, Not on Cluster
+
+Every unexpected symptom during an install goes through this loop:
+
+1. **Capture** the symptom in `$LOGDIR/monitoring.log` with a timestamp and a pointer to the relevant phase log.
+2. **Open `.tmp/plans/install-gotchas.md`** and either (a) cross-reference an existing entry or (b) add a new numbered entry with: symptom, detection commands, root cause, repo-side permanent fix, cluster-side temporary workaround (if any).
+3. **Prefer code/script/YAML changes in the repo over hand-patching the cluster.** The repo fix is what makes the install reproducible. If a cluster patch is strictly needed to unblock progress (rare), apply it but ALSO land the permanent repo fix in the same session and re-sync.
+4. **After the fix**: re-run the failing phase. If the fix required a commit+push, ensure ArgoCD picks it up (`make refresh-apps` or `oc annotate ... refresh=hard`).
+
+Do not silently swallow errors. If the user hasn't seen a problem, they don't know it happened.
 
 ## Instructions
 
-You MUST run this from the repository root.
+Run this from the repository root.
 
-Run each phase sequentially using `make` targets. After each phase, verify success before continuing. If any phase fails, STOP and ask the user how to proceed.
+Run each phase sequentially. After each phase, verify success before continuing. If any phase fails, STOP, run the Problem Tracking loop, and ask the user how to proceed.
 
-### Phase 0: Configuration Check — .env Setup
+### Phase 0: Configuration Check
 
-Before anything else, check the `.env` file and confirm settings with the user.
+Read `.env` if present — **do not create one if it doesn't exist**. Scripts handle a missing `.env` (no-creds mode falls through to External Secrets; no `GITOPS_BRANCH` falls through to git-state detection).
 
-**Step 1: Check if .env exists**
-
+**Step 1: Check .env**
 ```bash
-ls -la .env 2>/dev/null || echo "NO_ENV_FILE"
+ls -la .env 2>/dev/null || echo "NO_ENV_FILE (using defaults + git state + args)"
 ```
 
-If `.env` does not exist, create it from the example:
-```bash
-cp .env.example .env
-```
+**Step 2: Present effective configuration**
 
-**Step 2: Read current .env and show configuration summary**
-
-Read the `.env` file and present the user with a summary of current settings:
+Show the user the effective config that will be used (not forcing them to edit .env unless they want to):
 
 ```
-Configuration Summary:
-  Credentials:   [Manual (QUAY_USER set) | External Secrets (no credentials) | Not configured]
-  GitOps Branch:  [<branch from .env> | auto-detect: <current git branch>]
-  GitOps Repo:    [<repo from .env> | auto-detect: <git remote origin>]
-  GPU Nodes:      [<instance type> min=<min> max=<max> | defaults (g6e.2xlarge, 1-3)]
-  CPU Workers:    [<instance type> min=<min> max=<max> | defaults (m6a.4xlarge, 1-3)]
-  MaaS Models:    [<model list from .env> | default: all]
+Configuration:
+  Credentials:  [Manual (QUAY_USER set) | External Secrets (no creds, bootstrap repo accessible) | Not configured]
+  Branch:       [<--branch arg> | <.env GITOPS_BRANCH> | <current git branch>]
+  Repo:         [<.env GITOPS_REPO_URL> | <git remote origin>]
+  GPU config:   [<.env GPU_* overrides> | defaults (g6e.2xlarge, 1-3)]
+  CPU config:   [<.env CPU_* overrides> | defaults (m6a.4xlarge, 1-3)]
+  MaaS models:  [<.env MAAS_MODELS> | 'auto' (default — cluster-inspected at deploy time)]
 ```
 
-**Step 3: Ask if changes are needed**
+**Step 3: Ask once**
 
-Ask the user: "Does this configuration look correct? Would you like to change anything before proceeding?"
+"Does this configuration look correct? (Yes to proceed, otherwise tell me what to change.)"
 
-If the user wants changes, help them update `.env` accordingly. Key things they might want to change:
-- **Credentials**: Set `QUAY_USER`/`QUAY_TOKEN` for manual mode, or leave empty for External Secrets
-- **Branch/Repo**: Set `GITOPS_BRANCH` and `GITOPS_REPO_URL` if different from auto-detected values
-- **GPU config**: Instance type, min/max replicas, availability zone
-- **CPU config**: Instance type, min/max replicas
-- **MaaS models**: Which models to deploy (simulator, gpt-oss-20b, granite-tiny-gpu)
+If the user wants changes, help them edit `.env` OR pass them as inline env vars / CLI flags. Don't insist on .env creation.
 
-Once confirmed, proceed to preflight.
+### Phase 1: Preflight
 
-### Phase 1: Preflight — Cluster Assessment
+Run `make preflight 2>&1 | tee $LOGDIR/phase1-preflight.log`.
 
-First, verify cluster connection and assess what's already installed. Run ALL of these checks in parallel:
+The preflight covers:
+- Cluster connection + OCP version
+- Node Ready count
+- **Control-plane health** (new): master sizing vs. 32 GiB floor, master memory/CPU pressure, ClusterOperators (Available, Degraded). This refuses to run on undersized masters unless `PREFLIGHT_SKIP_SIZING=1` is set.
+- MCP state
+- GPU presence
+- Credentials mode
+- Install state inventory (ICSP, pull-secret, GitOps, RHOAI, MaaS)
 
-```
-oc whoami --show-server
-oc get clusterversion
-oc get nodes
-oc get imagecontentsourcepolicy 2>/dev/null || echo "No ICSP"
-oc get machinesets -n openshift-machine-api
-oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths | keys[]' 2>/dev/null
-oc get csv -n openshift-gitops-operator 2>/dev/null | grep gitops || echo "No GitOps operator"
-oc get applications.argoproj.io -n openshift-gitops 2>/dev/null || echo "No ArgoCD apps"
-oc get pods -n openshift-gitops 2>/dev/null || echo "No openshift-gitops namespace"
-oc get datascienceclusters 2>/dev/null || echo "No DSC"
-oc get csv -n redhat-ods-operator 2>/dev/null | grep rhods || echo "No RHOAI CSV"
-```
+If preflight exits 1 (FAIL), STOP. Don't try to work around a FAILed preflight — the most common cause is undersized masters, and ignoring it caused the cluster-hm2fl OOM on 2026-04-20.
 
-Based on the results, build a plan of which phases to run and which to skip. Report to the user:
-- Cluster URL, OCP version, node count
-- What's already installed vs what still needs to be done
-- Which phases will be skipped and why
-
-Unless `--force` was passed, skip any phase where the resources already exist and are healthy. The scripts themselves are idempotent, so re-running is safe — but skipping saves time on long waits (especially ICSP node restarts).
+If preflight exits 2 (WARN), continue but note the warnings in `$LOGDIR/phase1-preflight.log` and surface them to the user.
 
 ### Phase 2: ICSP (Registry Mirror)
 
-**Skip if:** `oc get imagecontentsourcepolicy` shows an ICSP already exists and all nodes are Ready.
+**Skip if**: `oc get imagecontentsourcepolicy` shows an ICSP exists AND all nodes are Ready.
 
-Run `make icsp` in the background. Monitor with `oc get mcp` and `oc get nodes` while waiting. The script waits for all nodes to come back Ready after MachineConfig update.
+Run `make icsp 2>&1 | tee $LOGDIR/phase2-icsp.log` in background. Monitor with `oc get mcp` and `oc get nodes`. Expect 10-15 min for node reboots.
 
-After completion, verify: `oc get nodes` — all nodes should be Ready.
+Verify: `oc get nodes` — all Ready.
 
 ### Phase 3: CPU Workers
 
-**Skip if:** `--skip-cpu` was passed, or a CPU worker MachineSet already exists with Ready replicas in `oc get machinesets -n openshift-machine-api`.
+**Skip if**: `--skip-cpu` OR a CPU worker MachineSet already has Ready replicas.
 
-Run `make cpu` in the background. Monitor with `oc get machinesets -n openshift-machine-api` and `oc get machines -n openshift-machine-api` while waiting.
+Run `make cpu 2>&1 | tee $LOGDIR/phase3-cpu.log` in background. Monitor `oc get machinesets -n openshift-machine-api`.
 
-After completion, verify: `oc get nodes -l node-role.kubernetes.io/worker` — at least one dedicated worker node Ready.
+Verify: at least one dedicated worker node Ready.
 
 ### Phase 4: GPU Workers
 
-**Skip if:** `--skip-gpu` was passed, or a GPU MachineSet already exists with Ready replicas.
+**Skip if**: `--skip-gpu` OR a GPU MachineSet already has Ready replicas.
 
-Run `make gpu` in the background. Monitor with `oc get machinesets -n openshift-machine-api` while waiting.
+Run `make gpu 2>&1 | tee $LOGDIR/phase4-gpu.log` in background. Monitor machines + the eventual `nvidia.com/gpu.present=true` label on the new node.
 
-After completion, verify: `oc get nodes -l node-role.kubernetes.io/gpu` — GPU node Ready.
+Verify: GPU node Ready, then wait ~3-5 min for the NVIDIA GPU operator's node feature discovery to populate `nvidia.com/gpu.memory` and `nvidia.com/gpu.product` labels (they're needed by `make maas-model`'s autodetect in Phase 10).
 
-### Phase 5: Pull Secret
+### Phase 5: UWM (User Workload Monitoring)
 
-**Skip if:** pull-secret already contains `quay.io/rhoai` credentials (detected in Phase 0).
+**Skip if**: `scripts/enable-uwm.sh --check` exits 0 (UWM already enabled).
 
-Run `make secrets` in the background (External Secrets mode can take a few minutes to install the operator and sync).
+Run `make uwm 2>&1 | tee $LOGDIR/phase5-uwm.log`.
 
-After completion, verify the pull-secret has quay.io/rhoai credentials:
+This enables `enableUserWorkload: true` in `cluster-monitoring-config`. UWM is owned at the infra stage (not `install-observability.sh`) because:
+- UWM is a foundational capability other workloads may depend on
+- UWM's memory overhead is ~5-10% of a small master — landing it while the cluster is idle avoids stacking it on top of the observability cascade later
+
+Verify: `prometheus-user-workload-0` pod appears in `openshift-user-workload-monitoring` within ~2 min.
+
+### Phase 6: Pull Secret
+
+**Skip if**: pull-secret already contains `quay.io/rhoai`.
+
+Run `make secrets 2>&1 | tee $LOGDIR/phase6-secrets.log` in background. External Secrets mode may take a few minutes (operator install + ClusterSecretStore + sync).
+
+Verify: `oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths | keys[]' | grep -c quay` returns ≥ 1.
+
+### Phase 7: GitOps Operator + ArgoCD
+
+**Skip if**: GitOps operator CSV exists and ArgoCD pods are Running.
+
+Run `make gitops 2>&1 | tee $LOGDIR/phase7-gitops.log` in background. Monitor CSV + pods.
+
+Verify: all openshift-gitops pods Running/Ready.
+
+### Phase 8: Deploy Apps
+
+**Skip if**: ArgoCD Applications already exist AND point at the correct branch. If they exist but point at wrong branch, re-run deploy — it re-patches them.
+
+Always pass the branch inline. Example:
 ```
-oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths | keys[]' | grep -c quay
+GITOPS_BRANCH=<detected-branch> make deploy 2>&1 | tee $LOGDIR/phase8-deploy.log
 ```
 
-### Phase 6: GitOps Operator + ArgoCD
+`deploy-apps.sh` creates apps with sync DISABLED, then patches both ApplicationSets and every child Application to point at the requested branch. This happens on the cluster — the checked-in YAML is not modified.
 
-**Skip if:** GitOps operator CSV exists and ArgoCD pods are Running in `openshift-gitops`.
+Verify: `oc get applications.argoproj.io -n openshift-gitops` lists all expected apps.
 
-Run `make gitops` in the background. Monitor with `oc get csv -n openshift-gitops-operator` and `oc get pods -n openshift-gitops` while waiting.
+### Phase 9: Sync Apps
 
-After completion, verify: `oc get pods -n openshift-gitops` — all pods Running/Ready.
+**Skip if**: all apps Synced + Healthy (rare on fresh install).
 
-### Phase 7: Deploy Apps
-
-**Skip if:** ArgoCD Applications already exist AND are already pointed at the correct branch. If apps exist but point at wrong branch, run deploy anyway to re-patch them.
-
-If a `--branch` was specified, export `GITOPS_BRANCH=<branch>` before running the deploy target.
-
-Run: `GITOPS_BRANCH=<branch> make deploy` in the background. Monitor with `oc get applications.argoproj.io -n openshift-gitops` while waiting.
-
-(If no branch specified, just run `make deploy` which defaults to `main`.)
-
-The deploy script creates all ArgoCD Applications with sync DISABLED, patches them with the correct repo/branch, and waits for all apps to exist.
-
-After completion, verify: `oc get applications.argoproj.io -n openshift-gitops` — all expected apps exist.
-
-### Phase 8: Sync Apps
-
-**Skip if:** All apps are already Synced + Healthy (rare on a fresh install).
-
-Run `make sync` in the background. This is the longest phase (15-30 minutes). Monitor frequently with:
+Run `make sync 2>&1 | tee $LOGDIR/phase9-sync.log` in background. This is the longest phase (15-30 min). Monitor frequently:
 ```
 oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status
+oc get csv -A --no-headers | grep -v Succeeded
 ```
 
-Also monitor operator installs with:
+Report progress as apps transition Unknown → Progressing → Healthy.
+
+Known gotcha (reference `.tmp/plans/install-gotchas.md` §1): if the `:rhoai-3.4-nightly` catalog image is broken upstream, the rhods-operator will CrashLoopBackOff. The branch currently pins to `:rhoai-3.4` as a workaround. If you still see CrashLoops, run `scripts/restart-catalog.sh` (which bounces pods AND deletes the Subscription so OLM re-resolves).
+
+Verify: all apps Synced + Healthy; `oc get csv -A | grep -v Succeeded` empty or only transient.
+
+### Phase 10: MaaS (Platform) — Optional
+
+**Skip if**: `--skip-maas`.
+
+`make maas` installs the MaaS platform only (Postgres+PVC, Gateway, Authorino SSL). Observability is no longer installed as part of this phase — see Phase 11.
+
+Run: `make maas 2>&1 | tee $LOGDIR/phase10-maas.log`. Expect 3-5 min.
+
+Verify: `oc get gateway maas-default-gateway -n openshift-ingress` Programmed=True, `oc get deployment maas-api -n redhat-ods-applications` Ready.
+
+Then deploy a model:
+
 ```
-oc get csv -A --no-headers 2>/dev/null | grep -v Succeeded || echo "All CSVs Succeeded"
-```
-
-Report progress to the user as apps transition from Unknown → Progressing → Healthy.
-
-After completion, verify all apps are Synced + Healthy (some may show Progressing if operators are still installing).
-
-### Phase 9: Validate
-
-Run `make diagnose` to show final cluster state.
-
-Then run these additional checks:
-```
-oc get catalogsource rhoai-catalog-nightly -n openshift-marketplace
-oc get csv -n redhat-ods-operator | grep rhods
-oc get datascienceclusters
-```
-
-### Phase 10: MaaS (Models as a Service) — Optional
-
-**Skip if:** `--skip-maas` was passed.
-
-After RHOAI validation succeeds, assess GPU capabilities and make a smart model recommendation.
-
-**Step 1: Check GPU state**
-
-```bash
-oc get nodes -l node-role.kubernetes.io/gpu -o jsonpath='{range .items[*]}{.metadata.labels.node\.kubernetes\.io/instance-type}{"\n"}{end}' 2>/dev/null
-oc get nodes -l node-role.kubernetes.io/gpu --no-headers 2>/dev/null | wc -l
+make maas-model 2>&1 | tee $LOGDIR/phase10-maas-model.log
 ```
 
-**Step 2: Build a recommendation based on GPU capabilities**
+`make maas-model` autodetects which model fits:
+- no GPU nodes → simulator
+- GPU `nvidia.com/gpu.memory` ≥ 40 GiB → gpt-oss-20b
+- otherwise → granite-tiny-gpu
 
-Use this decision table:
+**Do not hardcode model recommendations in this skill** — the script is the source of truth. If the autodetect returned granite-tiny-gpu on a cluster where you expected gpt-oss-20b, most likely cause is the GPU operator hasn't populated the `nvidia.com/gpu.memory` label yet (lag ~3-5 min after node Ready). The script emits a warning in that case and falls back to granite-tiny-gpu.
 
-**Rule: Deploy 1 GPU model per GPU node.** Pick the best model that fits.
+Verify: `oc get llminferenceservice -n llm` Ready=True for the deployed model; `oc get maasmodelref -n llm` Ready; model pod Running in `llm` namespace.
 
-| GPU Nodes | Allocatable RAM | Recommended Model |
-|-----------|----------------|-------------------|
-| 0 | — | No GPU model (simulator only for verify) |
-| 1 | 60Gi+ (g6e.2xlarge, g5.4xlarge+) | **gpt-oss-20b** (16Gi request, 60Gi limit) |
-| 1 | < 60Gi (g5.2xlarge ~30Gi) | **granite-tiny-gpu** (8Gi request, 24Gi limit) |
-| 2+ | any | **gpt-oss-20b** on each node (or mix gpt-oss-20b + granite-tiny-gpu) |
+Quick smoke test: `make maas-verify 2>&1 | tee $LOGDIR/phase10-maas-verify.log` — exit 0 means auth + rate limiting + inference all work.
 
-Model resource requirements:
-- **gpt-oss-20b**: 1 GPU, 16Gi request / 60Gi limit — 20B param model, needs larger GPU nodes
-- **granite-tiny-gpu**: 1 GPU, 8Gi request / 24Gi limit — 7B FP8 model, fits on any GPU node
-- **simulator**: CPU only, 256Mi — used by `make maas-verify`, not deployed as a persistent model
+### Phase 11: Observability — Opt-In, Settle-Gated
 
-**Step 3: Present recommendation and ask**
+**Run only if**: `--with-observability` was passed AND Phase 10 (MaaS) ran. Default is skip.
 
-Present the GPU-aware recommendation. Example for 1x g6e.2xlarge:
+`make observability` runs a settle-gate, flips the `instance-rhoai` ArgoCD Application from `overlays/maas` to `overlays/maas-observability`, and waits for Perses/Tempo/OTel/MonitoringStack pods to Ready. The overlay flip adds `DSCI.spec.monitoring.metrics.storage`, which triggers the rhods-operator Monitoring controller's full observability cascade.
 
-> "RHOAI is installed. Would you like to install MaaS with a model?"
->
-> **Your GPU**: 1x g6e.2xlarge (60Gi allocatable RAM)
-> **Recommended**: gpt-oss-20b (20B model, fits your GPU)
->
-> Options:
-> 1. Install gpt-oss-20b (recommended for your GPU)
-> 2. Install granite-tiny-gpu instead (smaller 7B model)
-> 3. Skip MaaS
+Run: `make observability 2>&1 | tee $LOGDIR/phase11-observability.log`.
 
-**Step 4: Apply choice**
+The settle-gate will **refuse** if any of the following are true:
+- Required operator CSVs (rhods, COO, opentelemetry, servicemesh, authorino, limitador) are not Succeeded
+- DSC or DSCI Ready != True
+- Any pod in redhat-ods-applications / kuadrant-system / openshift-monitoring is non-terminal
+- etcd ClusterOperator is Degraded
+- Any master is at ≥75% memory (via `oc adm top nodes`)
 
-Set `MAAS_MODELS` in `.env` to the chosen model, then invoke `/install-maas` with the same branch.
+If the gate refuses, don't override — fix the underlying condition and retry. The gate exists specifically to prevent the 2026-04-20 cluster-hm2fl OOM pattern.
 
-Then invoke `/install-maas` with the same branch: `Skill(install-maas, "--branch <detected-branch>")`
+Verify after flip: Perses, TempoStack, OpenTelemetryCollector DaemonSet, MonitoringStack pods Running in `redhat-ods-monitoring`. Masters stay < 75%.
+
+Rerun `make maas-verify` — should still exit 0 with observability active.
+
+### Phase 12: Full Diagnostic Verification
+
+Regardless of earlier skips:
+
+```
+make diagnose 2>&1 | tee $LOGDIR/phase12-diagnose.log
+```
+
+Expected end-state:
+- 0 FAIL entries in `make diagnose`
+- All ArgoCD apps Synced + Healthy
+- DSC Ready=True, DSCI Ready=True
+- rhods-operator 3 pods Running
+- If Phase 10 ran: maas-api + gateway + model Ready
+- If Phase 11 ran: Perses CR present with Service on :8080 in redhat-ods-monitoring
+- Masters steady-state < 75% memory (< 60% on a cluster larger than m6a.2xlarge)
+
+If any check fails, run the Problem Tracking loop — update `.tmp/plans/install-gotchas.md` with symptom + root cause + repo-side fix, not just a cluster-side patch.
 
 ### Final Report
 
-Summarize the installation result:
-- Cluster URL and OCP version
-- Branch used for GitOps
-- Number of nodes (masters, workers, GPU)
-- ArgoCD app status (how many Synced+Healthy, any degraded)
-- RHOAI operator CSV status
-- DataScienceCluster status
-- MaaS status (installed/skipped, which models deployed, verification result)
-- Any warnings or issues encountered
-- Phases that were skipped (and why)
+Summarize:
+- Cluster URL, OCP version, node count (masters / workers / GPU)
+- Branch + repo used for GitOps
+- ArgoCD app status (Synced+Healthy / Progressing / Degraded counts)
+- RHOAI operator CSV
+- DSC status
+- MaaS status (skipped / installed / which models deployed / maas-verify result)
+- Observability status (skipped / installed / settle-gate verdict / dashboard backend ready)
+- Phases skipped (and why)
+- **Problems encountered** (with pointers to `.tmp/plans/install-gotchas.md` entries and the commits that landed repo-side fixes)
+- Log directory path for the whole run
+
+If this run was a test of a feature branch, remind the user the branch still needs to be reviewed/merged before it's available to others; ephemeral test-pointing isn't persistent.

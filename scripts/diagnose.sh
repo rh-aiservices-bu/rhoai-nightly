@@ -23,6 +23,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/cluster-health.sh"
 
 VERBOSE=false
 QUIET=false
@@ -205,9 +206,18 @@ if [[ "$VERBOSE" == "true" ]]; then
 fi
 
 # ═══════════════════════════════════════════════
-# Section 4: Credentials on Cluster
+# Section 4: Control Plane Health
 # ═══════════════════════════════════════════════
-section "4. Pull Secret (Cluster)"
+section "4. Control Plane Health"
+
+check_master_sizing
+check_master_pressure
+check_cluster_operators
+
+# ═══════════════════════════════════════════════
+# Section 5: Credentials on Cluster
+# ═══════════════════════════════════════════════
+section "5. Pull Secret (Cluster)"
 
 PULL_SECRET_KEYS=$(oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.auths | keys[]' 2>/dev/null || echo "")
 HAS_QUAY_RHOAI=$(echo "$PULL_SECRET_KEYS" | count_matches "quay.io/rhoai")
@@ -226,9 +236,9 @@ elif [[ -n "$ES_STATUS" ]]; then
 fi
 
 # ═══════════════════════════════════════════════
-# Section 5: GitOps & ArgoCD
+# Section 6: GitOps & ArgoCD
 # ═══════════════════════════════════════════════
-section "5. GitOps & ArgoCD"
+section "6. GitOps & ArgoCD"
 
 GITOPS_CSV=$(oc get csv -n openshift-gitops-operator --no-headers 2>/dev/null | grep gitops || echo "")
 if [[ -n "$GITOPS_CSV" ]]; then
@@ -274,9 +284,9 @@ else
 fi
 
 # ═══════════════════════════════════════════════
-# Section 6: Operators & Install Plans
+# Section 7: Operators & Install Plans
 # ═══════════════════════════════════════════════
-section "6. Operators"
+section "7. Operators"
 
 BAD_CSVS=$(oc get csv -A --no-headers 2>/dev/null | grep -v "Succeeded" | grep -v "^$" || echo "")
 if [[ -n "$BAD_CSVS" ]]; then
@@ -339,9 +349,9 @@ if [[ "$APP_COUNT" -gt 0 ]]; then
 fi
 
 # ═══════════════════════════════════════════════
-# Section 7: RHOAI
+# Section 8: RHOAI
 # ═══════════════════════════════════════════════
-section "7. RHOAI"
+section "8. RHOAI"
 
 CATALOG_IMAGE=$(oc get catalogsource rhoai-catalog-nightly -n openshift-marketplace -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
 if [[ -n "$CATALOG_IMAGE" ]]; then
@@ -399,9 +409,9 @@ else
 fi
 
 # ═══════════════════════════════════════════════
-# Section 8: MaaS (Models as a Service)
+# Section 9: MaaS (Models as a Service)
 # ═══════════════════════════════════════════════
-section "8. MaaS"
+section "9. MaaS"
 
 MAAS_APP=$(oc get application.argoproj.io/instance-maas -n openshift-gitops --no-headers 2>/dev/null || echo "")
 if [[ -n "$MAAS_APP" ]]; then
@@ -480,9 +490,102 @@ else
 fi
 
 # ═══════════════════════════════════════════════
-# Section 9: Network
+# Section 10: Observability (MaaS)
 # ═══════════════════════════════════════════════
-section "9. Network"
+section "10. Observability"
+
+if [[ -z "$MAAS_APP" ]]; then
+    info "Observability" "MaaS not installed — skipping observability checks"
+else
+    # UWM ConfigMap
+    UWM_CM=$(oc get cm cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
+    if [[ -z "$UWM_CM" ]]; then
+        info "UWM ConfigMap" "cluster-monitoring-config not found in openshift-monitoring"
+    elif echo "$UWM_CM" | grep -q "enableUserWorkload:[[:space:]]*true"; then
+        pass "UWM ConfigMap" "enableUserWorkload: true"
+    else
+        warn "UWM ConfigMap" "cluster-monitoring-config present but enableUserWorkload not true"
+        recommend "Run: make observability"
+    fi
+
+    # prometheus-user-workload-0 pod
+    UWM_POD_STATUS=$(oc get pod prometheus-user-workload-0 -n openshift-user-workload-monitoring -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    if [[ "$UWM_POD_STATUS" == "Running" ]]; then
+        pass "UWM Prometheus" "prometheus-user-workload-0 Running"
+    elif [[ -n "$UWM_POD_STATUS" ]]; then
+        info "UWM Prometheus" "prometheus-user-workload-0 phase=$UWM_POD_STATUS"
+    else
+        info "UWM Prometheus" "prometheus-user-workload-0 not present"
+    fi
+
+    # Kuadrant observability enabled
+    KUADRANT_OBS=$(oc get kuadrant -n kuadrant-system -o jsonpath='{.items[0].spec.observability.enable}' 2>/dev/null || echo "")
+    if [[ "$KUADRANT_OBS" == "true" ]]; then
+        pass "Kuadrant Observability" "enabled"
+    else
+        info "Kuadrant Observability" "not enabled (spec.observability.enable != true)"
+        recommend "Run: make observability"
+    fi
+
+    # TelemetryPolicy present
+    TP_EXISTS=$(oc get telemetrypolicies.extensions.kuadrant.io maas-telemetry -n openshift-ingress --ignore-not-found -o name 2>/dev/null || echo "")
+    if [[ -n "$TP_EXISTS" ]]; then
+        pass "TelemetryPolicy" "maas-telemetry present in openshift-ingress"
+    else
+        info "TelemetryPolicy" "maas-telemetry not found (GitOps instance-maas-observability may still be syncing)"
+    fi
+
+    # Istio Telemetry present
+    IT_EXISTS=$(oc get telemetry.telemetry.istio.io latency-per-subscription -n openshift-ingress --ignore-not-found -o name 2>/dev/null || echo "")
+    if [[ -n "$IT_EXISTS" ]]; then
+        pass "Istio Telemetry" "latency-per-subscription present in openshift-ingress"
+    else
+        info "Istio Telemetry" "latency-per-subscription not found (GitOps instance-maas-observability may still be syncing)"
+    fi
+
+    # KServe vLLM ServiceMonitor (scrapes vllm:* metrics for Perses dashboards)
+    if oc get ns llm &>/dev/null; then
+        if oc get servicemonitor kserve-llm-models -n llm --ignore-not-found -o name &>/dev/null && \
+                [[ -n "$(oc get servicemonitor kserve-llm-models -n llm --ignore-not-found -o name 2>/dev/null)" ]]; then
+            pass "KServe vLLM ServiceMonitor" "kserve-llm-models present in llm"
+        else
+            warn "KServe vLLM ServiceMonitor" "kserve-llm-models missing in llm namespace"
+            recommend "Run: make observability"
+        fi
+    else
+        info "KServe vLLM ServiceMonitor" "llm namespace not present — skipping"
+    fi
+fi
+
+# Perses backend for the RHOAI Observability dashboard tab (independent of MaaS).
+# COO provides the Perses CRDs; the RHOAI operator's Monitoring controller owns
+# the Perses CR + datasources + dashboards end-to-end — we don't create them.
+if oc get crd perses.perses.dev &>/dev/null; then
+    PERSES_CR=$(oc get perses -n redhat-ods-monitoring --ignore-not-found -o name 2>/dev/null | head -1 || echo "")
+    if [[ -n "$PERSES_CR" ]]; then
+        PERSES_NAME="${PERSES_CR##*/}"
+        PERSES_SVC=$(oc get svc "$PERSES_NAME" -n redhat-ods-monitoring --ignore-not-found -o name 2>/dev/null || echo "")
+        if [[ -n "$PERSES_SVC" ]]; then
+            PERSES_PORT=$(oc get svc "$PERSES_NAME" -n redhat-ods-monitoring -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || echo "")
+            if [[ "$PERSES_PORT" == "8080" ]]; then
+                pass "Perses Dashboard Backend" "$PERSES_NAME (operator-managed) Service reachable on port 8080 in redhat-ods-monitoring"
+            else
+                warn "Perses Dashboard Backend" "$PERSES_NAME Service exists but port 8080 not found"
+            fi
+        else
+            info "Perses Dashboard Backend" "$PERSES_NAME CR present but Service not yet created (operator may still be reconciling)"
+        fi
+    else
+        info "Perses Dashboard Backend" "No Perses CR in redhat-ods-monitoring yet (RHOAI operator may still be reconciling)"
+    fi
+else
+    info "Perses Dashboard Backend" "COO not installed — Perses CRDs not registered (cluster-observability-operator subscription pending)"
+fi
+
+# ═══════════════════════════════════════════════
+# Section 11: Network
+# ═══════════════════════════════════════════════
+section "11. Network"
 
 INGRESS_AVAILABLE=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || echo "unknown")
 if [[ "$INGRESS_AVAILABLE" == "True" ]]; then

@@ -223,8 +223,11 @@ for MODEL in $MAAS_MODELS_CONFIGURED; do
         pass "$MODEL" "CPU-only ($REQ_DESC) — runs anywhere"
     else
         GPU_MODELS_COUNT=$((GPU_MODELS_COUNT + 1))
-        if [[ "$GPU_NODE_COUNT" -eq 0 ]] && [[ "$GPU_SOURCE" != ".env" ]]; then
-            fail "$MODEL" "Requires GPU but no GPU nodes on cluster. Run 'make gpu'"
+        if [[ "$GPU_NODE_COUNT" -eq 0 ]]; then
+            # No GPU nodes yet on cluster. `make gpu` creates the MachineSet as
+            # part of the install flow, so treat as INFO, not FAIL. We can't
+            # validate node-specific RAM/VRAM until the node exists.
+            info "$MODEL" "Requires GPU; no GPU nodes yet — 'make gpu' will create $GPU_TYPE MachineSet"
         elif [[ "$NODE_ALLOC_GI" -gt 0 ]] && [[ "$REQ_REQUEST" -gt "$NODE_ALLOC_GI" ]]; then
             fail "$MODEL" "Requests ${REQ_REQUEST}Gi RAM but node only has ${NODE_ALLOC_GI}Gi allocatable — won't schedule"
         elif [[ "$NODE_ALLOC_GI" -gt 0 ]] && [[ "$REQ_LIMIT" -gt "$NODE_ALLOC_GI" ]]; then

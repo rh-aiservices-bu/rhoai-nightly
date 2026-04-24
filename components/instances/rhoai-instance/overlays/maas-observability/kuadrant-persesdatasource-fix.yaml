@@ -1,0 +1,55 @@
+# Override the kuadrant-prometheus-datasource with a corrected secret reference.
+#
+# Bug: the RHOAI 3.4 ModelsAsService controller generates this PersesDatasource
+# with `spec.config.plugin.spec.proxy.spec.secret: cluster-prometheus-datasource-secret`.
+# That Perses Secret name only exists in the redhat-ods-monitoring project — in
+# the redhat-ods-applications project (where this datasource lives), the
+# operator creates the Perses Secret named after the datasource itself
+# (`kuadrant-prometheus-datasource-secret`), following the `<datasource>-secret`
+# convention. The name mismatch produces:
+#
+#   "document not found: unable to forward the request to the datasource
+#    'kuadrant-prometheus-datasource', secret
+#    'cluster-prometheus-datasource-secret' attached doesn't exist"
+#
+# on every panel of the RHOAI Observability dashboard's MaaS usage views.
+#
+# Fix: publish the correct spec via GitOps and annotate the CR with
+# `opendatahub.io/managed: "false"` so the operator stops reconciling it. Pair
+# with `argocd.argoproj.io/sync-options: Replace=true` so ArgoCD force-replaces
+# the operator's generated version on first sync (otherwise ownership from the
+# ModelsAsService controller blocks a strategic-merge apply).
+apiVersion: perses.dev/v1alpha2
+kind: PersesDatasource
+metadata:
+  name: kuadrant-prometheus-datasource
+  namespace: redhat-ods-applications
+  annotations:
+    opendatahub.io/managed: "false"
+    argocd.argoproj.io/sync-options: Replace=true
+  labels:
+    app.kubernetes.io/component: perses
+    app.kubernetes.io/managed-by: maas-observability
+    app.opendatahub.io/modelsasservice: "true"
+    platform.opendatahub.io/part-of: modelsasservice
+spec:
+  client:
+    tls:
+      caCert:
+        certPath: service-ca.crt
+        name: prometheus-web-tls-ca
+        type: configmap
+      enable: true
+  config:
+    default: false
+    display:
+      name: Prometheus (Thanos Querier)
+    plugin:
+      kind: PrometheusDatasource
+      spec:
+        proxy:
+          kind: HTTPProxy
+          spec:
+            secret: kuadrant-prometheus-datasource-secret
+            url: https://thanos-querier.openshift-monitoring.svc:9092?namespace=kuadrant-system
+        scrapeInterval: 30s

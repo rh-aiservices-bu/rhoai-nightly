@@ -14,6 +14,7 @@ kind: Kustomization
 resources:
   - ../maas
   - service-ca-injection.yaml
+  - kuadrant-persesdatasource-fix.yaml
 
 patches:
   - target:

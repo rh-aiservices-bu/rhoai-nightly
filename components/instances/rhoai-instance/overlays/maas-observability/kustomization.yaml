@@ -13,6 +13,7 @@ kind: Kustomization
 
 resources:
   - ../maas
+  - service-ca-injection.yaml
 
 patches:
   - target:

@@ -88,6 +88,16 @@ skipped() { SKIPPED_ITEMS+=("$1"); }
 OVERLAY_MAAS="components/instances/rhoai-instance/overlays/maas"
 OVERLAY_MAAS_OBS="components/instances/rhoai-instance/overlays/maas-observability"
 
+# Settle-gate master-memory threshold (percent). Overridable via env var.
+# Raised from 75 -> 80 after observing the RHOAI 3.4 cascade on a constrained
+# control plane (3x m5.2xlarge, 76% steady-state on the hottest master) land
+# with ~0% master-memory delta. The operator ships OTel as a 2-replica
+# StatefulSet on workers (not a per-master DaemonSet), and Tempo + NodeMetrics
+# are absent on this release, so masters only absorb modest apiserver
+# watch-cache growth. 80% leaves ~10% headroom above the observed worst case
+# while still protecting older releases that had heavier master-side cascades.
+SETTLE_GATE_MASTER_MEM_MAX="${SETTLE_GATE_MASTER_MEM_MAX:-80}"
+
 # Abort the install with a clear message. Used by the settle-gate.
 abort_settle_gate() {
     log_error "Settle-gate refused: $1"
@@ -205,10 +215,10 @@ run_settle_gate() {
                 worst_pct=$pct; worst_name="$name"
             fi
         done <<< "$top_out"
-        if (( worst_pct >= 75 )); then
-            abort_settle_gate "Master $worst_name at ${worst_pct}% memory (threshold <75%). The observability cascade adds ~10-15% more — too close to OOM range. Resize the control plane or wait for recovery before proceeding."
+        if (( worst_pct >= SETTLE_GATE_MASTER_MEM_MAX )); then
+            abort_settle_gate "Master $worst_name at ${worst_pct}% memory (threshold <${SETTLE_GATE_MASTER_MEM_MAX}%). On RHOAI 3.4 the cascade typically adds 0-5% to master memory (OTel deploys as a StatefulSet on workers); older releases with DaemonSet OTel could add 10-15%. Resize the control plane, wait for recovery, or set SETTLE_GATE_MASTER_MEM_MAX=<n> to override before proceeding."
         fi
-        log_info "  ✓ Masters <75% memory (worst: $worst_name at ${worst_pct}%)"
+        log_info "  ✓ Masters <${SETTLE_GATE_MASTER_MEM_MAX}% memory (worst: $worst_name at ${worst_pct}%)"
     else
         log_info "  ~ metrics-server unavailable — master pressure check skipped"
     fi
@@ -487,6 +497,37 @@ log_step "Phase O: Flip instance-rhoai overlay -> maas-observability"
 set_rhoai_app_path "$OVERLAY_MAAS_OBS" "maas-observability"
 if [ "$DRY_RUN" = false ]; then
     wait_for_monitoring_cascade 600 || true
+
+    # Post-flip sanity: verify cascade pods reach Running. wait_for_monitoring_cascade
+    # only confirms the Perses CR and DSCI.metrics.storage are set; it does not
+    # verify any pod is actually Running. If a future release brings back
+    # DaemonSet OTel and a master is pressured, pods could sit Pending and we
+    # would silently succeed. Warn-level (not abort) because we've already
+    # flipped the overlay — this is a "cascade still landing" signal, not a
+    # gate error.
+    log_step "Phase V: Verify cascade pods reach Running (timeout 120s)"
+    pod_deadline=$(( $(date +%s) + 120 ))
+    pod_bad=0
+    pod_total=0
+    while (( $(date +%s) < pod_deadline )); do
+        pod_bad=$(oc get pods -n redhat-ods-monitoring \
+            --field-selector=status.phase!=Running,status.phase!=Succeeded \
+            --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        pod_total=$(oc get pods -n redhat-ods-monitoring --no-headers 2>/dev/null \
+            | wc -l | tr -d ' ')
+        if (( pod_total > 0 && pod_bad == 0 )); then
+            log_info "  ✓ All $pod_total cascade pods Running in redhat-ods-monitoring"
+            break
+        fi
+        sleep 5
+    done
+    if (( pod_bad > 0 )); then
+        log_warn "$pod_bad pod(s) in redhat-ods-monitoring not Running after 120s:"
+        oc get pods -n redhat-ods-monitoring \
+            --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null || true
+        log_warn "Cascade may still be landing, or a pod is stuck. Check with 'oc get pods -n redhat-ods-monitoring'."
+    fi
+
     applied "instance-rhoai source -> $OVERLAY_MAAS_OBS (monitoring cascade triggered)"
 else
     applied "[DRY RUN] instance-rhoai source -> $OVERLAY_MAAS_OBS"

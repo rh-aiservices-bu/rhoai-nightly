@@ -512,9 +512,9 @@ if [ "$DRY_RUN" = false ]; then
     while (( $(date +%s) < pod_deadline )); do
         pod_bad=$(oc get pods -n redhat-ods-monitoring \
             --field-selector=status.phase!=Running,status.phase!=Succeeded \
-            --no-headers 2>/dev/null | wc -l | tr -d ' ')
+            --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo 0)
         pod_total=$(oc get pods -n redhat-ods-monitoring --no-headers 2>/dev/null \
-            | wc -l | tr -d ' ')
+            | wc -l | tr -d ' ' || echo 0)
         if (( pod_total > 0 && pod_bad == 0 )); then
             log_info "  ✓ All $pod_total cascade pods Running in redhat-ods-monitoring"
             break
@@ -526,6 +526,8 @@ if [ "$DRY_RUN" = false ]; then
         oc get pods -n redhat-ods-monitoring \
             --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null || true
         log_warn "Cascade may still be landing, or a pod is stuck. Check with 'oc get pods -n redhat-ods-monitoring'."
+    elif (( pod_total == 0 )); then
+        log_warn "No pods appeared in redhat-ods-monitoring within 120s — cascade may not have fired. Check with 'oc get pods -n redhat-ods-monitoring' and 'oc get perses -A'."
     fi
 
     applied "instance-rhoai source -> $OVERLAY_MAAS_OBS (monitoring cascade triggered)"

@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall diagnose preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -70,6 +70,11 @@ help:
 	@echo "  make maas-uninstall - Remove MaaS resources created by install-maas.sh"
 	@echo "  make observability  - (Re-)install MaaS observability only (UWM + monitors + Kuadrant)"
 	@echo "  make observability-uninstall - Uninstall MaaS observability (leaves UWM ConfigMap in place)"
+	@echo ""
+	@echo "Eval Hub:"
+	@echo "  make evalhub        - Enable eval-hub (EvalHub + MLflow + DSPA in evalhub-tenant ns)"
+	@echo "                        Creates instance-evalhub ArgoCD Application; orthogonal to MaaS / observability."
+	@echo "  make evalhub-uninstall - Disable eval-hub (deletes Application; ArgoCD prunes resources)"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
@@ -279,4 +284,15 @@ observability: ## Install MaaS observability (UWM + monitors + Kuadrant)
 observability-uninstall: ## Uninstall MaaS observability
 	@chmod +x scripts/install-observability.sh
 	@scripts/install-observability.sh --uninstall
+
+# Enable eval-hub (creates dedicated instance-evalhub ArgoCD Application)
+# Orthogonal to MaaS / observability — does not modify the instance-rhoai overlay
+evalhub: ## Enable eval-hub (EvalHub + MLflow + DSPA in evalhub-tenant ns)
+	@chmod +x scripts/install-evalhub.sh
+	@scripts/install-evalhub.sh
+
+# Disable eval-hub (deletes instance-evalhub Application; ArgoCD prunes resources)
+evalhub-uninstall: ## Disable eval-hub (deletes Application)
+	@chmod +x scripts/install-evalhub.sh
+	@scripts/install-evalhub.sh --uninstall
 

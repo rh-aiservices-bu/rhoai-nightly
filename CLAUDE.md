@@ -27,6 +27,7 @@ rhoai-nightly/
 │   ├── install-maas.sh                  # Install MaaS platform ONLY (secrets, ArgoCD app, Authorino) — observability is separate
 │   ├── uninstall-maas.sh               # Remove MaaS platform
 │   ├── install-observability.sh        # Install/uninstall MaaS observability (Kuadrant, ServiceMonitors; requires UWM from make infra)
+│   ├── install-evalhub.sh              # Install/uninstall eval-hub via dedicated instance-evalhub ArgoCD Application
 │   ├── restart-catalog.sh              # Restart RHOAI catalog + re-resolve Subscription after catalog image flip
 │   ├── setup-maas-model.sh             # Deploy/delete/status MaaS models
 │   ├── verify-maas.sh                  # End-to-end MaaS verification
@@ -690,6 +691,99 @@ oc get application.argoproj.io/instance-maas-observability -n openshift-gitops
 make diagnose  # section 9 = Observability
 ```
 
+## Eval Hub
+
+Eval Hub is a TrustyAI evaluation harness layered on top of RHOAI. It's
+opt-in (not part of `make all`) and orthogonal to MaaS and observability —
+turning eval-hub on or off does not affect either of the other two
+features. `make evalhub` / `make evalhub-uninstall` toggle it.
+
+### Architecture
+
+Eval-hub is shipped as its own ArgoCD Application (`instance-evalhub`),
+not as a Kustomize overlay on `instance-rhoai`. This keeps eval-hub
+orthogonal to the MaaS / observability flips that DO modify the
+`instance-rhoai` overlay path. The composition is:
+
+| Feature | Mechanism | Lifecycle |
+|---|---|---|
+| MaaS | `instance-rhoai` overlay flip (`overlays/maas`) | `make maas` / `make maas-uninstall` |
+| MaaS observability | `instance-rhoai` overlay flip (`overlays/maas-observability`) | `make observability` / `make observability-uninstall` |
+| Eval-hub | Standalone `instance-evalhub` Application | `make evalhub` / `make evalhub-uninstall` |
+
+`make evalhub` mirrors the `install-maas.sh` pattern: detect repo URL +
+branch from the existing `instance-rhoai` Application, then `oc apply` an
+ArgoCD Application manifest pointed at `components/instances/evalhub/`.
+`make evalhub-uninstall` deletes that Application; the
+`resources-finalizer.argocd.argoproj.io` finalizer cascade-prunes
+EvalHub, MLflow, DSPA, and the evalhub-tenant namespace + RBAC + Job.
+
+### What it deploys
+
+- `EvalHub/evalhub` (TrustyAI) in `redhat-ods-applications`
+- `MLflow/mlflow` (10Gi RWO PVC) in `redhat-ods-applications`
+- `DataSciencePipelinesApplication/dspa` in `evalhub-tenant` ns —
+  brings up its own MinIO with external route, MariaDB, pipeline API
+  server, and supporting controllers
+- `evalhub-tenant` namespace + RBAC (Role `evalhub-jobs-dspa-api`,
+  RoleBindings to `ds-pipeline-dspa` and `evalhub-redhat-ods-applications-job`)
+- `Job/update-secret-minio` — hook Job that patches DSPA's
+  `ds-pipeline-s3-dspa` secret to point at the in-cluster MinIO
+
+All manifests live at `components/instances/evalhub/`.
+
+### Why it's opt-in (not in `make all`)
+
+- **Storage class dependency.** MLflow and DSPA-managed MinIO each ask
+  for an RWO PVC. Without a default StorageClass, both sit Pending.
+- **CRD/sync ordering.** `EvalHub`, `MLflow`, and DSPA CRDs only exist
+  on RHOAI 3.x nightly. ArgoCD will retry but reports Degraded for a
+  few minutes on first install.
+- **Privileged hook Job.** `update-secret-minio` runs with a SA bound
+  to `ClusterRole/edit` (namespace-scoped). Acceptable for a demo rig;
+  noted for awareness.
+- **Demo-grade MinIO posture.** DSPA enables `enableExternalRoute: true`
+  and `podToPodTLS: false` — fine for a demo cluster.
+
+### Settle-gate
+
+Before creating the Application, `scripts/install-evalhub.sh` runs a
+lightweight gate (no master-memory check — eval-hub deploys ~5 worker
+pods, no DaemonSet, no control-plane cascade):
+
+1. `rhods-operator` CSV in `redhat-ods-operator` is `Succeeded`
+2. `DataScienceCluster/default-dsc` Ready=True;
+   `DSCInitialization/default-dsci` Available=True / Degraded≠True
+3. At least one default StorageClass exists
+
+After the Application is created, the script waits up to 600s for
+`EvalHub` to reach `status.phase=Ready`, MLflow + DSPA + `evalhub-tenant`
+ns to come up, then runs a 120s pod-readiness check on
+`redhat-ods-applications` (eval-hub + mlflow pods) and `evalhub-tenant`
+(DSPA + MinIO pods). Pod-readiness is warn-only — the Application is
+already created by then.
+
+### Verification commands
+
+```bash
+# Eval-hub resources reconciled
+oc get evalhub,mlflow,dspa -A
+oc get evalhub evalhub -n redhat-ods-applications -o jsonpath='{.status.phase}'
+
+# Pods Running
+oc get pods -n redhat-ods-applications | grep -E 'evalhub|mlflow'
+oc get pods -n evalhub-tenant
+
+# Hook Job completed
+oc get job update-secret-minio -n evalhub-tenant
+
+# DSPA pipeline routes
+oc get route -n evalhub-tenant
+
+# ArgoCD Application status
+oc get application.argoproj.io/instance-evalhub -n openshift-gitops
+```
+
 ## Script Implementation Details
 
 ### Script Behavior
@@ -714,6 +808,8 @@ Expected wait times for each script:
 - `deploy`: Immediate (creates apps, sync happens async)
 - `maas`: 3-5 minutes (creates secrets, ArgoCD app, waits for Gateway + maas-api, then runs observability install)
 - `observability`: ~3-5 minutes (settle-gate check, overlay flip, wait for Perses/Tempo/OTel to reconcile, then Kuadrant patch + conditional ServiceMonitors). Run separately from `make maas`.
+- `evalhub`: ~3-5 minutes (lightweight settle-gate, creates instance-evalhub Application, waits for EvalHub Ready + MLflow + DSPA + evalhub-tenant). Orthogonal to MaaS / observability.
+- `evalhub-uninstall`: ~30 seconds (deletes instance-evalhub Application; resources-finalizer cascade-prunes EvalHub/MLflow/DSPA + evalhub-tenant ns).
 - `maas-model` (simulator): ~30 seconds (CPU, no image pull needed after first time)
 - `maas-model` (GPU models): 5-15 minutes (image pull ~8GB + vLLM model loading)
 - `maas-verify`: ~3 minutes (deploys temp model, runs tests, cleans up)
@@ -955,7 +1051,7 @@ oc get mcp  # MachineConfigPool status
 
 - This repository uses **GitOps** - changes are deployed by committing to git, not by running oc commands
 - Scripts in `scripts/` are **pre-GitOps only** - they run before ArgoCD is installed
-- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `enable-uwm.sh`, and `restart-catalog.sh` run **after** ArgoCD — they create secrets, an ArgoCD Application, or cluster-wide config that can't be purely declarative. `install-maas.sh` and `install-observability.sh` are now independent; neither invokes the other.
+- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `enable-uwm.sh`, and `restart-catalog.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative. `install-maas.sh`, `install-observability.sh`, and `install-evalhub.sh` are independent; none invokes another.
 - After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets/Authorino)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
 - **Never commit secrets** - this is a public repository

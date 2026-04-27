@@ -45,6 +45,9 @@ spec:
           # instance-rhoai defaults to the `maas` overlay (MaaS on, observability off).
           # `make observability` flips this to `overlays/maas-observability` after a
           # settle-gate; `install-observability.sh --uninstall` flips it back.
+          # Eval-hub is orthogonal: `make evalhub` creates a separate
+          # `instance-evalhub` Application (see scripts/install-evalhub.sh) and does
+          # NOT touch this overlay path.
           - cluster: local
             values:
               name: instance-rhoai

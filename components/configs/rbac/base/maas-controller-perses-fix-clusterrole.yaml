@@ -1,0 +1,8 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maas-controller-perses-fix
+rules:
+- apiGroups: ["perses.dev"]
+  resources: ["persesdatasources", "persesdashboards", "perses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

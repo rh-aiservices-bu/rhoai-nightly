@@ -5,3 +5,10 @@ resources:
   - cluster-admin-extra-group.yaml
   - cluster-admin-extra-rolebinding.yaml
   - rhods-admins-group.yaml
+  # Workaround for upstream bug: maas-controller's bundled ClusterRole is missing perses.dev rules,
+  # causing DSC ModelsAsServiceReady=PlatformReconcileFailed when COO is installed.
+  # Upstream fix: opendatahub-io/models-as-a-service#818 (main) + #819 (stable, 2026-04-29).
+  # Remove these once the rhods-operator's MaaS pin in get_all_manifests.sh moves past
+  # opendatahub-io/models-as-a-service@44afbe2 and the new operator bundle ships the fix.
+  - maas-controller-perses-fix-clusterrole.yaml
+  - maas-controller-perses-fix-rolebinding.yaml

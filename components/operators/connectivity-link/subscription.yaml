@@ -9,3 +9,16 @@ spec:
   name: rhcl-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
+  # Memory headroom for the kuadrant-operator-controller-manager. The default
+  # 300Mi OOM-kills under reconcile pressure (e.g., orphan TargetNotFound
+  # AuthPolicy/TokenRateLimitPolicy CRs trigger a reconcile hot-loop, observed
+  # at ~43Hz on bu-nightly-2 prior to deleting the orphans on 2026-04-29).
+  # Bumping headroom here is OLM-supported and survives operator upgrades.
+  config:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 512Mi

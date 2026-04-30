@@ -14,5 +14,5 @@ patches:
     patch: |-
       - op: replace
         path: /spec/image
-        # Pinned to Apr 29 nightly build (sha256:4c48f0c2)
-        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4@sha256:4c48f0c28f2f809bc7a097f6e7341dc1cad85262e02f716b087968211833cb6f
+        # Pinned to Apr 30 nightly build (sha256:35290f17)
+        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4@sha256:35290f177c77c16c6d34ea4a516766b4717378f05ca363965a7bcfe006df7cd0

@@ -53,8 +53,10 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Default: CLI arg > MAAS_MODELS env > autodetect ('auto' resolves at runtime)
-MODEL="${1:-${MAAS_MODELS:-auto}}"
+# Default: CLI positional arg > MAAS_MODELS env > autodetect ('auto' resolves at runtime).
+# Positional args are collected by the case loop below; do NOT seed MODEL from $1
+# here, because $1 can be a flag like --delete or --status.
+MODEL="${MAAS_MODELS:-auto}"
 DELETE=false
 STATUS_ONLY=false
 

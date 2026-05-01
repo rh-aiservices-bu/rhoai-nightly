@@ -295,6 +295,7 @@ fi
 
 # Ensure namespaces exist
 oc create namespace llm --dry-run=client -o yaml | oc apply -f - 2>/dev/null
+oc label namespace llm opendatahub.io/dashboard=true --overwrite >/dev/null 2>&1 || true
 oc create namespace models-as-a-service --dry-run=client -o yaml | oc apply -f - 2>/dev/null
 
 for path in $MODEL_PATHS; do

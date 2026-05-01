@@ -4,5 +4,6 @@ metadata:
   name: evalhub-tenant
   labels:
     evalhub.trustyai.opendatahub.io/tenant: "true"
+    opendatahub.io/dashboard: "true"
   annotations:
     argocd.argoproj.io/sync-wave: "4"

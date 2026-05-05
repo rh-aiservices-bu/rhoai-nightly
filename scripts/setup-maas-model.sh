@@ -53,8 +53,10 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Default: CLI arg > MAAS_MODELS env > autodetect ('auto' resolves at runtime)
-MODEL="${1:-${MAAS_MODELS:-auto}}"
+# Default: CLI positional arg > MAAS_MODELS env > autodetect ('auto' resolves at runtime).
+# Positional args are collected by the case loop below; do NOT seed MODEL from $1
+# here, because $1 can be a flag like --delete or --status.
+MODEL="${MAAS_MODELS:-auto}"
 DELETE=false
 STATUS_ONLY=false
 
@@ -293,6 +295,7 @@ fi
 
 # Ensure namespaces exist
 oc create namespace llm --dry-run=client -o yaml | oc apply -f - 2>/dev/null
+oc label namespace llm opendatahub.io/dashboard=true --overwrite >/dev/null 2>&1 || true
 oc create namespace models-as-a-service --dry-run=client -o yaml | oc apply -f - 2>/dev/null
 
 for path in $MODEL_PATHS; do

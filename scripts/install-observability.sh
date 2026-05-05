@@ -3,16 +3,22 @@
 # install-observability.sh - Install MaaS observability stack
 #
 # Enables the RHOAI 3.x Observability dashboard for MaaS by:
-#   - Enabling OpenShift user-workload monitoring (UWM)
+#   - Verifying OpenShift user-workload monitoring (UWM) is enabled (owned by `make infra`)
+#   - Creating the `instance-maas-observability` ArgoCD Application that syncs
+#     TelemetryPolicy + Istio Telemetry from components/instances/maas-observability/base/
+#   - Flipping instance-rhoai source to overlays/maas-observability (triggers
+#     RHOAI operator's Perses/Tempo/OTel cascade via DSCI.spec.monitoring.metrics)
 #   - Verifying the Kuadrant CR has spec.observability.enable=true (set via GitOps)
 #   - Conditionally applying Limitador/Authorino ServiceMonitors (avoid duplicates)
 #   - Conditionally applying Istio Gateway metrics Service + ServiceMonitor (requires MaaS gateway)
 #   - Conditionally applying KServe LLM models ServiceMonitor (requires `llm` namespace)
 #
-# The GitOps-managed TelemetryPolicy (adds model/user/subscription labels) and
-# Istio Telemetry (per-subscription latency) are deployed via the
-# `instance-maas-observability` ArgoCD Application from
-# `components/instances/maas-observability/base/`.
+# The `instance-maas-observability` Application is owned by THIS script (mirror
+# of how install-maas.sh creates instance-maas) and not by the cluster-oper-
+# instances ApplicationSet, so a cluster has a clean baseline (no TelemetryPolicy,
+# no Istio Telemetry) when observability is off. `--uninstall` deletes the
+# Application; ArgoCD's resources-finalizer cascades the GitOps-tracked
+# TelemetryPolicy + Istio Telemetry on the way out.
 #
 # Prerequisites:
 #   - OpenShift cluster connection (oc whoami works)
@@ -353,12 +359,19 @@ if [ "$UNINSTALL" = true ]; then
 
     # Kuadrant observability.enable is GitOps-managed in
     # components/instances/connectivity-link-instance/base/kuadrant.yaml.
-    # To disable it, edit that file and let ArgoCD reconcile, OR run:
-    #   oc patch kuadrant kuadrant -n kuadrant-system --type=merge \
-    #     -p '{"spec":{"observability":{"enable":false}}}'
-    # (ArgoCD will flip it back to true on next sync unless the git manifest is changed first)
+    # The Kuadrant operator's internal monitors are harmless when nothing else
+    # is scraping (no UWM-side ServiceMonitors, no Perses backend), so we leave
+    # the flag alone and let GitOps own it.
     log_info "NOTE: Kuadrant observability is GitOps-managed — uninstall does not disable it."
-    log_info "      To disable: edit components/instances/connectivity-link-instance/base/kuadrant.yaml"
+    log_info "      Without UWM/Perses scraping, the Kuadrant-side monitors are inert."
+
+    # Phase G-uninstall: Delete instance-maas-observability Application.
+    # The resources-finalizer.argocd.argoproj.io finalizer cascade-deletes the
+    # GitOps-tracked TelemetryPolicy + Istio Telemetry as ArgoCD prunes them.
+    log_step "Phase G-uninstall: Delete instance-maas-observability Application"
+    run_cmd oc delete application.argoproj.io/instance-maas-observability \
+        -n openshift-gitops --ignore-not-found
+    applied "Deleted instance-maas-observability Application (cascades TelemetryPolicy + Istio Telemetry)"
 
     # Delete conditional ServiceMonitors labelled by this script
     log_info "Deleting conditional MaaS observability monitors (label app.kubernetes.io/part-of=maas-observability)"
@@ -414,8 +427,8 @@ PYEOF
     fi
     log_info "========================================="
     log_info ""
-    log_info "Note: GitOps-managed TelemetryPolicy / Istio Telemetry are not removed here."
-    log_info "They are managed by the instance-maas-observability ArgoCD Application."
+    log_info "Note: TelemetryPolicy and Istio Telemetry were cascade-deleted via the"
+    log_info "instance-maas-observability Application's resources-finalizer."
     log_info "========================================="
     log_info ""
     log_info "Note: The openshift.io/cluster-monitoring label (if previously removed from"
@@ -488,6 +501,58 @@ else
     run_settle_gate
     applied "Settle-gate passed (operators Succeeded, DSC/DSCI Ready, pods Running, etcd healthy, masters <75% mem)"
 fi
+
+# =============================================================================
+# Phase G: Create instance-maas-observability ArgoCD Application
+# =============================================================================
+# This Application is no longer a static element of the cluster-oper-instances
+# ApplicationSet — it's owned by this script so a cluster has a clean baseline
+# (no TelemetryPolicy, no Istio Telemetry) when observability is off. Mirrors
+# the pattern in install-maas.sh / install-evalhub.sh.
+log_step "Phase G: Create instance-maas-observability ArgoCD Application"
+
+REPO_URL="${GITOPS_REPO_URL:-$(oc get application.argoproj.io/instance-rhoai -n openshift-gitops -o jsonpath='{.spec.source.repoURL}' 2>/dev/null || echo "")}"
+BRANCH="${GITOPS_BRANCH:-$(oc get application.argoproj.io/instance-rhoai -n openshift-gitops -o jsonpath='{.spec.source.targetRevision}' 2>/dev/null || echo "")}"
+
+if [ -z "$REPO_URL" ] || [ -z "$BRANCH" ]; then
+    log_error "Could not detect repo URL or branch from instance-rhoai Application."
+    log_error "Either run 'make deploy' first, or set GITOPS_REPO_URL and GITOPS_BRANCH env vars."
+    exit 1
+fi
+log_info "Using repo $REPO_URL @ $BRANCH"
+
+run_cmd oc apply -f - <<EOF
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: instance-maas-observability
+  namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Prune=false
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: ${BRANCH}
+    path: components/instances/maas-observability/base
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m
+EOF
+applied "instance-maas-observability Application created (TelemetryPolicy + Istio Telemetry will sync)"
 
 # =============================================================================
 # Phase O: Flip instance-rhoai Application source -> overlays/maas-observability
@@ -725,7 +790,7 @@ fi
 log_info "========================================="
 log_info ""
 log_info "Next steps:"
-log_info "  1. GitOps syncs instance-maas-observability (TelemetryPolicy + Istio Telemetry)"
+log_info "  1. ArgoCD syncs instance-maas-observability (TelemetryPolicy + Istio Telemetry)"
 log_info "  2. Fire inference against a MaaS model, wait ~2 min for scrapes"
 log_info "  3. Open RHOAI console -> Observability dashboard"
 log_info "  4. Run 'make diagnose' and look at section 9 (Observability)"

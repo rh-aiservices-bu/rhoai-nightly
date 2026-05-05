@@ -633,11 +633,13 @@ MaaS observability has three layers:
 2. **GitOps (Kustomize)** - `components/instances/maas-observability/base/`
    - Kuadrant `TelemetryPolicy/maas-telemetry` (adds `model`, `user`, `subscription`, `organization_id`, `cost_center` labels on gateway metrics)
    - Istio `Telemetry/latency-per-subscription` (per-subscription request-duration label)
-   - Synced by the `instance-maas-observability` ArgoCD Application created by the instances ApplicationSet.
+   - Synced by the `instance-maas-observability` ArgoCD Application — created imperatively by `scripts/install-observability.sh` (mirrors how `install-maas.sh` creates `instance-maas`), NOT by the cluster-oper-instances ApplicationSet. This keeps the cluster baseline clean (no TelemetryPolicy, no Istio Telemetry) when observability is off.
 
 3. **Imperative (install-observability.sh)** - Things that can't be in git:
    - Verifies UWM is already enabled (fails fast with pointer to `make uwm` if not)
-   - Kuadrant CR patch (`spec.observability.enable=true`) — triggers the Kuadrant operator to manage its own PodMonitors
+   - Creates `instance-maas-observability` ArgoCD Application (Phase G) — replaces the previous static ApplicationSet element
+   - Flips `instance-rhoai` source.path to `overlays/maas-observability` (triggers RHOAI operator's Perses/Tempo/OTel cascade)
+   - Verifies Kuadrant CR has `spec.observability.enable=true` (set declaratively in `components/instances/connectivity-link-instance/base/kuadrant.yaml`; ArgoCD reconciles it — flag is intentionally GitOps-managed because the Kuadrant operator's internal monitors are inert without UWM/Perses scraping)
    - Conditional Limitador/Authorino ServiceMonitors (skipped if the operator already covers those targets)
    - Conditional Istio Gateway metrics Service + ServiceMonitor (only applied when `maas-default-gateway` deployment exists)
 
@@ -646,22 +648,29 @@ MaaS observability has three layers:
 ```
 install-observability.sh:
   1. Preflight: cluster connection, Kuadrant + Istio Telemetry CRDs
-  2. Phase A: VERIFY UWM is enabled (fails with pointer to `make uwm` if not)
-  3. Phase B: patch Kuadrant CR -> spec.observability.enable=true
-  4. Phase C: apply limitador-servicemonitor IF no existing monitor covers it
-  5. Phase D: apply authorino-server-metrics-servicemonitor IF no existing monitor covers /server-metrics
-  6. Phase E: apply istio-gateway-service + servicemonitor IF maas-default-gateway deployment present
+  2. Phase A:  VERIFY UWM is enabled (fails with pointer to `make uwm` if not)
+  3. Phase A2: Scrub openshift.io/cluster-monitoring label from MaaS namespaces (UWM owns scraping)
+  4. Phase S:  Settle-gate (CSVs Succeeded, DSC/DSCI Ready, no bad pods, etcd healthy, masters <80% mem)
+  5. Phase G:  Create instance-maas-observability ArgoCD Application (TelemetryPolicy + Istio Telemetry sync via ArgoCD)
+  6. Phase O:  Flip instance-rhoai source -> overlays/maas-observability (RHOAI operator's monitoring cascade fires)
+  7. Phase B:  Verify Kuadrant CR has spec.observability.enable=true (GitOps-managed)
+  8. Phase C:  Apply limitador-servicemonitor IF no existing monitor covers it
+  9. Phase D:  Apply authorino-server-metrics-servicemonitor IF no existing monitor covers /server-metrics
+  10. Phase E: Apply istio-gateway-service + servicemonitor IF maas-default-gateway deployment present
+  11. Phase F: Apply kserve-llm-models-servicemonitor IF llm namespace exists
 ```
 
 ### Uninstall Flow
 
 ```
 install-observability.sh --uninstall:
-  1. Patch Kuadrant CR -> spec.observability.enable=false
-  2. Delete ServiceMonitors/Services labelled app.kubernetes.io/part-of=maas-observability
-     and app.kubernetes.io/managed-by=maas-observability
-  3. LEAVES bootstrap/cluster-monitoring-config ConfigMap in place (other workloads may depend on UWM)
-  4. Does NOT touch the GitOps instance-maas-observability Application
+  1. Flip instance-rhoai source -> overlays/maas (RHOAI operator's monitoring cascade tears down)
+  2. Phase G-uninstall: Delete instance-maas-observability Application
+     (resources-finalizer.argocd.argoproj.io cascades TelemetryPolicy + Istio Telemetry)
+  3. Delete ServiceMonitors/Services labelled app.kubernetes.io/part-of=maas-observability
+     and app.kubernetes.io/managed-by=maas-observability (kuadrant-system, openshift-ingress, llm)
+  4. LEAVES bootstrap/cluster-monitoring-config ConfigMap in place (other workloads may depend on UWM)
+  5. LEAVES Kuadrant CR spec.observability.enable=true (GitOps-owned; harmless without UWM scraping)
 ```
 
 ### Verification Commands

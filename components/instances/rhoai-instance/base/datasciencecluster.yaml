@@ -26,6 +26,16 @@ spec:
       defaultLocalQueueName: default
       managementState: Removed
     llamastackoperator:
+      # Deprecated in RHOAI 3.5 — replaced by the ogx component (LlamaStack
+      # backend for the Gen AI Studio Playground). Has no controller anymore;
+      # leaving it Managed is a no-op AND blocks ogx from enabling, so it must
+      # be Removed.
+      managementState: Removed
+    ogx:
+      # Provides the LlamaStack operator + distribution that the Gen AI Studio
+      # Playground chats through (odh-ogx-k8s-operator + RH LlamaStack
+      # distribution). Without this the gen-ai BFF starts with an empty
+      # LlamaStack url and the Playground tab does not appear.
       managementState: Managed
     mlflowoperator:
       managementState: Managed

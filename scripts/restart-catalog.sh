@@ -29,6 +29,9 @@
 # Exit codes:
 #   0 = success
 #   1 = cluster unreachable or RHOAI not installed
+#   2 = catalog channel head could not be confirmed; Subscription left intact.
+#       A real version bump may NOT have been applied (operator still on the old
+#       CSV). Verify the catalog is serving, then re-run with --force-resub.
 
 set -uo pipefail
 
@@ -37,13 +40,14 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 RESUB=true
 FORCE_RESUB=false
+HEAD_UNRESOLVED=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-resub) RESUB=false; shift ;;
         --force-resub) FORCE_RESUB=true; shift ;;
         -h|--help)
-            sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,34p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
@@ -58,12 +62,15 @@ if ! oc get subscription rhods-operator -n redhat-ods-operator &>/dev/null; then
     exit 0
 fi
 
-# Capture Subscription fields up front (they live on the Subscription object and
-# are independent of catalog pod state — read them before the bounce, since the
-# guard below may delete the Subscription).
-OLD_CSV=$(oc get subscription rhods-operator -n redhat-ods-operator -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
-CHANNEL=$(oc get subscription rhods-operator -n redhat-ods-operator -o jsonpath='{.spec.channel}' 2>/dev/null || echo "")
-SOURCE=$(oc get subscription rhods-operator -n redhat-ods-operator -o jsonpath='{.spec.source}' 2>/dev/null || echo "")
+# Capture Subscription fields up front in a single API read (they live on the
+# Subscription object and are independent of catalog pod state — read them before
+# the bounce, since the guard below may delete the Subscription).
+SUB_FIELDS=$(oc get subscription rhods-operator -n redhat-ods-operator \
+    -o jsonpath='{.status.installedCSV}|{.spec.channel}|{.spec.source}' 2>/dev/null || echo "||")
+OLD_CSV="${SUB_FIELDS%%|*}"
+SUB_REST="${SUB_FIELDS#*|}"
+CHANNEL="${SUB_REST%%|*}"
+SOURCE="${SUB_REST##*|}"
 
 log_step "Restarting catalog pod"
 oc delete pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly 2>/dev/null || true
@@ -95,20 +102,26 @@ if [[ "$RESUB" == "true" ]]; then
         done
     fi
 
+    # Decide whether to delete the Subscription (single delete path below avoids
+    # duplicating the delete + monitor-hint logging across branches).
+    DO_DELETE=false
+    DELETE_REASON=""
     if [[ "$FORCE_RESUB" == "true" ]]; then
-        log_step "Deleting rhods-operator Subscription so OLM re-resolves (--force-resub)"
-        [[ -n "$OLD_CSV" ]] && log_info "Previous installedCSV: $OLD_CSV"
-        oc delete subscription rhods-operator -n redhat-ods-operator
-        log_info "Subscription deleted. ArgoCD will recreate it from components/operators/rhoai-operator/; OLM will generate a fresh InstallPlan against the new catalog."
-        log_info "Monitor progress: oc get subscription,installplan,csv -n redhat-ods-operator -w"
+        DO_DELETE=true
+        DELETE_REASON="--force-resub"
     elif [[ -z "$HEAD_CSV" ]]; then
         # FAIL SAFE: could not confirm the catalog head (catalog pod not serving
         # PackageManifests in time). Do NOT delete — deleting on an unconfirmed
         # head risks orphaning the running CSV and deadlocking OLM with
         # ConstraintsNotSatisfiable, which needs a manual `oc delete csv` to clear.
+        # But this is ALSO the shape of a real version bump whose new catalog is
+        # just slow to serve, so exit non-zero (code 2) rather than silently
+        # reporting success — a masked upgrade must be loud.
         log_warn "Could not determine catalog '$SOURCE' channel '$CHANNEL' head (packagemanifest not available within ~180s)."
         log_warn "Skipping Subscription deletion to avoid orphaning the CSV (ConstraintsNotSatisfiable deadlock)."
-        log_warn "If the catalog is healthy and you intend a re-resolve, verify 'oc get packagemanifest -l catalog=$SOURCE' then re-run with --force-resub."
+        log_warn "If this was a real version bump, the operator may NOT have upgraded (still on ${OLD_CSV:-its current CSV})."
+        log_warn "Verify 'oc get packagemanifest -l catalog=$SOURCE' is serving, then re-run with: make restart-catalog FORCE_RESUB=true"
+        HEAD_UNRESOLVED=true
     elif [[ -n "$OLD_CSV" && "$OLD_CSV" == "$HEAD_CSV" ]]; then
         # Same-version guard. The catalog image changed but the resolved version
         # did not (e.g. re-pulling a moving nightly tag still pointing at the same
@@ -118,11 +131,15 @@ if [[ "$RESUB" == "true" ]]; then
         log_step "Skipping Subscription deletion — catalog channel head unchanged"
         log_info "Installed CSV ($OLD_CSV) already matches catalog '$CHANNEL' head ($HEAD_CSV)."
         log_info "Pod bounce above is sufficient; deleting the Subscription would orphan the CSV and deadlock OLM."
-        log_info "To force a re-resolve anyway, re-run with --force-resub."
+        log_info "To force a re-resolve anyway, re-run with: make restart-catalog FORCE_RESUB=true"
     else
-        log_step "Deleting rhods-operator Subscription so OLM re-resolves"
+        DO_DELETE=true
+        DELETE_REASON="catalog '$CHANNEL' head ${HEAD_CSV} differs from installed ${OLD_CSV:-<none>} — version change"
+    fi
+
+    if [[ "$DO_DELETE" == "true" ]]; then
+        log_step "Deleting rhods-operator Subscription so OLM re-resolves ($DELETE_REASON)"
         [[ -n "$OLD_CSV" ]] && log_info "Previous installedCSV: $OLD_CSV"
-        log_info "Catalog '$CHANNEL' head: $HEAD_CSV (differs from installed — version change)"
         oc delete subscription rhods-operator -n redhat-ods-operator
         log_info "Subscription deleted. ArgoCD will recreate it from components/operators/rhoai-operator/; OLM will generate a fresh InstallPlan against the new catalog."
         log_info "Monitor progress: oc get subscription,installplan,csv -n redhat-ods-operator -w"
@@ -130,6 +147,11 @@ if [[ "$RESUB" == "true" ]]; then
 else
     log_info "--no-resub set; Subscription left in place."
     log_info "If OLM doesn't re-resolve (symptom: Subscription stuck at old installedCSV), re-run without --no-resub."
+fi
+
+if [[ "$HEAD_UNRESOLVED" == "true" ]]; then
+    log_warn "Done with warnings — catalog head unconfirmed, Subscription left intact (exit 2)."
+    exit 2
 fi
 
 log_info "Done."

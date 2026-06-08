@@ -192,9 +192,12 @@ refresh:
 
 # Restart catalog and operator pods + re-resolve Subscription
 # Use after updating catalog image and syncing from git
-# Pass RESUB=false to skip the Subscription delete (just bounce pods)
+# Pass RESUB=false to skip the Subscription delete (just bounce pods).
+# Pass FORCE_RESUB=true to delete the Subscription even when the catalog version
+# is unchanged (intentional re-resolve; the default same-version guard otherwise
+# skips the delete to avoid the orphaned-CSV deadlock).
 restart-catalog:
-	@scripts/restart-catalog.sh $(if $(filter false,$(RESUB)),--no-resub)
+	@scripts/restart-catalog.sh $(if $(filter false,$(RESUB)),--no-resub) $(if $(filter true,$(FORCE_RESUB)),--force-resub)
 
 # Sync all apps one-by-one in dependency order (RECOMMENDED)
 sync:

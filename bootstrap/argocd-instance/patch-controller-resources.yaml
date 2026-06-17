@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: openshift-gitops
+spec:
+  # The application-controller OOMKills at the operator-default 2Gi limit once
+  # the full app set is reconciling (observed ~2.2Gi steady-state on
+  # rhoaibu-cluster-nightly), crash-looping and stalling every sync. Raise the
+  # ceiling so it can hold the working set; requests bumped to match for stable
+  # scheduling. See CLUSTERS.md upgrade notes.
+  controller:
+    resources:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: 250m
+        memory: 2Gi

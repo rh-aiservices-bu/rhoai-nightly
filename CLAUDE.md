@@ -987,7 +987,7 @@ oc get mcp  # MachineConfigPool status
 
 ## Requirements
 
-- **OpenShift**: 4.17+ (tested on 4.17)
+- **OpenShift**: 4.20+ (minimum)
 - **CLI**: `oc` (OpenShift CLI)
 - **Credentials**: quay.io credentials with access to `quay.io/rhoai` repos
 - **Cluster**: AWS cluster with GPU availability (us-east-2 recommended)

@@ -18,7 +18,7 @@ help:
 	@echo "RHOAI 3.x Nightly GitOps"
 	@echo ""
 	@echo "Autonomous (recommended for clean clusters):"
-	@echo "  make all          - Full setup: infra → secrets → gitops → deploy → sync"
+	@echo "  make all          - Full setup: infra → secrets → gitops → deploy → sync → maas"
 	@echo ""
 	@echo "Phase 1: Infrastructure"
 	@echo "  make infra        - Run icsp, cpu, gpu, uwm (no pull-secret, handled by secrets)"

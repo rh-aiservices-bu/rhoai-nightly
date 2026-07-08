@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maas-default-gateway-options
+  namespace: openshift-ingress
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+data:
+  # Referenced by maas-default-gateway's spec.infrastructure.parametersRef.
+  # The openshift.io/gateway-controller (OSSM/istio Gateway API) applies the
+  # `deployment` value as a strategic-merge patch onto the generated gateway
+  # Deployment. We use it solely to raise the istio-proxy (envoy) memory limit
+  # from istio's 1Gi default to 2Gi — the default OOMKills (CrashLoopBackOff)
+  # once Kuadrant programs its wasm enforcement config onto this gateway.
+  # NOTE: intentionally no `service` key here, so the Gateway's Service stays the
+  # default LoadBalancer (route/ELB) ingress this cluster relies on.
+  deployment: |
+    spec:
+      template:
+        spec:
+          containers:
+            - name: istio-proxy
+              resources:
+                requests:
+                  memory: 256Mi
+                limits:
+                  memory: 2Gi

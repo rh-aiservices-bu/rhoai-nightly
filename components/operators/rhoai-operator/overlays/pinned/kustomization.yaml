@@ -14,6 +14,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/image
-        # Pinned to 3.5 EA2 nightly build - Jun 18, 2026 (sha256:005d7c6b)
-        # Includes perses image 27553fd6 (fixes Observability dashboard crash; older a5c7fbfa shipped perses e797cdb4)
-        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-ea.2-nightly@sha256:005d7c6b46e82e9f4866571beb2aa23d9bd65859bc16a486b72876c754d1a925
+        # Pinned to 3.5 EA2 nightly build - Jul 9, 2026 (sha256:6ef49d54)
+        # Newer nightly: re-vendored MaaS manifests carry the ExternalProvider
+        # (inference.opendatahub.io) CRD rename that fixes payload-processing.
+        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-ea.2-nightly@sha256:6ef49d545fc00c7e5a9010a1441ac6e04c3f078d0bbdefc3ca18549b2f9a8dbb

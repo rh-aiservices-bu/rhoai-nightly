@@ -1,0 +1,65 @@
+# TEMPORARY WORKAROUND — strip the leaked Kuadrant wasm filter from the RHOAI
+# dashboard gateway (data-science-gateway) so it doesn't crash-loop while MaaS
+# is enabled.
+#
+# WHY THIS EXISTS
+# ---------------
+# MaaS enables a gateway-level Kuadrant AuthPolicy/TokenRateLimitPolicy on
+# `maas-default-gateway`. The Kuadrant/RHCL operator turns that into an istio
+# EnvoyFilter named `kuadrant-maas-default-gateway` in `openshift-ingress` that
+# has an EMPTY `workloadSelector` (it only carries `targetRefs` to the MaaS
+# Gateway). An EnvoyFilter with an empty workloadSelector applies to EVERY
+# gateway pod in its namespace — so istio also injects the Kuadrant wasm into
+# the co-located `data-science-gateway` (the RHOAI dashboard gateway), which has
+# no Kuadrant policy of its own (its auth is ext_authz + lua via
+# `data-science-authn-filter`, not wasm).
+#
+# That wasm's PluginConfig contains the field `allow_on_headers_stop_iteration`.
+# Red Hat Service Mesh 3 v3.3.5 (istio 1.26) REJECTS that unknown field, so the
+# dashboard gateway's envoy can never load its listener config -> the
+# `:15021/healthz/ready` probe fails -> CrashLoopBackOff / 0-1 Ready -> the
+# dashboard returns "Application is not available" (503). Older Service Mesh
+# (v3.3.3) tolerated the field, which is why the break appeared only after the
+# Service Mesh 3.3.3 -> 3.3.5 upgrade. This is a wasm-shim <-> envoy ABI skew
+# between RHCL v1.4.1 and Service Mesh 3.3.5, NOT an "RHCL too old" problem:
+# RHCL v1.4.1 already meets MaaS's RHOAI prerequisite (RHCL v1.3+; the separate
+# "Kuadrant v1.4.2+" figure is the community/ODH version line, for an unrelated
+# auth-header-stripping feature). MaaS upstream avoids the skew by hand-matching
+# community istio 1.26.2 to its community Kuadrant.
+#
+# WHAT THIS DOES
+# --------------
+# A second EnvoyFilter scoped by `workloadSelector` to ONLY the dashboard gateway
+# that REMOVEs the leaked `envoy.filters.http.wasm` HTTP filter there. The MaaS
+# gateway does NOT match this selector, so it keeps its wasm and MaaS auth/rate-
+# limit enforcement is unaffected. The dashboard gateway has no legitimate wasm
+# filter of its own, so removing wasm there is safe; if no wasm is present (e.g.
+# on a fixed Service Mesh/RHCL pair) the REMOVE is a harmless no-op.
+#
+# REMOVE THIS once Red Hat ships an RHCL build whose wasm-shim matches Service
+# Mesh 3.3.5's envoy (i.e. stops emitting `allow_on_headers_stop_iteration`), or
+# once Kuadrant scopes its generated EnvoyFilter with a proper workloadSelector.
+# See .tmp/issues/dashboard-gateway-kuadrant-wasm-leak.md for the full writeup.
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: strip-kuadrant-wasm-dashboard-gateway
+  namespace: openshift-ingress
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  workloadSelector:
+    labels:
+      gateway.networking.k8s.io/gateway-name: data-science-gateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.wasm
+      patch:
+        operation: REMOVE

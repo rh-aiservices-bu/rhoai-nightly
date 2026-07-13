@@ -12,6 +12,8 @@ This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.x
 
 **Key Principle**: This repository uses a declarative GitOps model where components are deployed by committing Kustomize configurations to git, which ArgoCD automatically syncs to the cluster.
 
+**Workarounds**: Because this tracks nightly builds, the repo carries local workarounds for upstream/OLM/version-skew bugs. The canonical index — what each is, why it exists, whether it's in-repo or manual cluster-state, and when to remove it — is [docs/workarounds.md](docs/workarounds.md). Update it whenever you add or retire a workaround.
+
 ## Repository Structure
 
 ```

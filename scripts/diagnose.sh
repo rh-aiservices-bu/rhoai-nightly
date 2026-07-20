@@ -424,8 +424,11 @@ if [[ -n "$MAAS_APP" ]]; then
         warn "MaaS App" "Sync=$MAAS_SYNC Health=$MAAS_HEALTH"
     fi
 
-    # Check maas-api
-    MAAS_API=$(oc get deployment maas-api -n redhat-ods-applications -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    # Check maas-api — RHOAI 3.5+ deploys it in redhat-ai-gateway-infra; older in redhat-ods-applications
+    MAAS_API=$(oc get deployment maas-api -n redhat-ai-gateway-infra -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    if [[ "${MAAS_API:-0}" -lt 1 ]]; then
+        MAAS_API=$(oc get deployment maas-api -n redhat-ods-applications -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    fi
     if [[ "$MAAS_API" -gt 0 ]]; then
         pass "maas-api" "Running ($MAAS_API replicas)"
     else

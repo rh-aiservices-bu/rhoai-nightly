@@ -1,0 +1,37 @@
+# WORKAROUND — allow the MaaS gateway to reach the payload-processing ext-proc.
+#
+# RHOAI 3.5.0's operator-generated NetworkPolicy `payload-processing` in
+# openshift-ingress only permits ingress on 9004 from pods labelled
+# `gateway.networking.k8s.io/gateway-name: data-science-gateway`. But the
+# ext_proc gRPC calls (token-usage payload processing) are made by the
+# `maas-default-gateway` envoy pods, which that selector does not match.
+# Result: every inference request through the MaaS gateway fails with
+#   ext_proc_error_gRPC_error_14 { ... connection_timeout } -> HTTP 500
+# after a 10s stall.
+#
+# NetworkPolicies are additive, so this supplementary policy (same pod
+# selector, extra allowed client) fixes it without fighting the operator's
+# own policy. REMOVE once the operator's NetworkPolicy includes the MaaS
+# gateway pods (or selects gateways generically).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payload-processing-allow-maas-gateway
+  namespace: openshift-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: payload-processing
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+          podSelector:
+            matchLabels:
+              gateway.networking.k8s.io/gateway-name: maas-default-gateway
+      ports:
+        - port: 9004
+          protocol: TCP

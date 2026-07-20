@@ -116,6 +116,12 @@ else
     log_info "maas-db-config not found, skipping"
 fi
 
+# RHOAI 3.5+ mirrors maas-db-config into redhat-ai-gateway-infra (see install-maas.sh)
+if oc get secret maas-db-config -n redhat-ai-gateway-infra &>/dev/null; then
+    run_cmd oc delete secret maas-db-config -n redhat-ai-gateway-infra
+    log_info "maas-db-config (redhat-ai-gateway-infra) deleted"
+fi
+
 # =============================================================================
 # Phase 4: Clean up stale DNS records
 # =============================================================================

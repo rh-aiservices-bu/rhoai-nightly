@@ -7,6 +7,12 @@ scripts, and (worst of all) live cluster state — which is easy to lose track
 of. **This file is the canonical index.** When you add or retire a workaround,
 update it here.
 
+> **Last full audit: 2026-07-14** — fresh install of **RHOAI 3.5.0**
+> (`rhoai-3.5-nightly`, channel `stable-3.x`) on a bare OCP 4.20.27 test
+> cluster with the then-current workarounds deliberately stripped, to verify
+> each one empirically. Evidence: `.tmp/workaround-audit-35.md`. Verdicts are
+> folded in below; retired items moved to section E.
+
 Legend:
 
 - **In-repo** — committed; ArgoCD/scripts carry it. Safe across cluster rebuilds.
@@ -31,25 +37,29 @@ These fix an active bug or version mismatch. Remove each only when its
 ### A1. Dashboard gateway — strip leaked Kuadrant wasm
 
 - **File:** `components/instances/maas-instance/chart/templates/dashboard-gateway-wasm-strip.yaml`
-- **Symptom without it:** RHOAI dashboard returns 503. `data-science-gateway`
-  envoy crash-loops; envoy logs `no such field: 'allow_on_headers_stop_iteration'`.
+- **Symptom without it (SM 3.3.5):** RHOAI dashboard returns 503;
+  `data-science-gateway` envoy crash-loops; envoy logs
+  `no such field: 'allow_on_headers_stop_iteration'`.
 - **Root cause:** With MaaS on, the Kuadrant/RHCL operator emits
   `EnvoyFilter/kuadrant-maas-default-gateway` with an **empty `workloadSelector`**,
   so istio injects its wasm into **every** gateway in `openshift-ingress` —
-  including the dashboard gateway, which has no Kuadrant policy. Service Mesh 3
-  **v3.3.5** (istio 1.26) rejects the wasm field `allow_on_headers_stop_iteration`
-  that RHCL **v1.4.1**'s wasm-shim emits (v3.3.3 tolerated it). A wasm-shim ↔
-  envoy ABI skew, **not** an "RHCL too old" problem (v1.4.1 already meets RHOAI's
-  RHCL v1.3+ prerequisite).
+  including the dashboard gateway, which has no Kuadrant policy. RHCL v1.4.1's
+  wasm-shim config contains `allow_on_headers_stop_iteration`, which some
+  Service Mesh envoy builds reject.
+- **3.5.0 audit:** the leak itself is **unchanged** on RHOAI 3.5.0 + RHCL 1.4.1.
+  Whether it *breaks* depends on the SM build's envoy flags:
+  - **SM 3.1.0** (what OCP 4.20's ingress operator installs on a fresh cluster)
+    runs envoy with `--allow-unknown-static-fields` → the field only WARNs;
+    dashboard works and MaaS auth + token rate limiting are fully functional.
+  - **SM 3.3.5** (prod bu-nightly-2) hard-rejects → crash-loop.
 - **Fix:** a second EnvoyFilter scoped by `workloadSelector` to only the
-  dashboard gateway, `patch.operation: REMOVE` on the wasm HTTP filter. The MaaS
-  gateway keeps its wasm; enforcement intact.
-- **Status:** **Temporary.** In-repo on `main` (PR #17). **Not yet on `clusters`**
-  → bu-nightly-2 is currently held up by a **manual** EnvoyFilter of the same
-  name. Rebase `clusters` onto `main`, then delete the manual copy.
+  dashboard gateway, `patch.operation: REMOVE` on the wasm HTTP filter. A
+  harmless no-op where envoy tolerates the field; load-bearing where it doesn't.
+- **Status:** **Temporary.** In-repo on `main`. bu-nightly-2 still carries a
+  **manual** copy until `clusters` is rebased (see C1).
 - **Detection:** `oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress -o jsonpath='{.spec.workloadSelector}'` — empty output == leak condition.
-- **Remove when:** RHCL ships a wasm-shim matching Service Mesh's envoy, **or**
-  Kuadrant scopes its generated EnvoyFilter with a `workloadSelector`.
+- **Remove when:** RHCL's wasm-shim stops emitting the field, **or** Kuadrant
+  scopes its generated EnvoyFilter with a `workloadSelector`.
 - **Refs:** `.tmp/issues/dashboard-gateway-kuadrant-wasm-leak.md`, issue #18.
 
 ### A2. MaaS gateway — raise istio-proxy memory to 2Gi
@@ -59,55 +69,58 @@ These fix an active bug or version mismatch. Remove each only when its
 - **Symptom without it:** `maas-default-gateway` envoy OOMKilled (exit 137,
   CrashLoopBackOff); MaaS endpoint unreachable.
 - **Root cause:** istio's default proxy memory limit is 1Gi; envoy + the
-  Kuadrant wasm enforcement config settles at ~1.4Gi.
-- **Fix:** a `parametersRef` ConfigMap strategic-merge-patches the
-  auto-provisioned Gateway Deployment to set istio-proxy `limits.memory: 2Gi`
-  (sidecar annotations don't apply to gateway-controller-provisioned pods).
+  Kuadrant wasm enforcement config exceeds it **at rest**.
+- **3.5.0 audit:** measured **1299Mi idle → 1456Mi under light traffic** on a
+  fresh 3.5.0 install (SM 3.1.0) — over the 1Gi default before any load.
+  Confirmed still needed; the parametersRef mechanism applies cleanly on 3.5.0.
 - **Status:** **Permanent** (memory tuning; no upstream knob). In-repo.
 
-### A3. Perses datasource — correct secret name
+### A3. MaaS gateway → payload-processing NetworkPolicy
 
-- **File:** `components/instances/rhoai-instance/overlays/maas-observability/kuadrant-persesdatasource-fix.yaml`
-- **Symptom without it:** every MaaS panel on the RHOAI Observability dashboard
-  shows "document not found".
-- **Root cause:** the RHOAI ModelsAsService controller generates a
-  PersesDatasource referencing `cluster-prometheus-datasource-secret` (only
-  exists in `redhat-ods-monitoring`), but the datasource lives in
-  `redhat-ods-applications` where the secret is `kuadrant-prometheus-datasource-secret`.
-- **Fix:** publish the corrected datasource via GitOps, annotate
-  `opendatahub.io/managed: "false"` (stop the operator overwriting it), and use
-  sync-option `Replace=true` (ownership blocks strategic-merge).
-- **Status:** **Temporary** (upstream controller bug). In-repo (observability overlay).
-- **Remove when:** RHOAI controller emits the correct secret reference.
+- **File:** `components/instances/maas-instance/chart/templates/payload-processing-allow-maas-gateway.yaml`
+- **Symptom without it:** every inference request through the MaaS gateway
+  fails with HTTP 500 after a ~10s stall; gateway envoy logs
+  `ext_proc_error_gRPC_error_14 { ... connection_timeout }`.
+- **Root cause (3.5.0):** the operator-generated
+  `NetworkPolicy/payload-processing` in `openshift-ingress` only allows :9004
+  ingress from pods labelled `gateway-name: data-science-gateway`, but the
+  ext_proc token-usage calls come from the **maas-default-gateway** envoys.
+- **Fix:** a supplementary additive NetworkPolicy allowing the MaaS gateway
+  pods (NetworkPolicies union, so no fight with the operator's own policy).
+- **Status:** **Temporary** (upstream operator bug, found in the 3.5.0 audit).
+  In-repo.
+- **Remove when:** the operator's NetworkPolicy covers the MaaS gateway pods.
 
-### A4. Perses → Prometheus TLS — service-CA injection
+### A4. TrustyAI operator — pods/log grant for EvalHub
 
-- **File:** `components/instances/rhoai-instance/overlays/maas-observability/service-ca-injection.yaml`
-- **Symptom without it:** Perses → Thanos Querier TLS handshake fails; blank panels.
-- **Fix:** a ConfigMap annotated `service.beta.openshift.io/inject-cabundle: 'true'`
-  so OpenShift populates the CA bundle Perses needs for TLS verification.
-- **Status:** **Permanent** (TLS bootstrap). In-repo (observability overlay).
+- **File:** `components/instances/evalhub/trustyai-operator-pod-logs-rbac.yaml`
+- **Symptom without it:** `EvalHub/evalhub` stuck in phase `Pending`,
+  `Ready=False`: "attempting to grant RBAC permissions not currently held:
+  {pods/log get}".
+- **Root cause (3.5.0):** the trustyai-service-operator creates a Role granting
+  `pods/log get` (in `redhat-ods-applications` and again in each tenant
+  namespace) but its own RBAC doesn't hold that permission — Kubernetes
+  escalation prevention rejects the create.
+- **Fix:** namespaced Role + RoleBinding pairs granting the operator SA
+  `pods/log get` in `redhat-ods-applications` and `evalhub-tenant` (a new
+  tenant namespace would need its own pair; kept namespaced for least
+  privilege).
+- **Status:** **Temporary** (upstream CSV RBAC gap, found in the 3.5.0 audit).
+  In-repo.
+- **Remove when:** the trustyai operator CSV ships the permission itself.
 
-### A5. NVIDIA operator — local base without console-plugin
-
-- **File:** `components/operators/nvidia-operator/` (references local `base/`
-  instead of the upstream gitops-catalog overlay)
-- **Symptom without it:** OCP console crashes (`u.healthHandler is not a function`)
-  on OCP 4.20.x.
-- **Root cause:** OCPBUGS-59972 in the GPU operator console plugin.
-- **Fix:** fork to a local base that excludes the console-plugin entirely.
-- **Status:** **Permanent until OCP fix.** In-repo.
-
-### A6. ArgoCD application-controller — 4Gi memory
+### A5. ArgoCD application-controller — 4Gi memory
 
 - **File:** `bootstrap/argocd-instance/patch-controller-resources.yaml`
 - **Symptom without it:** app-controller OOMKills at the operator-default 2Gi
-  once the full app-set reconciles (~2.2Gi steady on bu-nightly-2), crash-looping
-  and stalling every sync.
+  once the full app-set reconciles, crash-looping and stalling every sync.
+- **3.5.0 audit:** measured **2164Mi** with the full 22-app set synced —
+  already above the 2Gi default. Confirmed still needed (matches bu-nightly-2's
+  ~2.2Gi steady).
 - **Fix:** request 2Gi / limit 4Gi.
 - **Status:** **Permanent.** In-repo.
 
-### A7. Catalog re-resolution — `restart-catalog.sh` guards
+### A6. Catalog re-resolution — `restart-catalog.sh` guards
 
 - **File:** `scripts/restart-catalog.sh` (`make restart-catalog`)
 - **Symptom without it:** after a catalog image flip where the CSV **name** is
@@ -118,17 +131,39 @@ These fix an active bug or version mismatch. Remove each only when its
   version changed or `--force-resub` is passed); poll PackageManifests scoped to
   the Subscription's own catalog until the new head is serving; fail loud (exit 2)
   rather than orphan a CSV on an unconfirmed head.
-- **Status:** **Permanent** (OLM behavior). In-repo.
+- **Status:** **Permanent** (OLM behavior). In-repo. (Not build-specific — not
+  re-tested in the 3.5.0 audit.)
 
-### A8. DSC — `llamastackoperator: Removed`, `ogx: Managed`
+### A7. DSC — `ogx: Managed`
 
 - **File:** `components/instances/rhoai-instance/base/datasciencecluster.yaml`
-- **Symptom without it:** Gen AI Studio **Playground** tab disappears; the gen-ai
+- **Symptom without it:** Gen AI Studio **Playground** tab missing; the gen-ai
   BFF starts with an empty LlamaStack URL.
-- **Root cause:** llamastack is deprecated in RHOAI 3.5 and replaced by `ogx`
-  (the LlamaStack backend for the Playground). Leaving llamastack `Managed` is a
-  no-op that **blocks** `ogx` from enabling.
-- **Status:** **Permanent** (product deprecation). In-repo.
+- **3.5.0 audit:** the operator defaults ogx to **Removed**
+  (`OGXReady=False Removed`), so the explicit `Managed` is still required. The
+  companion `llamastackoperator: Removed` we used to carry is now unnecessary —
+  on 3.5.0 the component is off when unset and no longer blocks ogx (entry
+  retired to section E).
+- **Status:** **Permanent** (product default). In-repo.
+
+### A8. 3.5.0 "Tenant CR not available yet" — settle-gate/verify accommodations
+
+- **Files:** `scripts/install-observability.sh`, `scripts/install-evalhub.sh`
+  (settle-gates), `scripts/verify-maas.sh` (WARN instead of FAIL)
+- **Symptom without them:** `make observability` / `make evalhub` refuse to run
+  and `make maas-verify` reports a false FAIL, because
+  `DataScienceCluster` never reaches `Ready=True`.
+- **Root cause (3.5.0 skew):** the operator's ModelsAsService controller waits
+  for a legacy `Tenant` CR that the newer maas-controller no longer creates (it
+  creates `MaasTenantConfig` + `AITenant`, both Ready). MaaS is fully
+  functional — `make maas-verify` passes 13/13 — but
+  `ModelsAsServiceReady=False: Tenant CR not available yet` pins DSC NotReady
+  forever.
+- **Fix:** the gates/verify tolerate exactly that condition signature (message
+  match on "Tenant CR not available"); everything else still blocks.
+- **Status:** **Temporary** (operator/component version skew). In-repo.
+- **Remove when:** the operator build stops waiting for the legacy Tenant CR
+  (DSC goes Ready=True with MaaS Managed).
 
 ---
 
@@ -138,6 +173,8 @@ Model-inherent — not tied to a broken build. Brief, because they're stable.
 
 | What | Where | Why |
 |---|---|---|
+| **Service Mesh operator NOT GitOps-managed** | *(removed from `components/operators/` in the 3.5.0 audit)* | On OCP 4.20+ the **ingress operator owns** the `servicemeshoperator3` subscription for Gateway API (annotation `ingress.operator.openshift.io/owned`): channel `stable`, **`installPlanApproval: Manual`**, and it approves only the SM version matching its hardcoded istio pin (v1.26.2 → SM 3.1.0 on 4.20). A GitOps-managed subscription fights it, and with Automatic approval pulls SM 3.4.0 — which **refuses istio v1.26.2 as EOL**, leaving the GatewayClass unaccepted and every gateway (MaaS + dashboard) dead. The SM operator now arrives automatically when the first GatewayClass is created. **Never approve queued SM InstallPlans beyond the ingress operator's chosen version** (see C2). |
+| `maas-db-config` mirrored into `redhat-ai-gateway-infra` | `scripts/install-maas.sh` / `scripts/uninstall-maas.sh` | RHOAI 3.5.0 moved maas-api into `redhat-ai-gateway-infra` and it reads the DB secret there; PostgreSQL stays in `redhat-ods-applications` (fully-qualified connection URL) |
 | `SkipDryRunOnMissingResource=true` on ~15 CRs | rhoai / maas / evalhub / nfs / nfd+nvidia / connectivity-link / postgres kustomizations | CRs sync before their operator-created CRDs/namespaces exist |
 | `ignoreDifferences` — Subscription `installPlanApproval`; ClusterPolicy `driver.licensingConfig.secretName` | `components/argocd/apps/*-appset.yaml` | Operators mutate these fields; masks perpetual drift |
 | `applicationsSync: create-only` + `Prune=false` | `components/argocd/apps/*-appset.yaml` | Preserves per-app auto-sync patches `make sync` applies; keeps singletons alive if their App is removed |
@@ -160,18 +197,20 @@ The easiest to lose track of. Prefer moving each into git.
 
 The GitOps version (A1) is on `main` but not `clusters`, so bu-nightly-2 is held
 up by a hand-applied `strip-kuadrant-wasm-dashboard-gateway` EnvoyFilter.
-**Action:** rebase `clusters` onto `main`, confirm ArgoCD adopts the chart-managed
-EnvoyFilter, then delete the manual one.
+**Action:** rebase `clusters` onto `main`; the chart template has the same
+name/namespace, so ArgoCD adopts the manual object in place — nothing to delete.
 
-### C2. Prerequisite operators set to Manual InstallPlan approval (bu-nightly-2)
+### C2. Service Mesh InstallPlans queued on Manual approval — DO NOT approve
 
-Service Mesh, OpenTelemetry, RHCL, Authorino, and web-terminal default to Manual
-approval in the shared `openshift-operators` OperatorGroup. Future catalog bumps
-silently **queue** upgrades; no GitOps hook approves them. Approve with:
-
-```
-oc patch installplan <name> -n openshift-operators --type merge -p '{"spec":{"approved":true}}'
-```
+On clusters where Gateway API is in use, the **ingress operator** owns the
+`servicemeshoperator3` subscription and deliberately sets
+`installPlanApproval: Manual`, approving only the SM version matching the OCP
+release's istio pin. Queued InstallPlans for newer SM versions (e.g. 3.4.0 on
+OCP 4.20) are **not** forgotten upgrades — approving them can break every
+gateway (SM 3.4.0 refuses istio v1.26.2 as EOL; verified in the 3.5.0 audit).
+Other operators in `openshift-operators` (OTel, RHCL, Authorino) declare
+`Automatic` in git; the appset's `ignoreDifferences` on `installPlanApproval`
+means ArgoCD won't fight live changes to that field either way.
 
 ---
 
@@ -190,6 +229,36 @@ Documented so nobody hunts for a fix that isn't there.
   `accelerator_gpu_utilization`; the operator emits `nvidia_gpu_utilization_ratio`.
   Upstream cross-repo mismatch (odh-dashboard ↔ opendatahub-operator); not fixable
   from this repo.
+- **`/maas-api/v1/models` returns an empty list** (3.5.0) even with Ready
+  MaaSModelRefs, after ~13s latency. Inference works via the per-model route
+  prefix (`/llm/<model>/v1/...`); `verify-maas.sh` adapted. Upstream maas-api.
+- **TelemetryPolicy labels not emitted** (3.5.0 + RHCL 1.4.1): the policy is
+  Accepted+Enforced and its labels (`model`, `user`, `subscription`) are
+  present in the wasm PluginConfig, but the data-plane metrics come out
+  unlabelled (`kuadrant_allowed{}`; no tags on `istio_requests_total`) even
+  after a gateway restart and with all label sources resolvable.
+  Per-subscription usage panels lack breakdowns. Upstream RHCL wasm-shim.
+- **TelemetryPolicy label with an unresolvable CEL source DISABLES token rate
+  limiting** (RHCL 1.4.1): a single `NoSuchKey` (e.g.
+  `auth.identity.subscription_info.costCenter`) aborts the wasm-shim's whole
+  report task — token usage never reaches limitador, requests sail through
+  with no 429s, **silently**. Our TelemetryPolicy now carries only labels
+  whose sources exist (see the warning comment in
+  `components/instances/maas-observability/base/gateway-telemetry-policy.yaml`).
+  Detection: gateway envoy logs `Failed to evaluate message builder:
+  CelError::Resolve { NoSuchKey(...) } ... Task failed`; limitador counters
+  empty under traffic.
+- **TelemetryPolicy spec UPDATES don't propagate to the wasm config**
+  (RHCL 1.4.1): the operator observes the new generation and reports
+  Accepted+Enforced, but the EnvoyFilter keeps the old labels — even across an
+  operator restart. Only **delete + recreate** of the TelemetryPolicy forces a
+  rebuild (ArgoCD selfHeal makes this a one-liner:
+  `oc delete telemetrypolicies.extensions.kuadrant.io maas-telemetry -n openshift-ingress`).
+- **PersesDashboards created before Perses exists stay Degraded** with a stale
+  `connection refused` condition (COO's perses-operator doesn't retry on a
+  useful timescale). One-time fix: annotate the PersesDashboard CRs to nudge a
+  reconcile. Candidate for automation in `install-observability.sh` if it
+  recurs.
 
 ---
 
@@ -197,6 +266,30 @@ Documented so nobody hunts for a fix that isn't there.
 
 Kept as a short tombstone list so these don't get "rediscovered":
 
+- **Perses datasource secret-name fix** (`kuadrant-persesdatasource-fix.yaml`) —
+  obsolete on RHOAI 3.5.0: the datasource layout was restructured; all
+  PersesDatasources live in `redhat-ods-monitoring` referencing secrets that
+  exist there. Verified end-to-end (proxy queries succeed; 4/4 dashboards
+  Available). Removed in the 2026-07-14 audit.
+- **Perses service-CA injection ConfigMap** (`service-ca-injection.yaml`) —
+  obsolete on 3.5.0: the operator provisions `prometheus-web-tls-ca` itself;
+  Perses↔Prometheus TLS works with zero configuration from us. Removed in the
+  2026-07-14 audit.
+- **NVIDIA local base without console-plugin** (OCPBUGS-59972) — obsolete:
+  the console fix (OCPBUGS-61785) shipped in OCP 4.20.z ≥ Dec 2025. The
+  component references the upstream gitops-catalog overlay again
+  (console-plugin included, channel `stable` → v26.3.3 verified healthy on
+  4.20.27). Removed in the 2026-07-14 audit.
+- **DSC `llamastackoperator: Removed`** — unnecessary on 3.5.0: unset defaults
+  to off and no longer blocks ogx (only `ogx: Managed` is still required — A7).
+- **GitOps-managed `openshift-service-mesh` component** — removed; the ingress
+  operator owns the SM subscription on OCP 4.20+ (see B / C2). An interim
+  `stable-3.3` channel pin existed for a few hours during the audit and was
+  superseded the same day.
+- **MaaS CRD-rename operator re-vendor lag** (ea.2: payload-processing expected
+  `inference.opendatahub.io`, operator shipped `maas.opendatahub.io`) — fixed
+  in the 3.5.0 GA operator (embeds the renamed CRDs; payload-processing
+  Running).
 - **3.4 catalog `readOnlyRootFilesystem` crashloop** — resolved by catalog pin.
 - **`CLUSTER_AUDIENCE` literal-arg 401s (3.4)** — fixed upstream (MaaS PR #790).
 - **Perses `v1alpha1` write-storm** — resolved with COO 1.5.1.

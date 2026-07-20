@@ -161,6 +161,24 @@ if ! oc get secret postgres-creds -n "$NAMESPACE" &>/dev/null; then
     log_info "Created maas-db-config"
 else
     log_info "postgres-creds already exists, skipping secret creation"
+    POSTGRES_PASSWORD=$(oc get secret postgres-creds -n "$NAMESPACE" -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)
+fi
+
+# RHOAI 3.5.0+ layout: maas-api runs in redhat-ai-gateway-infra and reads
+# maas-db-config from THAT namespace ("database Secret 'maas-db-config' not
+# found in namespace 'redhat-ai-gateway-infra'" -> maas-api CrashLoopBackOff).
+# Mirror the secret there; PostgreSQL itself stays in $NAMESPACE, the URL is
+# fully qualified so cross-namespace access works. Idempotent; the namespace
+# is created here if the operator hasn't made it yet (it adopts it later).
+GATEWAY_INFRA_NS=redhat-ai-gateway-infra
+if ! oc get secret maas-db-config -n "$GATEWAY_INFRA_NS" &>/dev/null; then
+    oc create namespace "$GATEWAY_INFRA_NS" --dry-run=client -o yaml | oc apply -f - >/dev/null
+    run_cmd oc create secret generic maas-db-config \
+      -n "$GATEWAY_INFRA_NS" \
+      --from-literal=DB_CONNECTION_URL="postgresql://maas:${POSTGRES_PASSWORD}@postgres.${NAMESPACE}.svc:5432/maas?sslmode=disable"
+    log_info "Created maas-db-config in ${GATEWAY_INFRA_NS} (RHOAI 3.5+ maas-api location)"
+else
+    log_info "maas-db-config already exists in ${GATEWAY_INFRA_NS}"
 fi
 
 # =============================================================================
@@ -276,12 +294,17 @@ TIMEOUT=300
 ELAPSED=0
 MAAS_API_FOUND=false
 RETRIGGER_DONE=false
+MAAS_API_NS="$NAMESPACE"
 while [ $ELAPSED -lt $TIMEOUT ]; do
-    if oc get deployment maas-api -n "$NAMESPACE" &>/dev/null; then
-        log_info "maas-api deployment found"
-        MAAS_API_FOUND=true
-        break
-    fi
+    # 3.5.0+ deploys maas-api in redhat-ai-gateway-infra; older releases in $NAMESPACE
+    for ns in "$GATEWAY_INFRA_NS" "$NAMESPACE"; do
+        if oc get deployment maas-api -n "$ns" &>/dev/null; then
+            log_info "maas-api deployment found in ${ns}"
+            MAAS_API_NS="$ns"
+            MAAS_API_FOUND=true
+            break 2
+        fi
+    done
 
     # Check for Gateway/ModelsAsService race condition:
     # The operator may have checked for the Gateway before ArgoCD created it,
@@ -304,7 +327,7 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
 done
 
 if [ "$MAAS_API_FOUND" = true ]; then
-    oc rollout status deployment/maas-api -n "$NAMESPACE" --timeout=180s || log_warn "maas-api rollout did not complete within 180s"
+    oc rollout status deployment/maas-api -n "$MAAS_API_NS" --timeout=180s || log_warn "maas-api rollout did not complete within 180s"
 else
     log_warn "maas-api deployment not found after ${TIMEOUT}s. The operator may still be reconciling."
 fi

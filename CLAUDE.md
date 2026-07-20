@@ -68,7 +68,6 @@ rhoai-nightly/
 │   │   ├── nfd/                         # Node Feature Discovery
 │   │   ├── nvidia-operator/             # NVIDIA GPU Operator
 │   │   ├── rhoai-operator/              # RHOAI operator + nightly catalog
-│   │   ├── openshift-service-mesh/      # Service Mesh
 │   │   ├── kueue-operator/              # Kueue for job queueing
 │   │   ├── jobset-operator/             # JobSet for distributed workloads
 │   │   ├── leader-worker-set/           # Leader-Worker pattern
@@ -590,8 +589,10 @@ oc get gatewayclass openshift-default
 
 # Check operator-managed MaaS
 oc get modelsasservice -A
-oc get deployment maas-api maas-controller -n redhat-ods-applications
+oc get deployment maas-api -n redhat-ai-gateway-infra    # RHOAI 3.5+ location
+oc get deployment maas-controller -n redhat-ods-applications
 oc get pods -n redhat-ods-applications | grep -E "maas|postgres|payload"
+oc get pods -n redhat-ai-gateway-infra
 
 # Check models
 oc get llminferenceservice -n llm

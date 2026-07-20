@@ -13,8 +13,14 @@ spec:
         user: auth.identity.userid
         # Subscription metadata for usage attribution and billing
         subscription: auth.identity.selected_subscription
-        organization_id: auth.identity.subscription_info.organizationId
-        cost_center: auth.identity.subscription_info.costCenter
+        # NOTE: do NOT add labels whose CEL source keys may be absent from
+        # auth.identity — on RHCL 1.4.1 a single NoSuchKey error
+        # (e.g. subscription_info.costCenter) aborts the wasm-shim's entire
+        # report task ("Failed to evaluate message builder ... Task failed"),
+        # which silently DISABLES token rate limiting (no report ever reaches
+        # limitador) and drops all telemetry labels. organization_id /
+        # cost_center (auth.identity.subscription_info.*) were removed for
+        # exactly this reason on RHOAI 3.5.0 — that object has no such keys.
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway

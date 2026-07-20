@@ -134,7 +134,17 @@ run_settle_gate() {
     dsci_avail=$(oc get dscinitialization default-dsci -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || echo "")
     dsci_degraded=$(oc get dscinitialization default-dsci -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || echo "")
     if [[ "$dsc_ready" != "True" ]]; then
-        abort_settle_gate "DataScienceCluster/default-dsc Ready=$dsc_ready (must be True)"
+        # RHOAI 3.5.0 skew: ModelsAsServiceReady sticks at False ('Tenant CR
+        # not available yet') even with MaaS fully functional — see
+        # install-observability.sh settle-gate for the same exception.
+        local dsc_ready_msg dsc_maas_msg
+        dsc_ready_msg=$(oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || echo "")
+        dsc_maas_msg=$(oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="ModelsAsServiceReady")].message}' 2>/dev/null || echo "")
+        if [[ "$dsc_ready_msg" == *"not ready: modelsasservice"* && "$dsc_maas_msg" == *"Tenant CR not available"* ]]; then
+            log_warn "  DSC Ready=False only due to modelsasservice 'Tenant CR not available yet' (known 3.5.0 skew; MaaS functional) — continuing"
+        else
+            abort_settle_gate "DataScienceCluster/default-dsc Ready=$dsc_ready (must be True)"
+        fi
     fi
     if [[ "$dsci_avail" != "True" ]]; then
         abort_settle_gate "DSCInitialization/default-dsci Available=$dsci_avail (must be True)"

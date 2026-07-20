@@ -196,7 +196,7 @@ log_info "Patched cluster-oper-instances-applicationset"
 EXPECTED_APPS=(
     "nfd" "instance-nfd"
     "nvidia-operator" "instance-nvidia"
-    "openshift-service-mesh" "kueue-operator"
+    "kueue-operator"
     "leader-worker-set" "instance-lws"
     "jobset-operator" "instance-jobset"
     "connectivity-link" "instance-kuadrant"

@@ -1,0 +1,73 @@
+# WORKAROUND — grant the TrustyAI operator the pods/log permission it tries
+# to delegate.
+#
+# On RHOAI 3.5.0 the trustyai-service-operator reconciles EvalHub by creating
+# Role `evalhub-redhat-ods-applications-service-pod-logs-role` (in
+# redhat-ods-applications) granting pods/log get — but the operator's own
+# RBAC does not hold that permission, so Kubernetes escalation prevention
+# rejects the create:
+#   Ready=False Error: Failed to create ServiceAccount: roles ... is forbidden:
+#   ... attempting to grant RBAC permissions not currently held:
+#   {APIGroups:[""], Resources:["pods/log"], Verbs:["get"]}
+# and EvalHub sticks in phase Pending.
+#
+# The operator creates that Role both in redhat-ods-applications AND in each
+# tenant namespace (evalhub-tenant), so it needs the grant in both places.
+# Namespaced Role + RoleBinding pairs keep the scope minimal (a new tenant
+# namespace would need its own pair). REMOVE once the operator CSV ships the
+# permission itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: trustyai-operator-pod-logs-fix
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/part-of: evalhub
+rules:
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: trustyai-operator-pod-logs-fix
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/part-of: evalhub
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: trustyai-operator-pod-logs-fix
+subjects:
+  - kind: ServiceAccount
+    name: trustyai-service-operator-controller-manager
+    namespace: redhat-ods-applications
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: trustyai-operator-pod-logs-fix
+  namespace: evalhub-tenant
+  labels:
+    app.kubernetes.io/part-of: evalhub
+rules:
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: trustyai-operator-pod-logs-fix
+  namespace: evalhub-tenant
+  labels:
+    app.kubernetes.io/part-of: evalhub
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: trustyai-operator-pod-logs-fix
+subjects:
+  - kind: ServiceAccount
+    name: trustyai-service-operator-controller-manager
+    namespace: redhat-ods-applications

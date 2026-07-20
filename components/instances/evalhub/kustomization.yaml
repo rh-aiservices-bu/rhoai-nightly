@@ -7,5 +7,6 @@ resources:
   - evalhub.yaml
   - namespace-evalhub-tenant.yaml
   - rbac.yaml
+  - trustyai-operator-pod-logs-rbac.yaml
   - dspa.yaml
   - job-update-secret-minio.yaml

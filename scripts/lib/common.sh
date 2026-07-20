@@ -34,7 +34,6 @@ SYNC_ORDER=(
 
     # Phase 2: Dependent Operators
     "cert-manager"                # Required by jobset-operator, kueue, trainer
-    "openshift-service-mesh"
     "kueue-operator"
     "leader-worker-set"
     "instance-lws"
@@ -111,9 +110,6 @@ OPERATOR_DEFINITIONS=(
     "kuadrant-system|limitador-operator|Limitador|limitador"
     "kuadrant-system|dns-operator|DNSPolicy|*"
 
-    # Service Mesh 3
-    "openshift-operators|servicemeshoperator3|ServiceMeshControlPlane|*"
-
     # Kueue
     "openshift-kueue-operator|kueue-operator|ClusterQueue|*"
     "openshift-kueue-operator|kueue-operator|LocalQueue|*"
@@ -153,7 +149,6 @@ get_operator_csv_info() {
         nfd)                    echo "nfd|openshift-nfd" ;;
         nvidia-operator)        echo "gpu-operator-certified|nvidia-gpu-operator" ;;
         cert-manager)           echo "cert-manager-operator|cert-manager-operator" ;;
-        openshift-service-mesh) echo "servicemeshoperator3|openshift-operators" ;;
         kueue-operator)         echo "kueue-operator|openshift-kueue-operator" ;;
         leader-worker-set)      echo "leader-worker-set|openshift-lws-operator" ;;
         jobset-operator)        echo "jobset-operator|openshift-jobset-operator" ;;

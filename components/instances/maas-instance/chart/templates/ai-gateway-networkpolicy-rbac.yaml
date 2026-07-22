@@ -1,0 +1,44 @@
+# WORKAROUND — grant the ai-gateway-operator SA `update` on NetworkPolicies.
+#
+# On the rhoai-3.5 nightly (seen 2026-07-22, maas commit fba7cbf4) the
+# operator-shipped ClusterRole `ai-gateway-manager-role` grants
+# create/delete/get/list/patch/watch on networkpolicies — but NOT `update`.
+# The ModelsAsService controller calls Update() to strip owner references from
+# the `maas-controller-allow-monitoring` NetworkPolicy during reconcile, so it
+# fails with:
+#   AIGatewayReady=False Error: failed to remove owner references from object
+#   redhat-ods-applications/maas-controller-allow-monitoring ...
+#   networkpolicies ... is forbidden: User
+#   "system:serviceaccount:redhat-ods-applications:ai-gateway-operator" cannot
+#   update resource "networkpolicies" ...
+# which pins AIGatewayReady=False and DSC Ready=False even though the MaaS
+# data plane (gateway, catalog, inference) is fully functional.
+#
+# Supplementary ClusterRole/Binding adding the missing `update` verb (additive
+# to the operator's own role). REMOVE once the operator CSV's
+# ai-gateway-manager-role includes networkpolicies `update`.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-gateway-operator-networkpolicy-update-fix
+  labels:
+    app.kubernetes.io/part-of: maas
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-gateway-operator-networkpolicy-update-fix
+  labels:
+    app.kubernetes.io/part-of: maas
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-gateway-operator-networkpolicy-update-fix
+subjects:
+  - kind: ServiceAccount
+    name: ai-gateway-operator
+    namespace: redhat-ods-applications

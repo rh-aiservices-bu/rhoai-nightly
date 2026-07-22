@@ -185,18 +185,23 @@ else
     log_fail "Authorino not ready"
 fi
 
-# ModelsAsServiceReady
-MAAS_READY=$(oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="ModelsAsServiceReady")].status}' 2>/dev/null || echo "Unknown")
-MAAS_READY_MSG=$(oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="ModelsAsServiceReady")].message}' 2>/dev/null || echo "")
+# MaaS DSC readiness. The condition was renamed across 3.5 nightlies: newer
+# builds report AIGatewayReady, older ones ModelsAsServiceReady. Check whichever
+# is present.
+MAAS_COND=""
+for c in AIGatewayReady ModelsAsServiceReady; do
+    s=$(oc get datasciencecluster default-dsc -o jsonpath="{.status.conditions[?(@.type=='$c')].status}" 2>/dev/null || echo "")
+    if [ -n "$s" ]; then MAAS_COND="$c"; MAAS_READY="$s"; break; fi
+done
+MAAS_READY_MSG=$(oc get datasciencecluster default-dsc -o jsonpath="{.status.conditions[?(@.type=='$MAAS_COND')].message}" 2>/dev/null || echo "")
 if [ "$MAAS_READY" = "True" ]; then
-    log_pass "ModelsAsServiceReady=True"
+    log_pass "${MAAS_COND}=True"
 elif echo "$MAAS_READY_MSG" | grep -q "Tenant CR not available"; then
-    # RHOAI 3.5.0: the operator still waits for a legacy Tenant CR that the
-    # newer maas-controller no longer creates (it uses MaasTenantConfig /
-    # AITenant, both Ready). MaaS is functional; treat as a warning.
-    log_warn "ModelsAsServiceReady=False ('Tenant CR not available yet' — known 3.5.0 operator/component skew; MaaS functional)"
+    # Older 3.5 nightly skew: the operator waited for a legacy Tenant CR the
+    # newer maas-controller no longer creates. MaaS is functional; warn only.
+    log_warn "${MAAS_COND}=False ('Tenant CR not available yet' — known older-nightly skew; MaaS functional)"
 else
-    log_fail "ModelsAsServiceReady=$MAAS_READY"
+    log_fail "${MAAS_COND:-MaaS DSC condition}=${MAAS_READY:-<not found>}"
 fi
 
 # Health endpoint (try with --resolve to bypass DNS cache)
@@ -476,18 +481,31 @@ if [ -n "$API_KEY" ] && [ "$API_KEY" != "null" ]; then
         # Get the first model's URL and ID for testing
         FIRST_MODEL_ID=$(echo "$MODELS_RESPONSE" | jq -r '.data[0].id // empty' 2>/dev/null || echo "")
         MODEL_URL=$(echo "$MODELS_RESPONSE" | jq -r '.data[0].url // empty' 2>/dev/null || echo "")
-        log_pass "Models available ($MODEL_COUNT total, first: $FIRST_MODEL_ID)"
+        log_pass "MaaS catalog lists $MODEL_COUNT model(s) (first: $FIRST_MODEL_ID)"
         # Use the listed model name for inference (may differ from resource name)
         INFERENCE_MODEL="$FIRST_MODEL_ID"
     else
-        # RHOAI 3.5.0: /maas-api/v1/models returns an empty list even with
-        # Ready MaaSModelRefs (upstream maas-api issue). Inference still works
-        # via the per-model route prefix the kserve HTTPRoute exposes
-        # (/llm/<model>/v1/...), so warn rather than fail and use that path.
-        log_warn "No models found in listing (known 3.5.0 maas-api issue) — using route prefix"
+        # An empty /maas-api/v1/models with a Ready MaaSModelRef is a REAL failure,
+        # not a cosmetic one: the dashboard/Gen AI Studio populates each project's
+        # model picker from this catalog, so an empty list makes MaaS models
+        # unusable in every project (they never appear as AI assets).
+        #
+        # Root cause seen on the 2026-07-14 nightly: a maas-api <-> maas-controller
+        # version skew. The controller set MaaSModelRef.status.endpoint to the BBR
+        # base ("/"), so the maas-api discovery probe hit its OWN /v1/models route
+        # and recursed until it timed out, excluding the model. Fixed downstream by
+        # models-as-a-service #1142 (prefer path-based endpoint for discovery), in
+        # rhoai-3.5 builds from 2026-07-14 ~14:00 UTC onward. Do NOT paper over this
+        # with a WARN — a green MaaS verify must mean models are actually
+        # discoverable. If this fails, move to a nightly that includes #1142
+        # (check MaaSModelRef.status.endpoint: it must be the path-based
+        # .../<ns>/<model>, not the bare base "/").
+        log_fail "MaaS catalog (/maas-api/v1/models) is EMPTY despite a Ready model — models will not appear as AI assets in any project"
         log_warn "Response: ${MODELS_RESPONSE:0:200}"
-        # vLLM serves the model under spec.model.name (e.g. "facebook/opt-125m"),
-        # which may differ from the LLMInferenceService resource name.
+        ENDPOINT_DBG=$(oc get maasmodelref "$MODEL_NAME" -n "$MODEL_NS" -o jsonpath='{.status.endpoint}' 2>/dev/null || echo "")
+        log_warn "MaaSModelRef.status.endpoint='$ENDPOINT_DBG' (a bare '/' base indicates the pre-#1142 BBR-endpoint bug)"
+        # Still exercise inference via the per-model route prefix so the rest of the
+        # run reports, but the FAIL above stands.
         INFERENCE_MODEL=$(oc get llminferenceservice "$MODEL_NAME" -n "$MODEL_NS" -o jsonpath='{.spec.model.name}' 2>/dev/null || echo "")
         [ -z "$INFERENCE_MODEL" ] && INFERENCE_MODEL="$MODEL_NAME"
         MODEL_URL="${HOST}/${MODEL_NS}/${MODEL_NAME}"

@@ -29,6 +29,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Local MCP server config (per-developer tooling)
+.mcp.json
+
 # Backup files
 *.bak
 *~

@@ -62,6 +62,26 @@ These fix an active bug or version mismatch. Remove each only when its
   scopes its generated EnvoyFilter with a `workloadSelector`.
 - **Refs:** `.tmp/issues/dashboard-gateway-kuadrant-wasm-leak.md`, issue #18.
 
+### A1b. ai-gateway-operator — grant `update` on NetworkPolicies
+
+- **File:** `components/instances/maas-instance/chart/templates/ai-gateway-networkpolicy-rbac.yaml`
+- **Symptom without it:** `DataScienceCluster` stuck `AIGatewayReady=False` (and
+  therefore `Ready=False`) even though the MaaS data plane (gateway, catalog,
+  inference) is fully working. Operator log:
+  `failed to remove owner references from object ...maas-controller-allow-monitoring...
+  networkpolicies ... is forbidden: ai-gateway-operator cannot update ...`.
+- **Root cause:** on the rhoai-3.5 nightly (seen 2026-07-22, maas commit
+  `fba7cbf4`) the operator-shipped `ai-gateway-manager-role` ClusterRole grants
+  `create/delete/get/list/patch/watch` on `networkpolicies` but **not `update`**.
+  The ModelsAsService controller calls `Update()` to strip owner references and
+  is denied.
+- **Fix:** a supplementary ClusterRole/Binding adding the missing `update` verb,
+  bound to the `ai-gateway-operator` SA (additive to the operator's own role).
+- **Status:** **Temporary** (operator RBAC gap in the current nightly). In-repo.
+- **Detection:** `oc auth can-i update networkpolicies -n redhat-ods-applications --as=system:serviceaccount:redhat-ods-applications:ai-gateway-operator` → `no`.
+- **Remove when:** the operator CSV's `ai-gateway-manager-role` includes
+  `networkpolicies` `update`.
+
 ### A2. MaaS gateway — raise istio-proxy memory to 2Gi
 
 - **File:** `components/instances/maas-instance/chart/templates/maas-gateway-options.yaml`
@@ -214,32 +234,92 @@ means ArgoCD won't fight live changes to that field either way.
 
 ---
 
-## D. Known issues carrying **no** workaround
+## D. Known issues (not worked around)
 
-Documented so nobody hunts for a fix that isn't there.
+Documented so nobody hunts for a fix that isn't there. Split by whether a fix
+is on the way: **D1** items just need a newer build (nothing to do but wait);
+**D2** items have no upstream fix — some carry a manual remedy, some are
+genuinely stuck and may warrant filing/escalation.
 
-- **ogx Playground breaks on in-place upgrade.** The ogx operator's ClusterRole
-  lacks `configmaps/delete` **and** it never strips the stale `ca-bundle` volume
-  from pre-existing deployments, so every Playground created before an ogx upgrade
-  reports `Failed` (workload actually runs). No safe in-place fix — the CM is
-  still mounted; granting `delete` or removing the CM wedges the pod. Remedy:
-  delete + recreate the OGXServer (fresh instances use the clean, volume-less
-  template). Recurs on the next in-place ogx upgrade.
-- **GPU Observability panels blank.** Dashboards query
-  `accelerator_gpu_utilization`; the operator emits `nvidia_gpu_utilization_ratio`.
-  Upstream cross-repo mismatch (odh-dashboard ↔ opendatahub-operator); not fixable
-  from this repo.
-- **`/maas-api/v1/models` returns an empty list** (3.5.0) even with Ready
-  MaaSModelRefs, after ~13s latency. Inference works via the per-model route
-  prefix (`/llm/<model>/v1/...`); `verify-maas.sh` adapted. Upstream maas-api.
-- **TelemetryPolicy labels not emitted** (3.5.0 + RHCL 1.4.1): the policy is
+### D1. Tracked upstream — fix in flight (self-resolves on a future nightly)
+
+- **`/maas-api/v1/models` empty catalog — maas-api ↔ maas-controller version
+  skew (recurring nightly risk).** When the catalog is empty despite a Ready
+  MaaSModelRef, MaaS models disappear from **every** project's Gen AI Studio
+  playground (the dashboard populates each project's model picker from this
+  cluster-wide catalog, *not* from in-namespace resources). Root cause is a skew
+  between the two MaaS images the operator vendors:
+  - the **maas-api** builds the list, then (older behavior) **probes** each
+    model at `<status.endpoint>/v1/models`;
+  - the **maas-controller** sets `MaaSModelRef.status.endpoint`.
+  The break is the one combination *probing maas-api + BBR base endpoint* (`/`):
+  the probe hits the maas-api's **own** `/v1/models` route and recurses until it
+  times out (~13s, fail-closed) → the model is excluded → empty list. Two
+  independent upstream fixes remove the hazard, and current nightlies have them:
+  **#1142** makes the controller prefer the **path-based** endpoint
+  (`.../<ns>/<model>`) so the probe reaches the model; **#1208** removes the
+  maas-api probe entirely (models included by readiness). The 2026-07-14 build
+  had *neither* and was broken; builds from 2026-07-17 on are fine.
+  **Because this repo tracks the latest floating nightly, the skew can reappear
+  on any given day's build** — so `verify-maas.sh` now asserts the catalog lists
+  the deployed model (a FAIL, not a WARN). Detection when it recurs: empty
+  `/maas-api/v1/models`, a storm of self-directed `GET /v1/models` in the
+  maas-api log, and `MaaSModelRef.status.endpoint` == bare `/`. Tracked:
+  [RHOAIENG-76220](https://redhat.atlassian.net/browse/RHOAIENG-76220)
+  (Resolved) — "/v1/models returns empty list on BBR-enabled clusters due to
+  endpoint preference selecting model-routing base URL".
+- **MaaS models hidden from the Gen AI playground — dashboard ↔ operator
+  condition-rename skew.** Even with a healthy, populated catalog (BFF
+  `/api/v1/maas/models` and `/maas-api/v1/models` both return the model), the
+  Gen AI Studio playground shows "No available model deployments" and the MaaS
+  models never appear as AI-asset endpoints. Root cause is a name skew:
+  - the **operator** renamed the MaaS module `modelsasservice` → `aigateway`,
+    so its DSC readiness condition is now **`AIGatewayReady`** (live cluster:
+    `AIGatewayReady=True`, no `ModelsAsServiceReady` condition at all — see
+    operator-side context in
+    [ai-gateway-operator#47](https://github.com/opendatahub-io/ai-gateway-operator/issues/47), closed);
+  - the **dashboard** still gates the `modelAsService` feature area on a
+    `customCondition` requiring a DSC condition literally named
+    **`ModelsAsServiceReady == True`** — hardcoded in *both*
+    `packages/gen-ai/frontend/src/odh/extensions.ts` (playground) and
+    `packages/maas/frontend/src/odh/odhExtensions/odhExtensions.ts` (MaaS admin
+    / AI-assets area). Present in downstream **and** current upstream ODH HEAD.
+  Feature-area availability is a hard **AND** of feature-flag ∧ customCondition
+  (`frontend/src/concepts/areas/utils.ts`), so setting
+  `OdhDashboardConfig.spec.dashboardConfig.modelAsService: true` does **not**
+  override it — the customCondition is an independent gate on the (now absent)
+  condition name. **No GitOps fix exists** from this repo: we can't inject a
+  DSC status condition (operator-owned) and can't patch the frontend (baked into
+  the `odh-dashboard-rhel9` image).
+  **Tracked & being fixed operator-side:**
+  [RHOAIENG-78159](https://redhat.atlassian.net/browse/RHOAIENG-78159) (Review,
+  no fixVersion yet) — the operator will **re-surface `ModelsAsServiceReady`**
+  on the DSC (derived from the AIGateway module's `modelsAsAService` state), so
+  the dashboard code is left unchanged and the gate satisfies again. Note the
+  Jira title spells it `ModelsAsAServiceReady` (extra "A"); the dashboard
+  constant is `ModelsAsServiceReady` — the two strings must match exactly or the
+  gate stays broken. Because main tracks the floating nightly, this
+  **self-resolves** the day a build ships the restored condition. Detection:
+  MaaS catalog non-empty but playground empty; `oc get datasciencecluster
+  default-dsc -o jsonpath='{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'`
+  shows `AIGatewayReady` and no `ModelsAsServiceReady`.
+
+### D2. Unfixed — no upstream fix (manual remedy or genuinely stuck)
+
+- **GPU Observability panels blank.** *Status: untracked — no known fix.*
+  Dashboards query `accelerator_gpu_utilization`; the operator emits
+  `nvidia_gpu_utilization_ratio`. Upstream cross-repo mismatch (odh-dashboard ↔
+  opendatahub-operator); not fixable from this repo.
+- **TelemetryPolicy labels not emitted** (3.5.0 + RHCL 1.4.1): *Status:
+  untracked — no known fix (upstream RHCL wasm-shim).* the policy is
   Accepted+Enforced and its labels (`model`, `user`, `subscription`) are
   present in the wasm PluginConfig, but the data-plane metrics come out
   unlabelled (`kuadrant_allowed{}`; no tags on `istio_requests_total`) even
   after a gateway restart and with all label sources resolvable.
   Per-subscription usage panels lack breakdowns. Upstream RHCL wasm-shim.
 - **TelemetryPolicy label with an unresolvable CEL source DISABLES token rate
-  limiting** (RHCL 1.4.1): a single `NoSuchKey` (e.g.
+  limiting** (RHCL 1.4.1): *Status: mitigated in-repo (labels dropped);
+  underlying RHCL bug unfixed.* a single `NoSuchKey` (e.g.
   `auth.identity.subscription_info.costCenter`) aborts the wasm-shim's whole
   report task — token usage never reaches limitador, requests sail through
   with no 429s, **silently**. Our TelemetryPolicy now carries only labels
@@ -249,14 +329,24 @@ Documented so nobody hunts for a fix that isn't there.
   CelError::Resolve { NoSuchKey(...) } ... Task failed`; limitador counters
   empty under traffic.
 - **TelemetryPolicy spec UPDATES don't propagate to the wasm config**
-  (RHCL 1.4.1): the operator observes the new generation and reports
+  (RHCL 1.4.1): *Status: manual remedy — delete + recreate; recurs on every
+  spec change.* the operator observes the new generation and reports
   Accepted+Enforced, but the EnvoyFilter keeps the old labels — even across an
   operator restart. Only **delete + recreate** of the TelemetryPolicy forces a
   rebuild (ArgoCD selfHeal makes this a one-liner:
   `oc delete telemetrypolicies.extensions.kuadrant.io maas-telemetry -n openshift-ingress`).
+- **ogx Playground breaks on in-place upgrade.** *Status: manual remedy —
+  delete + recreate the OGXServer; recurs each ogx upgrade.* The ogx operator's
+  ClusterRole lacks `configmaps/delete` **and** it never strips the stale
+  `ca-bundle` volume from pre-existing deployments, so every Playground created
+  before an ogx upgrade reports `Failed` (workload actually runs). No safe
+  in-place fix — the CM is still mounted; granting `delete` or removing the CM
+  wedges the pod. Remedy: delete + recreate the OGXServer (fresh instances use
+  the clean, volume-less template). Recurs on the next in-place ogx upgrade.
 - **PersesDashboards created before Perses exists stay Degraded** with a stale
   `connection refused` condition (COO's perses-operator doesn't retry on a
-  useful timescale). One-time fix: annotate the PersesDashboard CRs to nudge a
+  useful timescale): *Status: manual remedy — annotate to nudge a reconcile;
+  one-time.* One-time fix: annotate the PersesDashboard CRs to nudge a
   reconcile. Candidate for automation in `install-observability.sh` if it
   recurs.
 

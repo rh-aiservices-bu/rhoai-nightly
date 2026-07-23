@@ -1,5 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# The upstream `overlays/stable` ref pins the GPU operator to the certified
+# operator's `stable` channel (previously this repo carried a local base pinned
+# to `channel: v25.3`). Tracking `stable` with installPlanApproval: Automatic is
+# INTENTIONAL: the NVIDIA GPU operator is a certified operator independent of the
+# RHOAI nightly, and this rig deliberately exercises the latest GPU stack. If a
+# future `stable` release ever regresses the GPU path, pin by adding a
+# `/spec/channel` op to patch-channel.yaml (which today only sets approval).
 resources:
   - https://github.com/redhat-cop/gitops-catalog/gpu-operator-certified/operator/overlays/stable?ref=main
 

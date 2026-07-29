@@ -215,9 +215,98 @@ check_master_pressure
 check_cluster_operators
 
 # ═══════════════════════════════════════════════
-# Section 5: Credentials on Cluster
+# Section 5: Workload Health
 # ═══════════════════════════════════════════════
-section "5. Pull Secret (Cluster)"
+# Added 2026-07-29 after a full install reported "35 passed, 0 failures —
+# Cluster is fully operational" while the RHOAI dashboard was returning 503
+# and its gateway pod sat in CrashLoopBackOff with 13 OOMKilled restarts.
+# Nothing in this script looked at pod state, so any crash-looping workload
+# outside the handful of hard-coded deployments was invisible.
+section "5. Workload Health"
+
+# Namespaces this repo installs into. Problems HERE are our failures; problems
+# elsewhere in the cluster are surfaced as a single summary line so platform
+# breakage is still visible without burying our own signal in it.
+RHOAI_NS_RE='^(redhat-ods-|redhat-ai-gateway-infra|openshift-ods|kuadrant-system|llm$|models-as-a-service|nvidia-gpu-operator|openshift-nfd|openshift-gitops|external-secrets|nfs-provisioner|evalhub-tenant|openshift-jobset-operator|openshift-lws-operator|openshift-kueue-operator|openshift-cluster-observability-operator|openshift-operators$|openshift-ingress$)'
+
+# Crash-looping / unpullable / erroring pods.
+BAD_PODS_ALL=$(oc get pods -A --no-headers 2>/dev/null \
+    | awk '$4 ~ /CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerError|InvalidImageName/ {print $1" "$2" "$4}' || echo "")
+BAD_PODS=$(echo "$BAD_PODS_ALL" | grep -E "$RHOAI_NS_RE" || echo "")
+BAD_PODS_OTHER=$(echo "$BAD_PODS_ALL" | grep -vE "$RHOAI_NS_RE" | grep -v "^$" || echo "")
+
+if [[ -n "$BAD_PODS" ]]; then
+    BAD_POD_COUNT=$(echo "$BAD_PODS" | wc -l | tr -d ' ')
+    fail "Pod Health" "$BAD_POD_COUNT RHOAI/MaaS pod(s) crash-looping or unable to pull images"
+    echo "$BAD_PODS" | head -6 | while read -r line; do
+        echo "         $(echo "$line" | awk '{print $1"/"$2" "$3}')"
+    done
+    FIRST_BAD_NS=$(echo "$BAD_PODS" | head -1 | awk '{print $1}')
+    FIRST_BAD_POD=$(echo "$BAD_PODS" | head -1 | awk '{print $2}')
+    recommend "Investigate: oc logs -n $FIRST_BAD_NS $FIRST_BAD_POD --previous --tail=30"
+else
+    pass "Pod Health" "No crash-looping or image-pull-failing pods in RHOAI/MaaS namespaces"
+fi
+
+if [[ -n "$BAD_PODS_OTHER" ]]; then
+    OTHER_COUNT=$(echo "$BAD_PODS_OTHER" | wc -l | tr -d ' ')
+    warn "Pod Health (other ns)" "$OTHER_COUNT pod(s) unhealthy outside RHOAI namespaces — not installed by this repo"
+    echo "$BAD_PODS_OTHER" | head -3 | while read -r line; do
+        echo "         $(echo "$line" | awk '{print $1"/"$2" "$3}')"
+    done
+fi
+
+# OOMKilled is called out separately: it is the single most common failure mode
+# in this stack (docs/workarounds.md A2 raises the MaaS gateway to 2Gi for
+# exactly this reason) and it is invisible in the pod STATUS column once the
+# container restarts successfully.
+OOM_PODS=$(oc get pods -A -o json 2>/dev/null | jq -r '
+    .items[]
+    | . as $p
+    | (.status.containerStatuses // [])[]
+    | select(.lastState.terminated.reason == "OOMKilled")
+    | "\($p.metadata.namespace) \($p.metadata.name) \(.name) restarts=\(.restartCount)"' 2>/dev/null \
+    | grep -E "$RHOAI_NS_RE" || echo "")
+if [[ -n "$OOM_PODS" ]]; then
+    OOM_COUNT=$(echo "$OOM_PODS" | wc -l | tr -d ' ')
+    fail "OOMKilled" "$OOM_COUNT container(s) OOMKilled — raise limits or find the leak"
+    echo "$OOM_PODS" | head -5 | while read -r line; do
+        echo "         $(echo "$line" | awk '{print $1"/"$2" container="$3" "$4}')"
+    done
+    recommend "OOMKilled containers found — check limits (see docs/workarounds.md A1/A2 for the gateway cases)"
+else
+    pass "OOMKilled" "No containers OOMKilled"
+fi
+
+# Pods that restarted RECENTLY (last 30 min) — catches active flapping, e.g. a
+# gateway that recovers just long enough to look Running between OOMKills.
+# Deliberately recency-based, not count-based: on a long-lived cluster dozens of
+# platform pods carry double-digit lifetime restarts that are entirely normal,
+# and warning on those trains people to ignore this check.
+RECENT_RESTART_CUTOFF=$(( $(date +%s) - 1800 ))
+FLAPPING=$(oc get pods -A -o json 2>/dev/null | jq -r --argjson cutoff "$RECENT_RESTART_CUTOFF" '
+    .items[]
+    | . as $p
+    | (.status.containerStatuses // [])[]
+    | select(.lastState.terminated.finishedAt != null)
+    | select((.lastState.terminated.finishedAt | fromdateiso8601) > $cutoff)
+    | "\($p.metadata.namespace) \($p.metadata.name) container=\(.name) reason=\(.lastState.terminated.reason) restarts=\(.restartCount)"' 2>/dev/null \
+    | grep -E "$RHOAI_NS_RE" || echo "")
+if [[ -n "$FLAPPING" ]]; then
+    FLAP_COUNT=$(echo "$FLAPPING" | wc -l | tr -d ' ')
+    warn "Recent Restarts" "$FLAP_COUNT container(s) restarted in the last 30 min"
+    echo "$FLAPPING" | head -5 | while read -r line; do
+        echo "         $(echo "$line" | awk '{print $1"/"$2" "$3" "$4" "$5}')"
+    done
+    recommend "Recent restarts — check whether a workload is flapping: oc get pods -A --sort-by=.status.startTime | tail -20"
+else
+    pass "Recent Restarts" "No container restarted in the last 30 min"
+fi
+
+# ═══════════════════════════════════════════════
+# Section 6: Credentials on Cluster
+# ═══════════════════════════════════════════════
+section "6. Pull Secret (Cluster)"
 
 PULL_SECRET_KEYS=$(oc get secret/pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.auths | keys[]' 2>/dev/null || echo "")
 HAS_QUAY_RHOAI=$(echo "$PULL_SECRET_KEYS" | count_matches "quay.io/rhoai")
@@ -238,7 +327,7 @@ fi
 # ═══════════════════════════════════════════════
 # Section 6: GitOps & ArgoCD
 # ═══════════════════════════════════════════════
-section "6. GitOps & ArgoCD"
+section "7. GitOps & ArgoCD"
 
 GITOPS_CSV=$(oc get csv -n openshift-gitops-operator --no-headers 2>/dev/null | grep gitops || echo "")
 if [[ -n "$GITOPS_CSV" ]]; then
@@ -286,7 +375,7 @@ fi
 # ═══════════════════════════════════════════════
 # Section 7: Operators & Install Plans
 # ═══════════════════════════════════════════════
-section "7. Operators"
+section "8. Operators"
 
 BAD_CSVS=$(oc get csv -A --no-headers 2>/dev/null | grep -v "Succeeded" | grep -v "^$" || echo "")
 if [[ -n "$BAD_CSVS" ]]; then
@@ -299,15 +388,26 @@ else
     pass "CSVs" "All Succeeded"
 fi
 
-PENDING_PLANS=$(oc get installplan -A --no-headers 2>/dev/null | grep -v "Complete" | grep -v "^$" || echo "")
+# Only UNAPPROVED plans actually need action. The previous `grep -v Complete`
+# also matched approved plans still installing, so a healthy cluster reported
+# "15 pending — may need manual approval" when all 15 were approved+Complete.
+PENDING_PLANS=$(oc get installplan -A -o jsonpath='{range .items[?(@.spec.approved==false)]}{.metadata.namespace}{" "}{.metadata.name}{" "}{.spec.clusterServiceVersionNames[0]}{"\n"}{end}' 2>/dev/null | grep -v "^$" || echo "")
 if [[ -n "$PENDING_PLANS" ]]; then
     PENDING_COUNT=$(echo "$PENDING_PLANS" | wc -l | tr -d ' ')
-    warn "Install Plans" "$PENDING_COUNT pending — may need manual approval"
+    warn "Install Plans" "$PENDING_COUNT awaiting approval"
     echo "$PENDING_PLANS" | head -3 | while read -r line; do
         NS=$(echo "$line" | awk '{print $1}')
         NAME=$(echo "$line" | awk '{print $2}')
-        echo "         $NS/$NAME"
-        recommend "Approve: oc patch installplan $NAME -n $NS --type merge -p '{\"spec\":{\"approved\":true}}'"
+        CSV=$(echo "$line" | awk '{print $3}')
+        echo "         $NS/$NAME ($CSV)"
+        # Service Mesh plans are deliberately NOT auto-approved: on clusters where
+        # the ingress operator owns the SM subscription, approving them can disrupt
+        # the ingress data plane (docs/workarounds.md C2).
+        if [[ "$CSV" == servicemeshoperator* ]]; then
+            recommend "REVIEW (do NOT blind-approve): $NS/$NAME is $CSV — see docs/workarounds.md C2"
+        else
+            recommend "Approve: oc patch installplan $NAME -n $NS --type merge -p '{\"spec\":{\"approved\":true}}'"
+        fi
     done
 else
     pass "Install Plans" "All Complete"
@@ -351,7 +451,7 @@ fi
 # ═══════════════════════════════════════════════
 # Section 8: RHOAI
 # ═══════════════════════════════════════════════
-section "8. RHOAI"
+section "9. RHOAI"
 
 CATALOG_IMAGE=$(oc get catalogsource rhoai-catalog-nightly -n openshift-marketplace -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
 if [[ -n "$CATALOG_IMAGE" ]]; then
@@ -411,7 +511,7 @@ fi
 # ═══════════════════════════════════════════════
 # Section 9: MaaS (Models as a Service)
 # ═══════════════════════════════════════════════
-section "9. MaaS"
+section "10. MaaS"
 
 MAAS_APP=$(oc get application.argoproj.io/instance-maas -n openshift-gitops --no-headers 2>/dev/null || echo "")
 if [[ -n "$MAAS_APP" ]]; then
@@ -459,6 +559,42 @@ if [[ -n "$MAAS_APP" ]]; then
         fi
     fi
 
+    # Kuadrant policy enforcement.
+    # Added 2026-07-29: every structural MaaS check passed (gateway Programmed,
+    # maas-api Running, Authorino Running, health 200) while API-key creation
+    # returned 500, because the Kuadrant operator had cached "no Gateway API
+    # provider" at startup, left AuthPolicy Accepted=False, and generated ZERO
+    # AuthConfigs — so Authorino enforced nothing. Pods being Running says
+    # nothing about whether policy is actually attached.
+    AP_TOTAL=$(oc get authpolicy -A --no-headers 2>/dev/null | grep -cv "^$" || echo 0)
+    if [[ "$AP_TOTAL" -gt 0 ]]; then
+        AP_BAD=$(oc get authpolicy -A -o json 2>/dev/null | jq -r '
+            .items[]
+            | select(((.status.conditions // [])[] | select(.type=="Accepted") | .status) != "True")
+            | "\(.metadata.namespace)/\(.metadata.name): \((.status.conditions // [])[] | select(.type=="Accepted") | .message // "no Accepted condition")"' 2>/dev/null || echo "")
+        if [[ -n "$AP_BAD" ]]; then
+            fail "AuthPolicy" "$(echo "$AP_BAD" | wc -l | tr -d ' ') policy(ies) not Accepted — auth is NOT being enforced"
+            echo "$AP_BAD" | head -3 | while read -r line; do echo "         $line"; done
+            if echo "$AP_BAD" | grep -qi "provider.*not installed\|restart Kuadrant"; then
+                recommend "Kuadrant cached a stale provider probe — delete its pod: oc delete pod -n openshift-operators -l control-plane=controller-manager (see .tmp/plans/install-gotchas.md 16)"
+            else
+                recommend "AuthPolicy not Accepted — inspect: oc get authpolicy -A -o yaml | grep -A5 conditions"
+            fi
+        else
+            pass "AuthPolicy" "$AP_TOTAL policy(ies) Accepted"
+        fi
+
+        # AuthConfigs are the concrete artifact Authorino enforces. Accepted
+        # policies with zero AuthConfigs means enforcement silently does nothing.
+        AC_COUNT=$(oc get authconfig -A --no-headers 2>/dev/null | grep -cv "^$" || echo 0)
+        if [[ "$AC_COUNT" -eq 0 ]]; then
+            fail "AuthConfigs" "0 AuthConfigs exist despite $AP_TOTAL AuthPolicy — Authorino has nothing to enforce"
+            recommend "No AuthConfigs generated — restart the Kuadrant operator pod (.tmp/plans/install-gotchas.md 16)"
+        else
+            pass "AuthConfigs" "$AC_COUNT generated"
+        fi
+    fi
+
     # Authorino SSL
     SSL_VARS=$(oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec.containers[0].env}' 2>/dev/null | jq -r '[.[] | select(.name | startswith("SSL"))] | length' 2>/dev/null || echo "0")
     if [[ "$SSL_VARS" -gt 0 ]]; then
@@ -495,7 +631,7 @@ fi
 # ═══════════════════════════════════════════════
 # Section 10: Observability (MaaS)
 # ═══════════════════════════════════════════════
-section "10. Observability"
+section "11. Observability"
 
 if [[ -z "$MAAS_APP" ]]; then
     info "Observability" "MaaS not installed — skipping observability checks"
@@ -588,13 +724,112 @@ fi
 # ═══════════════════════════════════════════════
 # Section 11: Network
 # ═══════════════════════════════════════════════
-section "11. Network"
+section "12. Network"
 
 INGRESS_AVAILABLE=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || echo "unknown")
 if [[ "$INGRESS_AVAILABLE" == "True" ]]; then
     pass "Ingress" "Available"
 else
     warn "Ingress" "Available=$INGRESS_AVAILABLE"
+fi
+
+# ── Gateways ─────────────────────────────────────────────────────────────────
+# Previously only `maas-default-gateway` was checked, and only its Programmed
+# condition. That missed the dashboard gateway entirely: on 2026-07-29
+# `data-science-gateway` was Programmed=True while its backing envoy pod was
+# OOMKilled in CrashLoopBackOff and the dashboard served 503. Programmed
+# describes the CONFIG, not the data plane — always check the pods too.
+GATEWAYS=$(oc get gateway -A --no-headers 2>/dev/null | awk '{print $1" "$2}' || echo "")
+if [[ -n "$GATEWAYS" ]]; then
+    echo "$GATEWAYS" | while read -r GW_NS GW_NAME; do
+        [[ -z "$GW_NAME" ]] && continue
+        GW_PROG=$(oc get gateway "$GW_NAME" -n "$GW_NS" -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || echo "")
+        GW_PODS=$(oc get pods -n "$GW_NS" -l "gateway.networking.k8s.io/gateway-name=$GW_NAME" --no-headers 2>/dev/null || echo "")
+        GW_POD_TOTAL=$(echo "$GW_PODS" | grep -cv "^$" || echo 0)
+        GW_POD_READY=$(echo "$GW_PODS" | awk '{split($2,a,"/"); if (a[1]==a[2] && $3=="Running") c++} END {print c+0}')
+        if [[ "$GW_PROG" != "True" ]]; then
+            echo "  GWFAIL $GW_NS/$GW_NAME Programmed=$GW_PROG"
+        elif [[ "$GW_POD_TOTAL" -eq 0 ]]; then
+            echo "  GWWARN $GW_NS/$GW_NAME Programmed but no backing pods found"
+        elif [[ "$GW_POD_READY" -lt "$GW_POD_TOTAL" ]]; then
+            echo "  GWFAIL $GW_NS/$GW_NAME Programmed=True but only $GW_POD_READY/$GW_POD_TOTAL pod(s) Ready"
+        else
+            echo "  GWPASS $GW_NS/$GW_NAME Programmed, $GW_POD_READY/$GW_POD_TOTAL pod(s) Ready"
+        fi
+    done > /tmp/.diag-gw-$$ 2>/dev/null
+    while read -r STATUS REST; do
+        case "$STATUS" in
+            GWPASS) pass "Gateway" "$REST" ;;
+            GWWARN) warn "Gateway" "$REST" ;;
+            GWFAIL) fail "Gateway" "$REST"
+                    recommend "Gateway data plane down: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=<name>; check for OOMKilled (docs/workarounds.md A1/A2)" ;;
+        esac
+    done < /tmp/.diag-gw-$$
+    rm -f /tmp/.diag-gw-$$
+else
+    info "Gateways" "None found"
+fi
+
+# ── User-facing endpoint reachability ────────────────────────────────────────
+# The check that would have caught the 2026-07-29 dashboard outage directly.
+# Unauthenticated probes only — 200/302/303 all mean "the data plane answered";
+# 503/502/000 mean the gateway or backend is down.
+CLUSTER_DOMAIN=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.domain}' 2>/dev/null || echo "")
+if [[ -n "$CLUSTER_DOMAIN" ]]; then
+    DASH_HOST=$(oc get route -A -o jsonpath='{range .items[?(@.spec.to.name=="data-science-gateway-data-science-gateway-class")]}{.spec.host}{"\n"}{end}' 2>/dev/null | head -1)
+    [[ -z "$DASH_HOST" ]] && DASH_HOST=$(oc get route rhods-dashboard -n redhat-ods-applications -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [[ -n "$DASH_HOST" ]]; then
+        DASH_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 15 "https://${DASH_HOST}/" 2>/dev/null || echo "000")
+        case "$DASH_CODE" in
+            200|302|303)
+                pass "Dashboard Reachable" "https://${DASH_HOST}/ -> HTTP $DASH_CODE" ;;
+            000)
+                fail "Dashboard Reachable" "https://${DASH_HOST}/ -> no response (timeout/DNS)"
+                recommend "Dashboard unreachable — check the gateway pod: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=data-science-gateway" ;;
+            *)
+                fail "Dashboard Reachable" "https://${DASH_HOST}/ -> HTTP $DASH_CODE (expected 200/302)"
+                recommend "Dashboard returning $DASH_CODE — check gateway pod for OOMKilled/CrashLoopBackOff (docs/workarounds.md A1)" ;;
+        esac
+    else
+        info "Dashboard Reachable" "No dashboard route found"
+    fi
+fi
+
+MAAS_HOST=$(oc get route -A --no-headers 2>/dev/null | awk '$3 ~ /^maas\./ {print $3; exit}')
+if [[ -z "$MAAS_HOST" ]] && [[ -n "$CLUSTER_DOMAIN" ]]; then
+    oc get gateway maas-default-gateway -n openshift-ingress &>/dev/null && MAAS_HOST="maas.${CLUSTER_DOMAIN}"
+fi
+if [[ -n "$MAAS_HOST" ]]; then
+    MAAS_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 15 "https://${MAAS_HOST}/maas-api/health" 2>/dev/null || echo "000")
+    if [[ "$MAAS_CODE" == "200" ]] || [[ "$MAAS_CODE" == "401" ]]; then
+        pass "MaaS Endpoint Reachable" "https://${MAAS_HOST}/maas-api/health -> HTTP $MAAS_CODE"
+    else
+        fail "MaaS Endpoint Reachable" "https://${MAAS_HOST}/maas-api/health -> HTTP $MAAS_CODE (expected 200/401)"
+        recommend "MaaS endpoint not answering — check maas-api and the MaaS gateway pod"
+    fi
+fi
+
+# ── Known-workaround effectiveness (docs/workarounds.md A1) ──────────────────
+# The Kuadrant wasm leak being PRESENT is normal; what matters is whether our
+# strip EnvoyFilter actually neutralises it. istio orders EnvoyFilters by
+# (priority, creationTimestamp, name) — if the strip sorts BEFORE Kuadrant's
+# filter, the REMOVE runs before the INSERT and the wasm survives.
+if oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress &>/dev/null; then
+    LEAK_SELECTOR=$(oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress -o jsonpath='{.spec.workloadSelector}' 2>/dev/null || echo "")
+    if [[ -z "$LEAK_SELECTOR" ]]; then
+        STRIP_PRIO=$(oc get envoyfilter strip-kuadrant-wasm-dashboard-gateway -n openshift-ingress -o jsonpath='{.spec.priority}' 2>/dev/null || echo "")
+        if [[ -z "$STRIP_PRIO" ]]; then
+            fail "Wasm Leak Strip" "Kuadrant EnvoyFilter has empty workloadSelector (leaking) and no strip filter found"
+            recommend "Dashboard gateway will crash-loop — see docs/workarounds.md A1"
+        elif [[ "$STRIP_PRIO" -le 0 ]] 2>/dev/null; then
+            warn "Wasm Leak Strip" "strip filter priority=$STRIP_PRIO — ordering not guaranteed vs Kuadrant's filter"
+            recommend "Set spec.priority > 0 on strip-kuadrant-wasm-dashboard-gateway (docs/workarounds.md A1)"
+        else
+            pass "Wasm Leak Strip" "Leak present but strip filter has priority=$STRIP_PRIO (applies after Kuadrant)"
+        fi
+    else
+        pass "Wasm Leak Strip" "Kuadrant EnvoyFilter is scoped (no leak) — strip no longer needed"
+    fi
 fi
 
 # ═══════════════════════════════════════════════

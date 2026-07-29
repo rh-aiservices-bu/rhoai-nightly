@@ -1,0 +1,53 @@
+# WORKAROUND (see docs/workarounds.md §A9) — RHOAI 3.5.0 nightly.
+#
+# The feast controller (`feast-operator-controller-manager`, deployed by the
+# FeastOperator CR that the DSC-owned `opendatahub-feast-operator` creates) reads
+# the cluster APIServer TLS profile at startup and hard-exits if it cannot:
+#
+#   ERROR setup  unable to read APIServer TLS profile, refusing to start with
+#   unknown TLS posture  {"error": "apiservers.config.openshift.io \"cluster\" is
+#   forbidden: User \"system:serviceaccount:redhat-ods-applications:\
+#   feast-operator-controller-manager\" cannot get resource \"apiservers\" in API
+#   group \"config.openshift.io\" at the cluster scope"}
+#
+# Neither operator-shipped ClusterRole (`feast-operator-manager-role`,
+# `opendatahub-feast-manager-role`) grants it, so the pod CrashLoopBackOffs and
+# `DataScienceCluster/default-dsc` stays Ready=False on `feastoperator` — which
+# makes the observability settle-gate in scripts/install-observability.sh abort.
+#
+# This is additive to the operator's own roles (RBAC rules union), so it does not
+# fight the operator's reconcile.
+#
+# Remove when the RHOAI operator CSV grants config.openshift.io/apiservers get.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: feast-operator-apiserver-reader
+  labels:
+    app.kubernetes.io/part-of: rhoai-instance
+    app.kubernetes.io/managed-by: rhoai-nightly-workaround
+rules:
+  - apiGroups:
+      - config.openshift.io
+    resources:
+      - apiservers
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: feast-operator-apiserver-reader
+  labels:
+    app.kubernetes.io/part-of: rhoai-instance
+    app.kubernetes.io/managed-by: rhoai-nightly-workaround
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: feast-operator-apiserver-reader
+subjects:
+  - kind: ServiceAccount
+    name: feast-operator-controller-manager
+    namespace: redhat-ods-applications

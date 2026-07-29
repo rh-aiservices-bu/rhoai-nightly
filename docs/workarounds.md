@@ -185,6 +185,38 @@ These fix an active bug or version mismatch. Remove each only when its
 - **Remove when:** the operator build stops waiting for the legacy Tenant CR
   (DSC goes Ready=True with MaaS Managed).
 
+### A9. feast-operator — grant `get` on `apiservers.config.openshift.io`
+
+- **File:** `components/instances/rhoai-instance/base/feast-operator-apiserver-rbac.yaml`
+- **Symptom without it:** `DataScienceCluster` stuck `Ready=False` with
+  `Some modules are not ready: feastoperator`
+  (`FeastOperatorReady=False reason=DeploymentsNotReady msg=0/1 deployments ready`),
+  even though all ArgoCD Applications are Synced+Healthy. Pod
+  `feast-operator-controller-manager-*` is in CrashLoopBackOff; its log ends with
+  `ERROR setup unable to read APIServer TLS profile, refusing to start with unknown
+  TLS posture ... apiservers.config.openshift.io "cluster" is forbidden`.
+  Because the settle-gate in `scripts/install-observability.sh` requires
+  `DSC Ready=True` and only tolerates the §A8 "Tenant CR" signature,
+  `make observability` aborts.
+- **Root cause (3.5.0 nightly, seen 2026-07-29 on cluster-r8mf7):** two feast
+  operators ship. The DSC-owned `opendatahub-feast-operator` is healthy and
+  creates `FeastOperator/default-feastoperator`, which deploys
+  `feast-operator-controller-manager`. That controller reads the cluster
+  APIServer TLS profile at startup and hard-exits if denied, but neither shipped
+  ClusterRole (`feast-operator-manager-role`, `opendatahub-feast-manager-role`)
+  grants `config.openshift.io/apiservers`. Does not self-heal — the RBAC comes
+  from the operator bundle.
+- **Fix:** a supplementary ClusterRole/Binding granting `get/list/watch` on
+  `apiservers`, bound to the `feast-operator-controller-manager` SA in
+  `redhat-ods-applications` (additive; RBAC rules union, so no fight with the
+  operator's reconcile).
+- **Status:** **Temporary** (operator CSV RBAC gap in the current nightly). In-repo.
+- **Detection:**
+  `oc auth can-i get apiservers.config.openshift.io --as=system:serviceaccount:redhat-ods-applications:feast-operator-controller-manager` → `no`, or
+  `oc get clusterrole feast-operator-manager-role -o json | jq '[.rules[]|select(.apiGroups[]?=="config.openshift.io")]|length'` → `0`.
+- **Remove when:** the operator CSV's feast ClusterRole includes
+  `config.openshift.io/apiservers get`.
+
 ---
 
 ## B. Structural GitOps / ordering workarounds (permanent)

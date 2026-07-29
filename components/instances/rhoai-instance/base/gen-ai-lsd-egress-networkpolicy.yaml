@@ -37,9 +37,15 @@
 # so this grants the missing port without modifying (or fighting) the
 # operator-owned policy, which is reconciled continuously.
 #
-# The destination is intentionally not namespace-scoped: LlamaStack distributions
-# are created on demand in arbitrary user project namespaces. The rule is still
-# narrow — TCP 8321 only, and only for gen-ai-ui pods.
+# Scope: LlamaStack distributions are created on demand in arbitrary user project
+# namespaces, so the destination cannot be pinned to a fixed namespace. It IS
+# pinned to the LlamaStack pods themselves — `namespaceSelector: {}` combined with
+# `podSelector: app=ogx` in a single `to` entry means "pods labelled app=ogx, in
+# any namespace" (selectors within one `to` element are ANDed). That keeps the
+# grant to TCP 8321 -> OGXServer pods only.
+#
+# Do NOT drop the `to:` block: an egress rule with ports but no `to` permits that
+# port to EVERY destination, including off-cluster addresses.
 #
 # REMOVE THIS once the dashboard's own `gen-ai-allow-ports` includes 8321.
 apiVersion: networking.k8s.io/v1
@@ -57,6 +63,14 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - ports:
+    - to:
+        # Both selectors in ONE list entry => AND: pods labelled app=ogx in any
+        # namespace. Splitting them into two entries would OR them and re-open
+        # the grant to every pod in every namespace.
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app: ogx
+      ports:
         - port: 8321
           protocol: TCP

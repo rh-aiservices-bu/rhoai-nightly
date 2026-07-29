@@ -240,6 +240,45 @@ These fix an active bug or version mismatch. Remove each only when its
 - **Remove when:** the operator CSV's feast ClusterRole includes
   `config.openshift.io/apiservers get`.
 
+### A10. gen-ai-ui — allow egress to LlamaStack on :8321
+
+- **File:** `components/instances/rhoai-instance/base/gen-ai-lsd-egress-networkpolicy.yaml`
+- **Symptom without it:** the Gen AI Studio **Playground** shows
+  *"You need at least one model — Looks like your project is missing at least one
+  model to use the playground"* in **every** project, regardless of whether the
+  project has AI assets or MaaS models. `/gen-ai/api/v1/lsd/models` returns
+  **504**; `/maas/models`, `/aaa/models` and `/lsd/status` all return 200.
+- **Root cause (3.5.0, found 2026-07-29 on cluster-r8mf7):** the playground's
+  model list comes from the LlamaStack distribution (OGXServer) in the *user's
+  project* namespace, served on port **8321**. The operator-shipped egress policy
+  `gen-ai-allow-ports` (owned by `Dashboard/default-dashboard`) permits only
+  5353→openshift-dns, 8243→maas-ui, 8343→mlflow-ui, 6443→any, 443/80→any —
+  **8321 is missing**, so the BFF's call is silently dropped and hangs until the
+  gateway 504s. In `ChatbotMain.tsx` the empty state is gated on
+  `hasNoModels = models.length === 0`, where `models` is the LlamaStack list
+  (`useFetchLlamaModels`) — *not* the MaaS-aware `hasModels` on line 107 — so an
+  unreachable LlamaStack reads as "no models".
+- **Fix:** a second, additive NetworkPolicy selecting the same `deployment:
+  gen-ai-ui` pods and allowing egress TCP 8321. Kubernetes unions egress rules
+  across all policies selecting a pod, so this grants the port without modifying
+  the operator-owned policy (which is reconciled continuously). Destination is
+  deliberately not namespace-scoped — LlamaStack distributions are created on
+  demand in arbitrary user project namespaces.
+- **Status:** **Temporary** (upstream dashboard NetworkPolicy gap). In-repo.
+- **Detection / verification:**
+  ```bash
+  oc get networkpolicy gen-ai-allow-ports -n redhat-ods-applications \
+    -o json | jq -r '.spec.egress[] | "\([.ports[]?.port]|join(","))"'   # 8321 absent?
+  POD=$(oc get pods -n redhat-ods-applications --no-headers | grep '^gen-ai-ui' | head -1 | awk '{print $1}')
+  oc exec -n redhat-ods-applications $POD -- \
+    curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' --max-time 20 \
+    http://lsd-genai-playground-service.<project>.svc.cluster.local:8321/v1/models
+  # blocked: 000 after ~20s (dropped)   working: 200 in ~0.01s
+  ```
+  Verified with the operator policy at its original 5 rules and only the
+  supplementary policy present: BFF→LlamaStack 200 in 0.012s, `/lsd/models` 200.
+- **Remove when:** the dashboard's own `gen-ai-allow-ports` includes 8321.
+
 ---
 
 ## B. Structural GitOps / ordering workarounds (permanent)
@@ -404,6 +443,50 @@ genuinely stuck and may warrant filing/escalation.
   one-time.* One-time fix: annotate the PersesDashboard CRs to nudge a
   reconcile. Candidate for automation in `install-observability.sh` if it
   recurs.
+
+---
+
+### D2c. Playground MaaS provider gets `api_token: "fake"` — no declarative fix
+
+- **Symptom:** with §A10 in place the playground loads, but a MaaS-backed model
+  still yields no completions and the LlamaStack pod logs, on every refresh:
+  ```
+  ERROR list_provider_model_ids() failed  error=Error code: 401  provider=VLLMInferenceAdapter
+  WARNING Model refresh skipped  provider_id=maas-vllm-inference-<N>
+  ```
+- **Root cause (3.5.0, found 2026-07-29):** the gen-ai BFF builds the OGXServer
+  container env in
+  `packages/gen-ai/bff/internal/integrations/kubernetes/token_k8s_client.go`.
+  Installing a MaaS model *requires* the user token (~line 1802,
+  `"user auth token is required to install MaaS models"`) and threads it into
+  `generateLlamaStackConfig` for the run.yaml — but the env-var builder (~line
+  1600) only resolves `modelSecrets[model.ModelName]`, i.e. **service-account
+  token secrets that exist for in-project deployments**. A MaaS model has no such
+  secret, so it falls to the `else` branch and gets `Value: "fake"`. The run.yaml's
+  `api_token` resolves from that env var, so LlamaStack authenticates to MaaS with
+  `Bearer fake` → 401 → zero models registered.
+- **Why there is no in-repo workaround:** the OGXServer CR is created on demand by
+  the dashboard when a user creates a playground, in that user's project namespace,
+  with a per-playground provider index. There is nothing static to patch in git.
+- **Manual remedy (per playground, lost when the playground is recreated):**
+  ```bash
+  NS=<project>; LSD=lsd-genai-playground
+  MAAS=https://maas.apps.<cluster-domain>
+  KEY=$(curl -sk -X POST "$MAAS/maas-api/v1/api-keys" \
+        -H "Authorization: Bearer $(oc whoami -t)" -H 'Content-Type: application/json' \
+        -d '{"name":"playground","subscription":"<model>-free"}' | jq -r .key)
+  IDX=$(oc get ogxserver $LSD -n $NS -o json \
+        | jq -r 'paths(objects) as $p | select(getpath($p).name? == "VLLM_API_TOKEN_1") | ($p|join("."))' \
+        | sed 's/.*\.//')
+  oc patch ogxserver $LSD -n $NS --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/spec/workload/overrides/env/$IDX/value\",\"value\":\"$KEY\"}]"
+  ```
+  Verified on cluster-r8mf7: after the patch the pod restarts,
+  `list_provider_model_ids() returned` (no 401), and LlamaStack registers
+  `maas-vllm-inference-1/publishers/llm/models/gpt-oss-20b`.
+- **Upstream fix needed:** thread the MaaS user token (or a minted MaaS API key)
+  into `VLLM_API_TOKEN_<N>` for `ModelSourceTypeMaaS` models instead of defaulting
+  to `"fake"`.
 
 ---
 

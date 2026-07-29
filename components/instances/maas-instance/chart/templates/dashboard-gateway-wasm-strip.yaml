@@ -48,6 +48,23 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
+  # ORDERING IS LOAD-BEARING (added 2026-07-29, cluster-r8mf7).
+  #
+  # istio applies EnvoyFilters in (priority, creation-timestamp, name) order. With
+  # the default priority 0 this filter's REMOVE was ordered purely by creation
+  # time — and it is created by the MaaS chart at install time, while Kuadrant
+  # only generates `kuadrant-maas-default-gateway` (the INSERT) later, whenever
+  # its operator first reconciles the AuthPolicy. Observed here: strip created
+  # 14:21:02, Kuadrant's filter created 15:00:56 (when the Kuadrant operator was
+  # restarted to re-detect the istio provider). REMOVE ran before the INSERT, so
+  # the leaked wasm survived, the dashboard gateway envoy entered a remote
+  # wasm-fetch retry loop (~1/s, "Wasm remote code fetch is unstable"), leaked
+  # memory and was OOMKilled at its 1Gi limit -> CrashLoopBackOff -> dashboard 503.
+  #
+  # An explicit positive priority makes this filter apply AFTER Kuadrant's
+  # default-priority (0) filters regardless of when either was created, so the
+  # REMOVE is deterministic across operator restarts and reinstall ordering.
+  priority: 100
   workloadSelector:
     labels:
       gateway.networking.k8s.io/gateway-name: data-science-gateway

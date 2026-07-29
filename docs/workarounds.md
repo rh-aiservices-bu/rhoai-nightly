@@ -55,9 +55,32 @@ These fix an active bug or version mismatch. Remove each only when its
 - **Fix:** a second EnvoyFilter scoped by `workloadSelector` to only the
   dashboard gateway, `patch.operation: REMOVE` on the wasm HTTP filter. A
   harmless no-op where envoy tolerates the field; load-bearing where it doesn't.
+- **Ordering is load-bearing (found 2026-07-29, cluster-r8mf7):** the strip filter
+  carries `spec.priority: 100`. istio orders EnvoyFilters by
+  (priority, creationTimestamp, name). At default priority 0 the REMOVE was ordered
+  by creation time only — and the MaaS chart creates it at install time, whereas
+  Kuadrant generates `kuadrant-maas-default-gateway` (the INSERT) whenever its
+  operator *first* reconciles the AuthPolicy, which can be much later (here:
+  strip 14:21:02, Kuadrant 15:00:56, the moment the Kuadrant operator was restarted
+  per §16 in install-gotchas). REMOVE-before-INSERT = wasm survives.
+- **Second failure mode on SM 3.4.0 (not the `allow_on_headers_stop_iteration`
+  rejection):** when the wasm does survive, the dashboard gateway envoy enters a
+  **remote wasm-fetch retry loop** (~1/s, `Wasm remote code fetch is unstable and
+  may cause a crash`), leaks memory, and is **OOMKilled (exit 137) at its 1Gi
+  limit** → CrashLoopBackOff → dashboard 503. Same user-visible symptom, different
+  mechanism — do not assume a 503 here means the unknown-field rejection.
 - **Status:** **Temporary.** In-repo on `main`. bu-nightly-2 still carries a
-  **manual** copy until `clusters` is rebased (see C1).
+  **manual** copy until `clusters` is rebased (see C1) — that manual copy predates
+  the `priority` fix and should be updated.
 - **Detection:** `oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress -o jsonpath='{.spec.workloadSelector}'` — empty output == leak condition.
+  Effectiveness check (the leak being present does NOT mean the strip is working):
+  ```bash
+  oc get pod -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=data-science-gateway \
+    -o jsonpath='{.items[0].status.containerStatuses[0].restartCount} {.items[0].status.containerStatuses[0].lastState.terminated.reason}{"\n"}'
+  # non-zero restarts + OOMKilled == strip is NOT effective
+  oc get envoyfilter -n openshift-ingress -o json | jq -r '.items[]|"\(.spec.priority // 0) \(.metadata.creationTimestamp) \(.metadata.name)"' | sort
+  # strip must sort AFTER kuadrant-maas-default-gateway
+  ```
 - **Remove when:** RHCL's wasm-shim stops emitting the field, **or** Kuadrant
   scopes its generated EnvoyFilter with a `workloadSelector`.
 - **Refs:** `.tmp/issues/dashboard-gateway-kuadrant-wasm-leak.md`, issue #18.

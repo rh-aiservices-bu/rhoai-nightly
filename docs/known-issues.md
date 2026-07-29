@@ -1,17 +1,31 @@
-# Workarounds & Local Overrides
+# Known Issues, Workarounds & Local Overrides
 
-This repo deploys **RHOAI nightly** builds, so it routinely carries local
-workarounds for upstream bugs, version skews, and OLM/GitOps quirks that a
-stable release wouldn't need. They scatter across chart templates, overlays,
-scripts, and (worst of all) live cluster state — which is easy to lose track
-of. **This file is the canonical index.** When you add or retire a workaround,
-update it here.
+This repo deploys **RHOAI nightly** builds, so it routinely hits upstream bugs,
+version skews, and OLM/GitOps quirks that a stable release wouldn't. Some we work
+around; some we simply live with. **This file is the canonical index of both.**
+
+Two kinds of entry live here, and the distinction matters when you're debugging:
+
+1. **Things we work around** (sections A–C) — a fix exists in this repo, or as
+   manual cluster state. If one of these regresses, the workaround stopped
+   working; go read it.
+2. **Things that are just broken** (sections D–F) — no fix, or no *declarative*
+   fix. If you hit one of these, you are not doing anything wrong and there is
+   nothing to repair. Knowing that up front saves the afternoon.
+
+When you add or retire either kind, update this file.
+
+> **Scope note:** section E covers install-time failures that look alarming but
+> have a known one-command remedy — most of them are operators caching a
+> dependency probe at startup. Section F tracks defects in *this repo's own*
+> scripts. Both are here because "the install failed and I don't know why" is the
+> same question regardless of whose bug it is.
 
 > **Last full audit: 2026-07-14** — fresh install of **RHOAI 3.5.0**
 > (`rhoai-3.5-nightly`, channel `stable-3.x`) on a bare OCP 4.20.27 test
 > cluster with the then-current workarounds deliberately stripped, to verify
 > each one empirically. Evidence: `.tmp/workaround-audit-35.md`. Verdicts are
-> folded in below; retired items moved to section E.
+> folded in below; retired items moved to section G.
 
 Legend:
 
@@ -61,8 +75,8 @@ These fix an active bug or version mismatch. Remove each only when its
   by creation time only — and the MaaS chart creates it at install time, whereas
   Kuadrant generates `kuadrant-maas-default-gateway` (the INSERT) whenever its
   operator *first* reconciles the AuthPolicy, which can be much later (here:
-  strip 14:21:02, Kuadrant 15:00:56, the moment the Kuadrant operator was restarted
-  per §16 in install-gotchas). REMOVE-before-INSERT = wasm survives.
+  strip 14:21:02, Kuadrant 15:00:56 — the moment the Kuadrant operator was
+  restarted per **E1**). REMOVE-before-INSERT = wasm survives.
 - **Second failure mode on SM 3.4.0 (not the `allow_on_headers_stop_iteration`
   rejection):** when the wasm does survive, the dashboard gateway envoy enters a
   **remote wasm-fetch retry loop** (~1/s, `Wasm remote code fetch is unstable and
@@ -186,7 +200,7 @@ These fix an active bug or version mismatch. Remove each only when its
   (`OGXReady=False Removed`), so the explicit `Managed` is still required. The
   companion `llamastackoperator: Removed` we used to carry is now unnecessary —
   on 3.5.0 the component is off when unset and no longer blocks ogx (entry
-  retired to section E).
+  retired to section G).
 - **Status:** **Permanent** (product default). In-repo.
 
 ### A8. 3.5.0 "Tenant CR not available yet" — settle-gate/verify accommodations
@@ -446,6 +460,66 @@ genuinely stuck and may warrant filing/escalation.
 
 ---
 
+### D2a. MaaS catalog advertises the bare gateway base as the model URL
+
+- **Symptom:** `make maas-verify` reports **11 passed / 3 failed** — inference
+  404, unauthenticated 404 (expected 401/403), and "No 429 responses". All three
+  are the *same* bug: the test URL is wrong, so every request 404s before auth or
+  rate limiting is reached. Reproduces on repeated runs; not timing.
+- **Detection:**
+  ```bash
+  oc get maasmodelref <model> -n llm -o jsonpath='{.status.endpoint}{"\n"}'
+  # https://maas.apps.<domain>/           <- bare base, WRONG
+  curl -sk "$MAAS/maas-api/v1/models" -H "Authorization: Bearer $KEY" | jq '.data[0]|{id,url}'
+  # url is the same bare base; expected https://maas.apps.<domain>/llm/<model>
+  ```
+- **Root cause (3.5.0 nightly, 2026-07-29):** maas-controller sets
+  `MaaSModelRef.status.endpoint` to the BBR base (`/`) instead of the path-based
+  `/<ns>/<model>`; maas-api echoes it as the catalog `url`. This is the
+  pre-#1142 BBR-endpoint bug resurfacing in a *new* variant — the catalog is
+  **populated** here (discovery worked), only the `url` field is wrong, so the
+  empty-catalog guard in `verify-maas.sh` does not trigger.
+- **The data plane is NOT broken.** Verified against the correct path:
+  inference 200, no-auth 401, invalid token 403, and 5 rapid free-tier requests
+  gave `200 200 429 429 429`. Auth and rate limiting both work.
+- **Blast radius:** anything that trusts the catalog `url` builds a 404 — which
+  is how this reaches the Gen AI playground (see D2c; the LlamaStack provider
+  `base_url` is derived from it via `ensureVLLMCompatibleURL`).
+- **Fix:** none available — maas-controller/maas-api behavior. Optional
+  hardening: make `verify-maas.sh` fall back to `${HOST}/${NS}/${MODEL}` when
+  `.data[0].url` has an empty path, and WARN naming this bug, so a genuine
+  data-plane regression isn't masked by a metadata bug.
+- **Remove when:** `MaaSModelRef.status.endpoint` reports the path-based URL.
+
+### D2b. Two operator ServiceMonitors rejected by UWM (`bearerTokenFile`)
+
+- **Symptom:** none user-visible — `make diagnose` is green and the Observability
+  dashboard loads. But two components' metrics are silently never scraped.
+- **Detection:**
+  ```bash
+  oc get events -n redhat-ods-applications --field-selector type=Warning,reason=InvalidConfiguration \
+    -o jsonpath='{range .items[*]}{.involvedObject.name}: {.message}{"\n"}{end}'
+  # controller-manager-metrics-monitor / odh-model-controller-metrics-monitor:
+  #   rejected due to invalid configuration: endpoints[0]: it accesses file system
+  #   via bearer token file which Prometheus specification prohibits
+  ```
+- **Root cause (3.5.0):** both ServiceMonitors set
+  `endpoints[0].bearerTokenFile`. The prometheus-operator backing OpenShift
+  user-workload monitoring prohibits filesystem token access for tenant workloads
+  and rejects the whole object. The modern equivalent is
+  `authorization.credentials` with a Secret reference.
+- **Owners (cannot be fixed in-repo):** `DataScienceCluster/default-dsc` and
+  `Kserve/default-kserve` — reconciled by the RHOAI operator, so a local patch is
+  reverted, and there is no DSC field to override them.
+- **Impact:** RHOAI controller-manager and odh-model-controller metrics are
+  absent from UWM. MaaS/gateway/vLLM metrics are unaffected (those come from the
+  Kuadrant monitors, `istio-gateway-metrics` and `kserve-llm-models`), so the
+  Observability dashboard still populates — but panels fed by these two
+  controllers stay empty. Easy to misread as "observability is broken".
+- **Diagnosis note:** invisible to resource-existence checks — the objects exist
+  and look correct; only Prometheus's rejection *event* reveals they are inert.
+- **Fix:** none available — upstream must switch to `authorization.credentials`.
+
 ### D2c. Playground MaaS provider gets `api_token: "fake"` — no declarative fix
 
 - **Symptom:** with §A10 in place the playground loads, but a MaaS-backed model
@@ -490,7 +564,131 @@ genuinely stuck and may warrant filing/escalation.
 
 ---
 
-## E. Resolved / obsolete (do not re-add)
+## E. Install-time hazards — transient, with a known remedy
+
+Not workarounds (nothing to carry in git) and not permanent breakage. These are
+failures a fresh install hits, that look serious, and that clear with one
+command once you recognise the shape.
+
+### E1. Operators cache a dependency probe at startup and never re-check
+
+**The single most common install-time failure class in this stack.** An operator
+probes for a dependency once at startup, caches the answer, and never
+re-evaluates. The tell: a `Ready=False` / `Accepted=False` whose message names a
+dependency that **demonstrably does exist**.
+
+Confirmed instances (both on a fresh install, 2026-07-29):
+
+| Component | Message | Reality |
+|---|---|---|
+| `TrustyAI/default-trustyai` | `InferenceServices CRD does not exist, please enable serving component first` | CRD present, `KserveReady=True`. Condition set 14:16:21, CRD created 14:16:43 — lost a 22s race. |
+| `AuthPolicy/maas-gateway-auth` | `[Gateway API provider (istio / envoy gateway)] is not installed, please restart Kuadrant Operator pod` | istiod Running. Consequence: **zero AuthConfigs** → Authorino enforces nothing → `POST /v1/api-keys` returns 500 with `X-MaaS-Username=absent`, while every structural MaaS check passes. |
+
+**Remedy — delete the operator pod. `oc rollout restart` does NOT work:** OLM
+owns these Deployments and reverts the `restartedAt` annotation, so no new
+ReplicaSet is created. `oc rollout status` still reports "successfully rolled
+out" (it is describing the already-healthy pods), the ReplicaSet hash is
+unchanged, and pod AGE does not reset — a silent no-op.
+
+```bash
+oc delete pods -n redhat-ods-operator -l name=rhods-operator          # trustyai / DSC components
+oc delete pod  -n openshift-operators -l control-plane=controller-manager   # kuadrant
+```
+
+Verify the fix took: ReplicaSet hash and pod AGE actually changed, then re-read
+the condition. `lastTransitionTime` is NOT proof of a re-check — it only moves
+when the condition *value* changes, so a stale-False and a repeatedly-re-failing
+False look identical.
+
+**Generalises:** any `PreConditionFailed` / `Accepted=False` referencing a
+resource that exists is this pattern. Remedy is always "delete the operator pod".
+
+### E2. `make maas-model` times out on gpt-oss-20b (cold image cache)
+
+- **Symptom:** `make maas-model` deploys correctly, waits, then exits
+  `make: *** [maas-model] Error 1` at ~900s while the pod is still
+  `PodInitializing`. The model comes up fine minutes later — only the wait budget
+  is wrong.
+- **Measured on a fresh cluster (cold cache, g6e.2xlarge / L40S):**
+
+  | Stage | Elapsed |
+  |---|---|
+  | `modelcar-gpt-oss-20b:1.5` pull (weights, ~8GB), init container | 0 → ~12m |
+  | `vllm-cuda-rhel9:3.3.0` pull (runtime), main container | ~12m → ~14m30s |
+  | vLLM engine init + weight load + CUDA graph capture | ~14m30s → ~18m |
+  | **Total to 2/2 Ready** | **~18 min** vs a **15 min** budget |
+
+- **Root cause:** the GPU timeout assumes one image pull; gpt-oss-20b pulls
+  **two** large images sequentially before vLLM even starts loading.
+- **Distinguish from a real failure:** check for CrashLoopBackOff /
+  ImagePullBackOff. Absent means it is just slow — `oc get pods -n llm -w` until
+  2/2, then `oc get llminferenceservice -n llm`.
+- **Beware exit-code masking:** `make maas-model 2>&1 | tee log` returns **tee's**
+  status (0), so a wrapper reports success while make failed. Use
+  `${PIPESTATUS[0]}` or `set -o pipefail`.
+- **Candidate fix:** raise the GPU-model timeout in `scripts/setup-maas-model.sh`
+  from 900s to ~1500s, and distinguish "still pulling images" from "vLLM loading"
+  in the progress output.
+
+---
+
+## F. Defects in this repo (not upstream)
+
+### F1. `make sync` blanket-approves EVERY pending InstallPlan in `openshift-operators`
+
+- **Symptom (benign on a greenfield sandbox, hazardous elsewhere):** during the
+  `opentelemetry-operator` sync step the log reads
+  `Auto-approving InstallPlan: install-5vplb`. That plan was **not** OpenTelemetry:
+  ```bash
+  oc get installplan install-5vplb -n openshift-operators \
+    -o jsonpath='{.spec.clusterServiceVersionNames[0]}{"\n"}'
+  # servicemeshoperator3.v3.4.0
+  ```
+  `make sync` silently upgraded Service Mesh 3.1.0 → 3.4.0 as a side effect of
+  installing OTel.
+- **Root cause:** `scripts/sync-apps.sh:87-94` selects *all* InstallPlans with
+  `spec.approved==false` in `openshift-operators` and approves each, with **no
+  filter on `spec.clusterServiceVersionNames`**. Any Manual-approval subscription
+  parked in that namespace is approved by whichever app sync runs next.
+- **Why it matters:** section **C2** records that Service Mesh InstallPlans on
+  Manual approval must **NOT** be approved where the ingress operator owns the SM
+  subscription — approving them can disrupt the ingress data plane. `make sync`
+  currently does exactly that, unconditionally. The two entries are in direct
+  conflict.
+- **Outcome observed (cluster-r8mf7, greenfield, no ingress-owned SM sub):**
+  harmless. SM 3.4.0 reached Succeeded, `oc get co ingress` stayed
+  True/False/False, and MaaS on SM 3.4.0 passed inference (200), auth (401/403)
+  and rate limiting (429).
+- **Check before running `make sync` on a shared/prod cluster:**
+  ```bash
+  oc get installplan -n openshift-operators \
+    -o custom-columns=NAME:.metadata.name,CSV:.spec.clusterServiceVersionNames[0],APPROVED:.spec.approved
+  ```
+- **Fix:** filter the auto-approve loop to the CSV the sync step is waiting on,
+  and/or keep a deny-list (`servicemeshoperator3`) that is never auto-approved.
+  Log every skipped plan so the decision stays visible. `scripts/diagnose.sh`
+  already refuses to *recommend* approving SM plans; `sync-apps.sh` does not yet
+  honour the same rule.
+
+### F2. `make cpu` hangs 20 min when `CPU_MIN=0` (scale-to-zero)
+
+- **Symptom:** `make cpu` creates the MachineSet + MachineAutoscaler successfully
+  (replicas=0, min=0, max=3), then blocks at "Waiting for CPU worker node to be
+  Ready" until it times out and exits 1. The infrastructure is actually fine.
+- **Root cause:** `scripts/create-cpu-machineset.sh:228-229` is commented
+  *"Always wait for CPU worker node to be Ready"* and does so regardless of
+  replica count. With `CPU_MIN=0` the autoscaler deliberately provisions nothing
+  until a Pending pod demands it, so the wait can never succeed.
+- **Still present** (verified 2026-07-29): no `REPLICAS -gt 0` guard around the
+  wait loop.
+- **Workaround:** kill the target once the MachineSet + MachineAutoscaler exist;
+  the autoscaler provisions a node when workloads land.
+- **Fix:** guard the wait with `if [[ "$REPLICAS" -gt 0 ]]`, and when MIN=0 log
+  that the MachineSet is scale-to-zero and exit 0 immediately after creation.
+
+---
+
+## G. Resolved / obsolete (do not re-add)
 
 Kept as a short tombstone list so these don't get "rediscovered":
 

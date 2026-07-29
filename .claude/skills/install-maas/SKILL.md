@@ -15,7 +15,7 @@ Install Models as a Service on an OpenShift cluster with RHOAI. Handles the full
 4. Verify the installation (`make maas-verify`)
 5. Optionally install observability as a separate, settle-gated step (`make observability`)
 
-**`make maas` no longer installs observability.** The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack) is heavy on the control plane and is gated behind `make observability`, which refuses to run on a stressed cluster. This decoupling is intentional and shipped in the feature/maas-improvements branch — see `.tmp/plans/install-gotchas.md` for the OOM it prevents.
+**`make maas` no longer installs observability.** The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack) is heavy on the control plane and is gated behind `make observability`, which refuses to run on a stressed cluster. This decoupling is intentional and shipped in the feature/maas-improvements branch — see `docs/known-issues.md` for the OOM it prevents.
 
 ## Arguments
 
@@ -72,7 +72,7 @@ Save ALL command output there. Append cluster-state snapshots to `$LOGDIR/monito
 
 Every unexpected symptom:
 1. Capture in `$LOGDIR/monitoring.log` with a timestamp
-2. Add a numbered entry to `.tmp/plans/install-gotchas.md` with symptom / detection / root cause / repo-side fix / cluster-side workaround
+2. Add a numbered entry to `docs/known-issues.md` with symptom / detection / root cause / repo-side fix / cluster-side workaround
 3. **Prefer code/script/YAML changes in the repo over hand-patching the cluster.** Cluster patch is a temporary unblocker; the durable fix is a commit.
 4. After fix: re-run the failing phase; if a commit+push was needed, trigger ArgoCD refresh (`make refresh-apps`).
 
@@ -129,7 +129,7 @@ oc get gateway maas-default-gateway -n openshift-ingress
 oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="ModelsAsServiceReady")]}'
 ```
 
-**Known gotcha** (log in `install-gotchas.md` if hit): the RHOAI operator may cache a stale "gateway not found" error before ArgoCD creates the Gateway. `install-maas.sh` auto-triggers a re-reconciliation after 60s if this is detected. If it doesn't self-heal, the manual unblock is `oc annotate modelsasservice default-modelsasservice reconcile-trigger="$(date +%s)" --overwrite`. Root-cause fix belongs in the operator, not our repo.
+**Known gotcha** (log in `docs/known-issues.md` if hit): the RHOAI operator may cache a stale "gateway not found" error before ArgoCD creates the Gateway. `install-maas.sh` auto-triggers a re-reconciliation after 60s if this is detected. If it doesn't self-heal, the manual unblock is `oc annotate modelsasservice default-modelsasservice reconcile-trigger="$(date +%s)" --overwrite`. Root-cause fix belongs in the operator, not our repo.
 
 Verify after completion:
 - `maas-api` and `maas-controller` deployments Ready
@@ -230,7 +230,7 @@ Summarize:
 - Models deployed + their Ready state
 - `maas-verify` result (passed/failed count)
 - Observability status: skipped / installed / settle-gate verdict / Perses backend ready state
-- **Problems encountered** (with pointers to `.tmp/plans/install-gotchas.md` entries and any repo-side commits that landed fixes)
+- **Problems encountered** (with pointers to `docs/known-issues.md` entries and any repo-side commits that landed fixes)
 - Log directory path
 
 If this run tested a feature branch, remind the user the branch is still only visible to ArgoCD's runtime patch — merge+land is still required for the change to be visible to others.

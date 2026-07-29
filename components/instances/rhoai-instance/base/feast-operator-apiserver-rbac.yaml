@@ -1,4 +1,4 @@
-# WORKAROUND (see docs/workarounds.md §A9) — RHOAI 3.5.0 nightly.
+# WORKAROUND (see docs/known-issues.md §A9) — RHOAI 3.5.0 nightly.
 #
 # The feast controller (`feast-operator-controller-manager`, deployed by the
 # FeastOperator CR that the DSC-owned `opendatahub-feast-operator` creates) reads

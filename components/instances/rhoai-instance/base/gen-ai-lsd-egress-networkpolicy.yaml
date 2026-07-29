@@ -1,4 +1,4 @@
-# WORKAROUND (see docs/workarounds.md §A10) — RHOAI 3.5.0 nightly.
+# WORKAROUND (see docs/known-issues.md §A10) — RHOAI 3.5.0 nightly.
 #
 # The Gen AI Studio playground reads its model list from the LlamaStack
 # distribution (OGXServer) running in the USER'S project namespace, via the

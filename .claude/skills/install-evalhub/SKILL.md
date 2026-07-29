@@ -43,7 +43,7 @@ make evalhub 2>&1 | tee $LOGDIR/evalhub-install.log
 
 ## Problem Tracking — Fix in Repo, Not on Cluster
 
-Every unexpected symptom: capture in `$LOGDIR`, add a numbered entry to `.tmp/plans/install-gotchas.md` (symptom / detection / root cause / repo-side fix), prefer a committed repo fix over hand-patching the cluster, then re-run. Do not silently swallow errors.
+Every unexpected symptom: capture in `$LOGDIR`, add a numbered entry to `docs/known-issues.md` (symptom / detection / root cause / repo-side fix), prefer a committed repo fix over hand-patching the cluster, then re-run. Do not silently swallow errors.
 
 ## Instructions
 
@@ -121,7 +121,7 @@ Expected end-state:
 
 ### Final Report
 
-Summarize: cluster URL + RHOAI CSV; EvalHub/MLflow/DSPA Ready states; pod counts in both namespaces; hook Job status; DSPA routes; Application sync/health; any problems (with `.tmp/plans/install-gotchas.md` pointers + repo-side fix commits); log directory path.
+Summarize: cluster URL + RHOAI CSV; EvalHub/MLflow/DSPA Ready states; pod counts in both namespaces; hook Job status; DSPA routes; Application sync/health; any problems (with `docs/known-issues.md` pointers + repo-side fix commits); log directory path.
 
 If this run tested a feature branch, remind the user it's only ArgoCD-runtime-pointed — merge to `main` is still required for others.
 

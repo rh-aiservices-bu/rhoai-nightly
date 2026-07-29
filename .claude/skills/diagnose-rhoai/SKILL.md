@@ -18,8 +18,8 @@ This is not hypothetical. On 2026-07-29 a full install finished with
 `make diagnose` reporting *"35 passed, 0 failures — Cluster is fully operational"*
 while the RHOAI dashboard was returning **503** and its gateway pod had been
 **OOMKilled 13 times**. The script simply had no check that looked there. Six
-distinct real problems were found that day (`.tmp/plans/install-gotchas.md`
-§13–§18); **none** of them was found by the script.
+distinct real problems were found that day (now `docs/known-issues.md` §A9, §A10,
+§D2a–c, §E1); **none** of them was found by the script.
 
 The script is a regression suite for problems we already know about. It cannot
 find the next one. On a nightly build, the next one is the normal case — so
@@ -92,7 +92,7 @@ oc get pods -A -o json | jq -r '.items[] | . as $p | (.status.containerStatuses/
 ```
 
 OOMKilled is the most common failure mode in this stack (two separate
-`docs/workarounds.md` entries exist for it) and it is **invisible in the STATUS
+`docs/known-issues.md` entries exist for it) and it is **invisible in the STATUS
 column** once the container restarts successfully. Check it explicitly.
 
 **3c. Do the CR conditions agree with reality?**
@@ -120,10 +120,19 @@ alone. The gateway OOM on 2026-07-29 was only explained by its envoy logs
 
 Before debugging from scratch, check whether it is already known:
 
-- `docs/workarounds.md` — canonical index of active workarounds. Each entry has a
-  **Detection** command; run it.
-- `.tmp/plans/install-gotchas.md` — per-install findings with root causes and
-  remedies (§13–§18 are from the 2026-07-29 install).
+`docs/known-issues.md` is the canonical index of **both** the workarounds this
+repo carries and the things that are known-broken with no fix. Most entries have
+a **Detection** command — run it rather than re-deriving the diagnosis:
+
+- **A–C** — we work around it. If one regresses, the workaround stopped working.
+- **D** — genuinely broken upstream, no fix. Nothing to repair; don't burn an
+  afternoon on it. (§D2a explains why `make maas-verify` reports 11/3 on a
+  perfectly working MaaS.)
+- **E** — install-time hazards with a one-command remedy. **§E1 (operators
+  caching a startup dependency probe) is the single most common install failure
+  in this stack** — check it early whenever a condition names a resource that
+  demonstrably exists.
+- **F** — defects in this repo's own scripts.
 
 ### Step 5: Recognise these failure patterns
 

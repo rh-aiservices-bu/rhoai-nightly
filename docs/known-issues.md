@@ -520,47 +520,144 @@ genuinely stuck and may warrant filing/escalation.
   and look correct; only Prometheus's rejection *event* reveals they are inert.
 - **Fix:** none available — upstream must switch to `authorization.credentials`.
 
-### D2c. Playground MaaS provider gets `api_token: "fake"` — no declarative fix
+### D2c. Playground auto-wiring of MaaS models is broken in THREE places
 
-- **Symptom:** with §A10 in place the playground loads, but a MaaS-backed model
-  still yields no completions and the LlamaStack pod logs, on every refresh:
-  ```
-  ERROR list_provider_model_ids() failed  error=Error code: 401  provider=VLLMInferenceAdapter
-  WARNING Model refresh skipped  provider_id=maas-vllm-inference-<N>
-  ```
-- **Root cause (3.5.0, found 2026-07-29):** the gen-ai BFF builds the OGXServer
-  container env in
-  `packages/gen-ai/bff/internal/integrations/kubernetes/token_k8s_client.go`.
-  Installing a MaaS model *requires* the user token (~line 1802,
+**There is a supported workaround — see "Workaround A" below.** What has no
+declarative fix is the *auto-wired* MaaS path; you can sidestep it entirely.
+
+The playground registers a MaaS model as a LlamaStack provider by generating a
+`run.yaml` into ConfigMap `llama-stack-config` (owned by
+`OGXServer/lsd-genai-playground`) plus env vars on the OGXServer CR. **Three
+separate fields are wrong**, and each one masks the next — expect to "fix it" and
+find it still broken twice more:
+
+| # | Field | Generated value | Result |
+|---|---|---|---|
+| 1 | `api_token` (via `VLLM_API_TOKEN_<N>`) | `fake` | 401 listing models → **0 models registered** |
+| 2 | `base_url` | `https://maas.apps.<domain>/v1` | `/v1/models` 200 (!) but `/v1/chat/completions` **404** |
+| 3 | `provider_model_id` | *absent* | LlamaStack sends the catalog path; vLLM serves `gpt-oss-20b` → **404** |
+
+Symptoms in order, as you fix each:
+
+1. Playground shows *"You need at least one model"*; LlamaStack logs
+   `list_provider_model_ids() failed error=Error code: 401` +
+   `Model refresh skipped provider_id=maas-vllm-inference-<N>`.
+2. Model **appears** in the picker, chat returns **"Server error"**; LlamaStack logs
+   `Provider SDK error during response generation exc=Error code: 404`.
+   Defect 2 is especially deceptive: the bare base *does* serve `/v1/models`
+   (that is maas-api's catalog endpoint), so discovery succeeds and the config
+   looks correct.
+3. Chat still fails; vLLM replies
+   `The model 'publishers/llm/models/gpt-oss-20b' does not exist`.
+
+**Root causes** (`packages/gen-ai/bff/internal/integrations/kubernetes/token_k8s_client.go`):
+
+- **#1** — the credential lookup (~line 1519) resolves a model's token by finding an
+  `InferenceService`/`LLMInferenceService` **in the user's own project namespace**
+  and reading its ServiceAccount token secret. A MaaS model is in `llm`, is not
+  SA-token authenticated, and is not at a plain in-cluster URL — so the lookup
+  fails, and the env builder (~line 1596) falls to `else → Value: "fake"`.
+  `"fake"` is a deliberate sentinel for *"no credential configured"* (see also
+  `external_models.go:157`, `lsd_responses_handler.go:1301`) — harmless for an
+  unauthenticated in-cluster vLLM, fatal for a gateway that checks keys.
+  Note the irony: installing a MaaS model **requires** the user token (~line 1802,
   `"user auth token is required to install MaaS models"`) and threads it into
-  `generateLlamaStackConfig` for the run.yaml — but the env-var builder (~line
-  1600) only resolves `modelSecrets[model.ModelName]`, i.e. **service-account
-  token secrets that exist for in-project deployments**. A MaaS model has no such
-  secret, so it falls to the `else` branch and gets `Value: "fake"`. The run.yaml's
-  `api_token` resolves from that env var, so LlamaStack authenticates to MaaS with
-  `Bearer fake` → 401 → zero models registered.
-- **Why there is no in-repo workaround:** the OGXServer CR is created on demand by
-  the dashboard when a user creates a playground, in that user's project namespace,
-  with a per-playground provider index. There is nothing static to patch in git.
-- **Manual remedy (per playground, lost when the playground is recreated):**
-  ```bash
-  NS=<project>; LSD=lsd-genai-playground
-  MAAS=https://maas.apps.<cluster-domain>
-  KEY=$(curl -sk -X POST "$MAAS/maas-api/v1/api-keys" \
-        -H "Authorization: Bearer $(oc whoami -t)" -H 'Content-Type: application/json' \
-        -d '{"name":"playground","subscription":"<model>-free"}' | jq -r .key)
-  IDX=$(oc get ogxserver $LSD -n $NS -o json \
-        | jq -r 'paths(objects) as $p | select(getpath($p).name? == "VLLM_API_TOKEN_1") | ($p|join("."))' \
-        | sed 's/.*\.//')
-  oc patch ogxserver $LSD -n $NS --type=json \
-    -p "[{\"op\":\"replace\",\"path\":\"/spec/workload/overrides/env/$IDX/value\",\"value\":\"$KEY\"}]"
-  ```
-  Verified on cluster-r8mf7: after the patch the pod restarts,
-  `list_provider_model_ids() returned` (no 401), and LlamaStack registers
-  `maas-vllm-inference-1/publishers/llm/models/gpt-oss-20b`.
-- **Upstream fix needed:** thread the MaaS user token (or a minted MaaS API key)
-  into `VLLM_API_TOKEN_<N>` for `ModelSourceTypeMaaS` models instead of defaulting
-  to `"fake"`.
+  `generateLlamaStackConfig`, which uses it only to *list* models via the MaaS BFF.
+  The token is present and then dropped.
+- **#2** — `endpointURL := ensureVLLMCompatibleURL(maasModel.URL)` takes the catalog's
+  `url` (the bare gateway base, see **§D2a**) and appends `/v1`. Fixing D2a upstream
+  fixes this one for free.
+- **#3** — the generator emits `provider_model_id` for the sentence-transformers
+  embedding model in the very same file, but omits it for MaaS models. An
+  oversight, not a design choice.
+
+---
+
+**Workaround A — register it as a custom endpoint (durable, supported, RECOMMENDED).**
+
+Gen AI studio → **AI asset endpoints** → add a custom model endpoint. The create
+API (`ExternalModelRequest`) takes exactly the three fields that are broken:
+
+```
+model_id     -> gpt-oss-20b                                  (fixes #3)
+base_url     -> https://maas.apps.<domain>/llm/<model>/v1    (fixes #2)
+secret_value -> a real MaaS API key                          (fixes #1)
+```
+
+The key is stored in a project Secret and read via
+`Config.CustomGenAI.APIKey.SecretRef`, not the `"fake"` default path. Because the
+config lives in the project's `gen-ai-aa-custom-model-endpoints` ConfigMap rather
+than the regenerated `llama-stack-config`, **this survives playground recreate.**
+
+Mint the key with:
+```bash
+MAAS=https://maas.apps.<cluster-domain>
+curl -sk -X POST "$MAAS/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $(oc whoami -t)" -H 'Content-Type: application/json' \
+  -d '{"name":"playground","subscription":"<model>-free"}' | jq -r .key
+```
+
+Trade-off: the model is registered as a generic external endpoint, so you lose the
+MaaS-native integration — no subscription/tier selector, and usage may not be
+attributed to a MaaS subscription. Use Workaround B if you are specifically
+testing MaaS tiering.
+
+---
+
+**Workaround B — patch the generated config in place (keeps the MaaS-native path,
+lost on playground recreate).** All three patches, verified end-to-end on
+cluster-r8mf7 (2026-07-29):
+
+```bash
+NS=chase-dev; LSD=lsd-genai-playground; MODEL=gpt-oss-20b
+MAAS=https://maas.apps.<cluster-domain>
+
+# (1) real key into the OGXServer CR env (survives pod restarts)
+KEY=$(curl -sk -X POST "$MAAS/maas-api/v1/api-keys" \
+      -H "Authorization: Bearer $(oc whoami -t)" -H 'Content-Type: application/json' \
+      -d "{\"name\":\"playground\",\"subscription\":\"${MODEL}-free\"}" | jq -r .key)
+IDX=$(oc get ogxserver $LSD -n $NS -o json \
+      | jq -r 'paths(objects) as $p | select(getpath($p).name? == "VLLM_API_TOKEN_1") | ($p|join("."))' \
+      | awk -F. '{print $NF}')
+oc patch ogxserver $LSD -n $NS --type=json \
+  -p "[{\"op\":\"replace\",\"path\":\"/spec/workload/overrides/env/$IDX/value\",\"value\":\"$KEY\"}]"
+
+# (2)+(3) base_url and provider_model_id in the generated run.yaml.
+# NOTE: perl, not sed -- BSD/macOS sed handles the append form differently.
+NEW=$(oc get cm llama-stack-config -n $NS -o jsonpath='{.data.config\.yaml}' \
+  | perl -pe "s{^(      base_url: https://maas\.apps\.[^/]+)/v1\$}{\$1/llm/$MODEL/v1}" \
+  | perl -pe "s{^(    model_id: publishers/llm/models/$MODEL)\$}{\$1\n    provider_model_id: $MODEL}")
+oc get cm llama-stack-config -n $NS -o json | jq --arg new "$NEW" '{data:{"config.yaml":$new}}' > /tmp/lsd.json
+oc patch cm llama-stack-config -n $NS --type=merge --patch-file /tmp/lsd.json
+
+oc delete pod -n $NS -l app=ogx     # required: config is read at startup
+```
+
+Verify (in-pod, avoids the gateway):
+```bash
+POD=$(oc get pods -n $NS --no-headers | grep '^lsd-genai-playground' | awk '{print $1}')
+oc exec -n $NS $POD -- curl -s -X POST http://localhost:8321/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"maas-vllm-inference-1/publishers/llm/models/'"$MODEL"'","messages":[{"role":"user","content":"say OK"}],"max_tokens":10}'
+# expect HTTP 200 with a completion
+```
+
+`llama-stack-config` is owned by the OGXServer. The patches held across several
+pod restarts, but the operator may regenerate it at any reconcile — and
+**deleting/recreating the playground definitely restores all three defects.**
+
+---
+
+- **Upstream fixes needed** (all in the gen-ai BFF): populate
+  `VLLM_API_TOKEN_<N>` from the user token already required at install (or mint a
+  MaaS key) instead of defaulting to `"fake"`; derive `base_url` from the
+  path-based model endpoint rather than the catalog's bare `url` (or fix §D2a at
+  source in maas-controller); emit `provider_model_id` for MaaS models exactly as
+  it already does for embeddings.
+- **Open question:** the UI's subscription/tier selector appears not to take
+  effect under Workaround B — the static provider token wins. Observed selecting
+  "Premium Tier" while the provider held a `-free` key, with inference still
+  succeeding. Relevant if you are testing rate limiting.
 
 ---
 

@@ -28,13 +28,10 @@ spec:
     mlflowoperator:
       managementState: Managed
     ogx:
-      # Provides the LlamaStack operator + distribution that the Gen AI Studio
-      # Playground chats through (odh-ogx-k8s-operator + RH LlamaStack
-      # distribution). The RHOAI 3.5.0 operator defaults ogx to Removed, so it
-      # must be set explicitly or the gen-ai BFF starts with an empty
-      # LlamaStack url and the Playground tab does not appear.
-      # (The deprecated llamastackoperator component needs no explicit Removed
-      # on 3.5.0 — unset defaults to off and no longer blocks ogx.)
+      # Intentional configuration (not a workaround): ogx provides the
+      # LlamaStack operator + distribution behind the Gen AI Studio Playground.
+      # The product default is Removed; this rig wants the Playground, so we
+      # opt in.
       managementState: Managed
     modelregistry:
       managementState: Managed

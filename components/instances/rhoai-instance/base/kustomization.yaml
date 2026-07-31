@@ -13,5 +13,3 @@ resources:
   - hardwareprofile-default-disabled.yaml
   - hardwareprofile-gpu.yaml
   - model-catalog-sources.yaml
-  - feast-operator-apiserver-rbac.yaml
-  - gen-ai-lsd-egress-networkpolicy.yaml

@@ -19,6 +19,17 @@
 # fight the operator's reconcile.
 #
 # Remove when the RHOAI operator CSV grants config.openshift.io/apiservers get.
+#
+# SECOND GAP (2026-07-31, rhods-operator.3.5.0 GA, cluster-fzgjg): the same
+# controller now also runs a "Notebook ConfigMap controller" that watches
+# notebooks.kubeflow.org cluster-wide. On startup it logs
+#   "Unable to validate Notebook CRD (insufficient permissions), will attempt setup"
+# then proceeds anyway; the notebook cache group can never sync
+#   "failed to wait for notebook caches to sync kind source: *v1.FeatureStore /
+#    *v1.ConfigMap: timed out waiting for cache to be synced"
+# and the manager exits -> CrashLoopBackOff. Neither operator-shipped
+# ClusterRole grants notebooks.kubeflow.org. Same remove-condition as above but
+# for kubeflow.org/notebooks.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -31,6 +42,14 @@ rules:
       - config.openshift.io
     resources:
       - apiservers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - kubeflow.org
+    resources:
+      - notebooks
     verbs:
       - get
       - list

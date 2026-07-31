@@ -257,7 +257,7 @@ if [[ -n "$BAD_PODS_OTHER" ]]; then
 fi
 
 # OOMKilled is called out separately: it is the single most common failure mode
-# in this stack (docs/known-issues.md A2 raises the MaaS gateway to 2Gi for
+# in this stack (docs/workarounds.md A2 raises the MaaS gateway to 2Gi for
 # exactly this reason) and it is invisible in the pod STATUS column once the
 # container restarts successfully.
 OOM_PODS=$(oc get pods -A -o json 2>/dev/null | jq -r '
@@ -273,7 +273,7 @@ if [[ -n "$OOM_PODS" ]]; then
     echo "$OOM_PODS" | head -5 | while read -r line; do
         echo "         $(echo "$line" | awk '{print $1"/"$2" container="$3" "$4}')"
     done
-    recommend "OOMKilled containers found — check limits (see docs/known-issues.md A1/A2 for the gateway cases)"
+    recommend "OOMKilled containers found — check limits (see docs/workarounds.md A1/A2 for the gateway cases)"
 else
     pass "OOMKilled" "No containers OOMKilled"
 fi
@@ -402,9 +402,9 @@ if [[ -n "$PENDING_PLANS" ]]; then
         echo "         $NS/$NAME ($CSV)"
         # Service Mesh plans are deliberately NOT auto-approved: on clusters where
         # the ingress operator owns the SM subscription, approving them can disrupt
-        # the ingress data plane (docs/known-issues.md C2).
+        # the ingress data plane (docs/workarounds.md C2).
         if [[ "$CSV" == servicemeshoperator* ]]; then
-            recommend "REVIEW (do NOT blind-approve): $NS/$NAME is $CSV — see docs/known-issues.md C2"
+            recommend "REVIEW (do NOT blind-approve): $NS/$NAME is $CSV — see docs/workarounds.md C2"
         else
             recommend "Approve: oc patch installplan $NAME -n $NS --type merge -p '{\"spec\":{\"approved\":true}}'"
         fi
@@ -576,7 +576,7 @@ if [[ -n "$MAAS_APP" ]]; then
             fail "AuthPolicy" "$(echo "$AP_BAD" | wc -l | tr -d ' ') policy(ies) not Accepted — auth is NOT being enforced"
             echo "$AP_BAD" | head -3 | while read -r line; do echo "         $line"; done
             if echo "$AP_BAD" | grep -qi "provider.*not installed\|restart Kuadrant"; then
-                recommend "Kuadrant cached a stale provider probe — delete its pod: oc delete pod -n openshift-operators -l control-plane=controller-manager (see docs/known-issues.md E1)"
+                recommend "Kuadrant cached a stale provider probe — delete its pod: oc delete pod -n openshift-operators -l control-plane=controller-manager (see docs/workarounds.md E1)"
             else
                 recommend "AuthPolicy not Accepted — inspect: oc get authpolicy -A -o yaml | grep -A5 conditions"
             fi
@@ -589,7 +589,7 @@ if [[ -n "$MAAS_APP" ]]; then
         AC_COUNT=$(oc get authconfig -A --no-headers 2>/dev/null | grep -cv "^$" || echo 0)
         if [[ "$AC_COUNT" -eq 0 ]]; then
             fail "AuthConfigs" "0 AuthConfigs exist despite $AP_TOTAL AuthPolicy — Authorino has nothing to enforce"
-            recommend "No AuthConfigs generated — restart the Kuadrant operator pod (docs/known-issues.md E1)"
+            recommend "No AuthConfigs generated — restart the Kuadrant operator pod (docs/workarounds.md E1)"
         else
             pass "AuthConfigs" "$AC_COUNT generated"
         fi
@@ -762,7 +762,7 @@ if [[ -n "$GATEWAYS" ]]; then
             GWPASS) pass "Gateway" "$REST" ;;
             GWWARN) warn "Gateway" "$REST" ;;
             GWFAIL) fail "Gateway" "$REST"
-                    recommend "Gateway data plane down: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=<name>; check for OOMKilled (docs/known-issues.md A1/A2)" ;;
+                    recommend "Gateway data plane down: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=<name>; check for OOMKilled (docs/workarounds.md A1/A2)" ;;
         esac
     done < /tmp/.diag-gw-$$
     rm -f /tmp/.diag-gw-$$
@@ -788,7 +788,7 @@ if [[ -n "$CLUSTER_DOMAIN" ]]; then
                 recommend "Dashboard unreachable — check the gateway pod: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=data-science-gateway" ;;
             *)
                 fail "Dashboard Reachable" "https://${DASH_HOST}/ -> HTTP $DASH_CODE (expected 200/302)"
-                recommend "Dashboard returning $DASH_CODE — check gateway pod for OOMKilled/CrashLoopBackOff (docs/known-issues.md A1)" ;;
+                recommend "Dashboard returning $DASH_CODE — check gateway pod for OOMKilled/CrashLoopBackOff (docs/workarounds.md A1)" ;;
         esac
     else
         info "Dashboard Reachable" "No dashboard route found"
@@ -809,7 +809,7 @@ if [[ -n "$MAAS_HOST" ]]; then
     fi
 fi
 
-# ── Known-workaround effectiveness (docs/known-issues.md A1) ──────────────────
+# ── Known-workaround effectiveness (docs/workarounds.md A1) ──────────────────
 # The Kuadrant wasm leak being PRESENT is normal; what matters is whether our
 # strip EnvoyFilter actually neutralises it. istio orders EnvoyFilters by
 # (priority, creationTimestamp, name) — if the strip sorts BEFORE Kuadrant's
@@ -820,10 +820,10 @@ if oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress &>/dev/
         STRIP_PRIO=$(oc get envoyfilter strip-kuadrant-wasm-dashboard-gateway -n openshift-ingress -o jsonpath='{.spec.priority}' 2>/dev/null || echo "")
         if [[ -z "$STRIP_PRIO" ]]; then
             fail "Wasm Leak Strip" "Kuadrant EnvoyFilter has empty workloadSelector (leaking) and no strip filter found"
-            recommend "Dashboard gateway will crash-loop — see docs/known-issues.md A1"
+            recommend "Dashboard gateway will crash-loop — see docs/workarounds.md A1"
         elif [[ "$STRIP_PRIO" -le 0 ]] 2>/dev/null; then
             warn "Wasm Leak Strip" "strip filter priority=$STRIP_PRIO — ordering not guaranteed vs Kuadrant's filter"
-            recommend "Set spec.priority > 0 on strip-kuadrant-wasm-dashboard-gateway (docs/known-issues.md A1)"
+            recommend "Set spec.priority > 0 on strip-kuadrant-wasm-dashboard-gateway (docs/workarounds.md A1)"
         else
             pass "Wasm Leak Strip" "Leak present but strip filter has priority=$STRIP_PRIO (applies after Kuadrant)"
         fi

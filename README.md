@@ -82,7 +82,8 @@ Full walkthroughs: **[Install with make](docs/install-make.md)** · **[Install w
 | [Eval Hub](docs/evalhub.md) | TrustyAI evaluation harness (EvalHub + MLflow + DSPA) — opt-in |
 | [Configuration](docs/configuration.md) | `.env` reference: pull-secret modes, node sizing, models, repo/branch selection |
 | [Uninstall](docs/uninstall.md) | Remove RHOAI, MaaS, observability, Eval Hub |
-| [Workarounds](docs/known-issues.md) | Canonical index of local workarounds for upstream/nightly bugs — what, why, and when to remove |
+| [Known issues](docs/known-issues.md) | RHOAI product issues found by this deployment — what users will see, upstream status, what to do |
+| [Workarounds](docs/workarounds.md) | Developer doc: workarounds this repo carries, GitOps accommodations, install remedies |
 
 Working on the repo internals? See [CLAUDE.md](CLAUDE.md) for architecture and GitOps patterns.
 

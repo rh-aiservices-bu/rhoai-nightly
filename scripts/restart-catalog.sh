@@ -18,7 +18,7 @@
 # The pod bounce alone is sufficient when the version is unchanged. Override
 # with --force-resub.
 #
-# See docs/known-issues.md §A6 for the empirical failure this guards
+# See docs/workarounds.md §A6 for the empirical failure this guards
 # against (cluster-hm2fl 2026-04-20).
 #
 # Usage:

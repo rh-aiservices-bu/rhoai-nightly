@@ -35,6 +35,23 @@
   data-plane regression isn't masked by a metadata bug.
 - **Remove when:** `MaaSModelRef.status.endpoint` reports the path-based URL.
 
+## Steps to reproduce
+
+1. RHOAI 3.5.0 nightly with MaaS enabled (DSC `modelsAsService: Managed`),
+   Gateway `maas-default-gateway` in `openshift-ingress`.
+2. Deploy any `LLMInferenceService` + `MaaSModelRef` (e.g. the kserve
+   simulator model); wait for `MaaSModelRef` Ready.
+3. `oc get maasmodelref <model> -n <ns> -o jsonpath='{.status.endpoint}'` →
+   bare `https://maas.<domain>/` with no path.
+4. Create an API key, `GET /maas-api/v1/models` → the model's `url` is the
+   same bare base.
+5. POST a chat completion to `<url>/v1/chat/completions` (as any client
+   trusting the catalog would) → **404**. The same request against
+   `https://maas.<domain>/<ns>/<model>/v1/chat/completions` → **200**.
+
+Reproduced on three clusters (2026-07-29 nightly, 2026-07-30 and 2026-07-31
+GA-track builds).
+
 ---
 
 ## Filing draft (RHOAIENG)

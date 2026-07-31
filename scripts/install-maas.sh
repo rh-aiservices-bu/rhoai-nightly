@@ -332,18 +332,30 @@ else
     log_warn "maas-api deployment not found after ${TIMEOUT}s. The operator may still be reconciling."
 fi
 
-# Kuadrant stale-provider guard (docs/known-issues.md §E1).
+# Kuadrant stale-provider guard (docs/workarounds.md §E1).
 # On a fresh install the kuadrant-operator routinely starts BEFORE the DSC has
 # created istiod, caches "Gateway API provider is not installed", and never
 # re-checks — every AuthPolicy stays Accepted=False, zero AuthConfigs exist,
 # and API-key creation fails with AUTH_FAILURE while all infra looks healthy.
 # The operator's own condition message says to restart it; do that here so
 # installs don't need the manual E1 step. (Hit on every fresh cluster so far:
-# r8mf7 2026-07-29, fzgjg 2026-07-30.)
-AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
+# r8mf7 2026-07-29, fzgjg 2026-07-30, tm9xb 2026-07-31.)
+#
+# The AuthPolicy's status can lag its creation by minutes on a fresh install
+# (tm9xb: guard read an EMPTY condition, skipped, and the AUTH_FAILURE showed
+# up in maas-verify later) — so first wait up to 120s for the Accepted
+# condition to be written at all before deciding.
+AP_WAIT=0
+while [ $AP_WAIT -lt 120 ]; do
+    AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
+    [ -n "$AP_ACCEPTED" ] && break
+    sleep 10
+    AP_WAIT=$((AP_WAIT + 10))
+done
+[ -z "$AP_ACCEPTED" ] && log_warn "AuthPolicy maas-gateway-auth has no Accepted condition after ${AP_WAIT}s — cannot evaluate §E1 guard"
 AP_MSG=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].message}' 2>/dev/null || echo "")
 if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant Operator"; then
-    log_warn "Kuadrant operator cached a missing Gateway API provider — restarting it (known-issues §E1)"
+    log_warn "Kuadrant operator cached a missing Gateway API provider — restarting it (workarounds.md §E1)"
     # NB: `oc delete pod -l <selector>` exits 0 even when the selector matches
     # nothing, so an `||` chain would never reach the fallback. Check the
     # deleted-names output instead. (Do NOT widen the selector to bare
@@ -366,7 +378,7 @@ if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant O
         sleep 10
         K_ELAPSED=$((K_ELAPSED + 10))
     done
-    [ "$AP_ACCEPTED" != "True" ] && log_warn "AuthPolicy still not Accepted after restart — see docs/known-issues.md §E1"
+    [ "$AP_ACCEPTED" != "True" ] && log_warn "AuthPolicy still not Accepted after restart — see docs/workarounds.md §E1"
 fi
 
 # Check Gateway status

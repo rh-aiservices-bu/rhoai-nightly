@@ -18,8 +18,8 @@ This is not hypothetical. On 2026-07-29 a full install finished with
 `make diagnose` reporting *"35 passed, 0 failures — Cluster is fully operational"*
 while the RHOAI dashboard was returning **503** and its gateway pod had been
 **OOMKilled 13 times**. The script simply had no check that looked there. Six
-distinct real problems were found that day (now `docs/known-issues.md` §A9, §A10,
-§D2a–c, §E1); **none** of them was found by the script.
+distinct real problems were found that day (some since fixed upstream and removed; the rest now in `docs/workarounds.md` and
+`docs/issues/`); **none** of them was found by the script.
 
 The script is a regression suite for problems we already know about. It cannot
 find the next one. On a nightly build, the next one is the normal case — so
@@ -92,7 +92,7 @@ oc get pods -A -o json | jq -r '.items[] | . as $p | (.status.containerStatuses/
 ```
 
 OOMKilled is the most common failure mode in this stack (two separate
-`docs/known-issues.md` entries exist for it) and it is **invisible in the STATUS
+`docs/workarounds.md` entries exist for it — A1/A2) and it is **invisible in the STATUS
 column** once the container restarts successfully. Check it explicitly.
 
 **3c. Do the CR conditions agree with reality?**
@@ -120,19 +120,18 @@ alone. The gateway OOM on 2026-07-29 was only explained by its envoy logs
 
 Before debugging from scratch, check whether it is already known:
 
-`docs/known-issues.md` is the canonical index of **both** the workarounds this
-repo carries and the things that are known-broken with no fix. Most entries have
-a **Detection** command — run it rather than re-deriving the diagnosis:
+`docs/workarounds.md` (developer doc) indexes the workarounds this repo
+carries (A), structural accommodations (B), operational warnings (C),
+install-time remedies (E), and this repo's own script defects (F). Most
+entries have a **Detection** command — run it rather than re-deriving the
+diagnosis. `docs/known-issues.md` is the product-facing list of open RHOAI
+bugs — if the symptom is there, it's genuinely broken upstream: nothing to
+repair, don't burn an afternoon on it. `docs/issues/` holds the full
+per-issue analyses.
 
-- **A–C** — we work around it. If one regresses, the workaround stopped working.
-- **D** — genuinely broken upstream, no fix. Nothing to repair; don't burn an
-  afternoon on it. (§D2a explains why `make maas-verify` reports 11/3 on a
-  perfectly working MaaS.)
-- **E** — install-time hazards with a one-command remedy. **§E1 (operators
-  caching a startup dependency probe) is the single most common install failure
-  in this stack** — check it early whenever a condition names a resource that
-  demonstrably exists.
-- **F** — defects in this repo's own scripts.
+**§E1 in workarounds.md (operators caching a startup dependency probe) is
+the single most common install failure in this stack** — check it early
+whenever a condition names a resource that demonstrably exists.
 
 ### Step 5: Recognise these failure patterns
 

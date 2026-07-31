@@ -84,7 +84,7 @@ mkdir -p $LOGDIR
 Every unexpected symptom during an install goes through this loop:
 
 1. **Capture** the symptom in `$LOGDIR/monitoring.log` with a timestamp and a pointer to the relevant phase log.
-2. **Open `docs/known-issues.md`** and either (a) cross-reference an existing entry or (b) add a new numbered entry with: symptom, detection commands, root cause, repo-side permanent fix, cluster-side temporary workaround (if any).
+2. **Open `docs/workarounds.md` + `docs/issues/`** and either (a) cross-reference an existing entry or (b) record the new one: product bug → `docs/issues/` (+ `docs/known-issues.md` if user-facing); carried fix → `docs/workarounds.md` with symptom, detection, root cause, remove-when.
 3. **Prefer code/script/YAML changes in the repo over hand-patching the cluster.** The repo fix is what makes the install reproducible. If a cluster patch is strictly needed to unblock progress (rare), apply it but ALSO land the permanent repo fix in the same session and re-sync.
 4. **After the fix**: re-run the failing phase. If the fix required a commit+push, ensure ArgoCD picks it up (`make refresh-apps` or `oc annotate ... refresh=hard`).
 
@@ -219,7 +219,7 @@ oc get csv -A --no-headers | grep -v Succeeded
 
 Report progress as apps transition Unknown → Progressing → Healthy.
 
-Known gotcha (reference `docs/known-issues.md` §A6): if the `:rhoai-3.4-nightly` catalog image is broken upstream, the rhods-operator will CrashLoopBackOff. The branch currently pins to `:rhoai-3.4` as a workaround. If you still see CrashLoops, run `scripts/restart-catalog.sh` (which bounces pods AND deletes the Subscription so OLM re-resolves).
+Known gotcha (reference `docs/workarounds.md` §A6): if the `:rhoai-3.4-nightly` catalog image is broken upstream, the rhods-operator will CrashLoopBackOff. The branch currently pins to `:rhoai-3.4` as a workaround. If you still see CrashLoops, run `scripts/restart-catalog.sh` (which bounces pods AND deletes the Subscription so OLM re-resolves).
 
 Verify: all apps Synced + Healthy; `oc get csv -A | grep -v Succeeded` empty or only transient.
 
@@ -288,7 +288,7 @@ Expected end-state:
 - If Phase 11 ran: Perses CR present with Service on :8080 in redhat-ods-monitoring
 - Masters steady-state < 75% memory (< 60% on a cluster larger than m6a.2xlarge)
 
-If any check fails, run the Problem Tracking loop — update `docs/known-issues.md` with symptom + root cause + repo-side fix, not just a cluster-side patch.
+If any check fails, run the Problem Tracking loop — update `docs/issues/`/`docs/workarounds.md` with symptom + root cause + repo-side fix, not just a cluster-side patch.
 
 ### Final Report
 
@@ -301,7 +301,7 @@ Summarize:
 - MaaS status (skipped / installed / which models deployed / maas-verify result)
 - Observability status (skipped / installed / settle-gate verdict / dashboard backend ready)
 - Phases skipped (and why)
-- **Problems encountered** (with pointers to `docs/known-issues.md` entries and the commits that landed repo-side fixes)
+- **Problems encountered** (with pointers to `docs/issues/`/`docs/workarounds.md` entries and the commits that landed repo-side fixes)
 - Log directory path for the whole run
 
 If this run was a test of a feature branch, remind the user the branch still needs to be reviewed/merged before it's available to others; ephemeral test-pointing isn't persistent.

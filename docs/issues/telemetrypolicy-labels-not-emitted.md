@@ -1,10 +1,18 @@
-# TelemetryPolicy labels with fully resolvable sources are never emitted on data-plane metrics (RHCL 1.4.1)
+# TelemetryPolicy labels with fully resolvable sources are never emitted on data-plane metrics (RHCL 1.4.1, 1.4.2)
 
 **Jira: NOT FILED** — filing target: CONNLINK (RHCL), wasm-shim. This file is the ready-to-file draft.
 
+> Re-verified 2026-08-01 on **RHCL 1.4.2** (fresh 3.5.0 install, cluster-tm9xb):
+> `kuadrant_allowed` in UWM carries only infra labels 80+ min after the policy
+> Accepted+Enforced, with the label config demonstrably present in the
+> `kuadrant-maas-default-gateway` EnvoyFilter and inference traffic flowing.
+> (Config propagation itself works on 1.4.2 — a label added to the policy
+> reached the EnvoyFilter within seconds — so this is squarely an emission
+> bug, not a propagation one.)
+
 ## Summary
 
-RHOAI 3.5.0 + RHCL 1.4.1: a Kuadrant `TelemetryPolicy` adding labels (`model`,
+RHOAI 3.5.0 + RHCL 1.4.1/1.4.2: a Kuadrant `TelemetryPolicy` adding labels (`model`,
 `user`, `subscription`) on the MaaS gateway reports **Accepted=True,
 Enforced=True**, and the labels are demonstrably present in the generated wasm
 PluginConfig — but data-plane metrics come out unlabelled: `kuadrant_allowed{}`
@@ -23,9 +31,9 @@ logged, labels still absent**. Either the wasm-shim never attaches the labels
 to the metrics it emits, or the emission path ignores the telemetry config
 entirely.
 
-## Reproduce
+## Steps to reproduce
 
-1. RHOAI 3.5.0 with MaaS, RHCL 1.4.1, UWM enabled.
+1. RHOAI 3.5.0 with MaaS, RHCL 1.4.1 or 1.4.2, UWM enabled.
 2. Apply a TelemetryPolicy on `maas-default-gateway` with e.g.
    `model: request.path` (trivially resolvable source).
 3. Fire authenticated inference traffic; wait 2 min.

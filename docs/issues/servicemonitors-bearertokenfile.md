@@ -66,6 +66,20 @@ reference, as was done for the identical Kueue case in RHOAIENG-19954
 (Closed/Done, rhoai-2.19) — this is the same bug pattern recurring in two more
 components.
 
+## Steps to reproduce
+
+1. OCP 4.20 with user-workload monitoring enabled
+   (`cluster-monitoring-config` ConfigMap, `enableUserWorkload: true`).
+2. Install RHOAI 3.5.0 nightly; create a default DataScienceCluster with
+   kserve Managed. Wait for DSC Ready.
+3. Run:
+   ```bash
+   oc get events -n redhat-ods-applications \
+     --field-selector type=Warning,reason=InvalidConfiguration
+   ```
+   Both ServiceMonitors are rejected with the bearer-token-file message,
+   recurring on every prometheus-operator sync.
+
 ## Detection
 
 The InvalidConfiguration events above; or absence of

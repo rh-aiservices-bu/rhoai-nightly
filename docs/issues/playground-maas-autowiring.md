@@ -19,6 +19,24 @@ declarative fix is the *auto-wired* MaaS path; you can sidestep it entirely.
 > OGXServer `VLLM_API_TOKEN_1`, restart the pod) verified working: 951ms
 > round-trip through the playground.
 
+## Steps to reproduce
+
+1. RHOAI 3.5.0 with MaaS enabled and a MaaS model deployed
+   (`MaaSModelRef` Ready, model listed in the Gen AI Studio picker).
+2. In any project, create a **Gen AI Studio playground**; select the MaaS
+   model when prompted (the install flow requires your user token here).
+3. Wait for the playground pod (`lsd-genai-playground`) to run; open the chat
+   and send any message.
+4. → "Server error"; pod log shows `Provider SDK error during response
+   generation ... Error code: 404`.
+5. Inspect the generated config:
+   `oc get cm llama-stack-config -n <project> -o jsonpath='{.data.config\.yaml}'`
+   → `api_token: ${env.VLLM_API_TOKEN_1:=fake}`, `base_url: https://maas.<domain>/v1`
+   (bare base), and the model entry has no `provider_model_id`.
+
+Reproduced on ea.2 (2026-07-29, cluster-r8mf7) and 3.5.0 GA-track
+(2026-07-31, cluster-fzgjg).
+
 The playground registers a MaaS model as a LlamaStack provider by generating a
 `run.yaml` into ConfigMap `llama-stack-config` (owned by
 `OGXServer/lsd-genai-playground`) plus env vars on the OGXServer CR. **Three
@@ -64,6 +82,86 @@ Symptoms in order, as you fix each:
 - **#3** — the generator emits `provider_model_id` for the sentence-transformers
   embedding model in the very same file, but omits it for MaaS models. An
   oversight, not a design choice.
+
+---
+
+## Workaround A — register the model as a custom AI asset endpoint (durable, supported)
+
+> **Verification status:** documented from the BFF source
+> (`ExternalModelRequest` create path); **not yet live-tested** — verify on
+> the next playground session before recommending to users. Workaround B
+> below is the live-verified one (r8mf7 2026-07-29, fzgjg 2026-07-31).
+
+Gen AI studio → **AI asset endpoints** → add a custom model endpoint. The create
+API (`ExternalModelRequest`) takes exactly the three fields that are broken:
+
+```
+model_id     -> gpt-oss-20b                                  (fixes #3)
+base_url     -> https://maas.apps.<domain>/llm/<model>/v1    (fixes #2)
+secret_value -> a real MaaS API key                          (fixes #1)
+```
+
+The key is stored in a project Secret and read via
+`Config.CustomGenAI.APIKey.SecretRef`, not the `"fake"` default path. Because the
+config lives in the project's `gen-ai-aa-custom-model-endpoints` ConfigMap rather
+than the regenerated `llama-stack-config`, **this survives playground recreate.**
+
+Mint the key with:
+```bash
+MAAS=https://maas.apps.<cluster-domain>
+curl -sk -X POST "$MAAS/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $(oc whoami -t)" -H 'Content-Type: application/json' \
+  -d '{"name":"playground","subscription":"<model>-free"}' | jq -r .key
+```
+
+Trade-off: the model is registered as a generic external endpoint, so you lose the
+MaaS-native integration — no subscription/tier selector, and usage may not be
+attributed to a MaaS subscription. Use Workaround B if you are specifically
+testing MaaS tiering.
+
+## Workaround B — patch the generated config in place (MaaS-native path; lost on playground recreate)
+
+All three patches, verified end-to-end on cluster-r8mf7 (2026-07-29) and
+re-verified on fzgjg 3.5.0 GA (2026-07-31, 951ms round-trip):
+
+```bash
+NS=chase-dev; LSD=lsd-genai-playground; MODEL=gpt-oss-20b
+MAAS=https://maas.apps.<cluster-domain>
+
+# (1) real key into the OGXServer CR env (survives pod restarts)
+KEY=$(curl -sk -X POST "$MAAS/maas-api/v1/api-keys" \
+      -H "Authorization: Bearer $(oc whoami -t)" -H 'Content-Type: application/json' \
+      -d "{\"name\":\"playground\",\"subscription\":\"${MODEL}-free\"}" | jq -r .key)
+IDX=$(oc get ogxserver $LSD -n $NS -o json \
+      | jq -r 'paths(objects) as $p | select(getpath($p).name? == "VLLM_API_TOKEN_1") | ($p|join("."))' \
+      | awk -F. '{print $NF}')
+oc patch ogxserver $LSD -n $NS --type=json \
+  -p "[{\"op\":\"replace\",\"path\":\"/spec/workload/overrides/env/$IDX/value\",\"value\":\"$KEY\"}]"
+
+# (2)+(3) base_url and provider_model_id in the generated run.yaml.
+# NOTE: perl, not sed -- BSD/macOS sed handles the append form differently.
+NEW=$(oc get cm llama-stack-config -n $NS -o jsonpath='{.data.config\.yaml}' \
+  | perl -pe "s{^(      base_url: https://maas\.apps\.[^/]+)/v1\$}{\$1/llm/$MODEL/v1}" \
+  | perl -pe "s{^(    model_id: publishers/llm/models/$MODEL)\$}{\$1\n    provider_model_id: $MODEL}")
+oc get cm llama-stack-config -n $NS -o json | jq --arg new "$NEW" '{data:{"config.yaml":$new}}' > /tmp/lsd.json
+oc patch cm llama-stack-config -n $NS --type=merge --patch-file /tmp/lsd.json
+
+oc delete pod -n $NS -l app=ogx     # required: config is read at startup
+```
+
+Verify (in-pod, avoids the gateway):
+```bash
+POD=$(oc get pods -n $NS --no-headers | grep '^lsd-genai-playground' | awk '{print $1}')
+oc exec -n $NS $POD -- curl -s -X POST http://localhost:8321/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"maas-vllm-inference-1/publishers/llm/models/'"$MODEL"'","messages":[{"role":"user","content":"say OK"}],"max_tokens":10}'
+# expect HTTP 200 with a completion
+```
+
+`llama-stack-config` is owned by the OGXServer; the operator may regenerate it
+at any reconcile, and deleting/recreating the playground restores all three
+defects. Known limitation: the UI's subscription/tier selector does not take
+effect under Workaround B — the static provider token wins.
 
 ---
 

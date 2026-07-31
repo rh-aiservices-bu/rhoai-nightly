@@ -339,7 +339,11 @@ done
 ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
     TOTAL_PODS=$(oc get pods -n llm --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    NOT_RUNNING=$(oc get pods -n llm --no-headers 2>/dev/null | grep -v "Running" | grep -v "Completed" | wc -l | tr -d ' ')
+    # awk instead of grep -v: under `set -o pipefail` grep exits 1 when it
+    # filters every line (i.e., the moment all pods are Running), killing the
+    # script mid-loop via `set -e`. awk always exits 0. `|| true` guards a
+    # transient oc/API failure the same way. (Bit us on cluster-fzgjg 2026-07-30.)
+    NOT_RUNNING=$(oc get pods -n llm --no-headers 2>/dev/null | awk '$3 != "Running" && $3 != "Completed"' | wc -l | tr -d ' ' || true)
     READY_PODS=$((TOTAL_PODS - NOT_RUNNING))
 
     if [ "$TOTAL_PODS" -ge 1 ] && [ "$NOT_RUNNING" = "0" ]; then
@@ -364,7 +368,9 @@ TIMEOUT=120
 ELAPSED=0
 while [ $ELAPSED -lt $TIMEOUT ]; do
     TOTAL_REFS=$(oc get maasmodelref -n llm --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    READY_REFS=$(oc get maasmodelref -n llm --no-headers 2>/dev/null | grep -c "Ready" || echo "0")
+    # grep -c prints "0" AND exits 1 on no-match, so `|| echo 0` used to append
+    # a second zero ("0\n0") — awk sidesteps both that and the pipefail hazard.
+    READY_REFS=$(oc get maasmodelref -n llm --no-headers 2>/dev/null | awk '/Ready/{n++} END{print n+0}' || true)
     READY_REFS=$(echo "$READY_REFS" | tr -d '[:space:]')
 
     if [ "$TOTAL_REFS" -ge 1 ] && [ "$READY_REFS" = "$TOTAL_REFS" ]; then

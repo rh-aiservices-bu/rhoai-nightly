@@ -484,6 +484,21 @@ if [ -n "$API_KEY" ] && [ "$API_KEY" != "null" ]; then
         log_pass "MaaS catalog lists $MODEL_COUNT model(s) (first: $FIRST_MODEL_ID)"
         # Use the listed model name for inference (may differ from resource name)
         INFERENCE_MODEL="$FIRST_MODEL_ID"
+        # D2a hardening (docs/known-issues.md §D2a): on 3.5.0 the catalog url is
+        # the BARE gateway base (path "/"), so every test built from it 404s
+        # before auth/rate-limit is reached — verify then reports 11/3 on a
+        # perfectly working MaaS. When the advertised url has no path, fall back
+        # to the path-based route and WARN naming the bug, so a genuine
+        # data-plane regression isn't masked by a metadata bug.
+        URL_PATH=$(echo "$MODEL_URL" | sed -E 's|^https?://[^/]+||')
+        if [ -z "$URL_PATH" ] || [ "$URL_PATH" = "/" ]; then
+            log_warn "Catalog url is the bare gateway base ('$MODEL_URL') — known-issues §D2a. Falling back to path-based ${HOST}/${MODEL_NS}/${MODEL_NAME}"
+            MODEL_URL="${HOST}/${MODEL_NS}/${MODEL_NAME}"
+            # The catalog id may also be the publishers/... form; inference needs
+            # the served model name from the LLMInferenceService spec.
+            SPEC_MODEL=$(oc get llminferenceservice "$MODEL_NAME" -n "$MODEL_NS" -o jsonpath='{.spec.model.name}' 2>/dev/null || echo "")
+            [ -n "$SPEC_MODEL" ] && INFERENCE_MODEL="$SPEC_MODEL"
+        fi
     else
         # An empty /maas-api/v1/models with a Ready MaaSModelRef is a REAL failure,
         # not a cosmetic one: the dashboard/Gen AI Studio populates each project's

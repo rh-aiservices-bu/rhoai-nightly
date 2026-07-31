@@ -12,8 +12,22 @@ data:
   # Deployment. We use it solely to raise the istio-proxy (envoy) memory limit
   # from istio's 1Gi default to 2Gi — the default OOMKills (CrashLoopBackOff)
   # once Kuadrant programs its wasm enforcement config onto this gateway.
-  # NOTE: intentionally no `service` key here, so the Gateway's Service stays the
-  # default LoadBalancer (route/ELB) ingress this cluster relies on.
+  #
+  # The `service` value is merged into the generated Service the same way.
+  # metadata.annotations ONLY — no spec.type key, so the Service stays the
+  # default LoadBalancer. The cross-zone annotation works around the AWS
+  # classic ELB the cloud provider builds for an annotation-less Service:
+  # cross-zone balancing is off by default, and the ELB can enroll an AZ
+  # that holds no cluster instances — that AZ's LB IP then black-holes TLS
+  # and ~half of external requests hang (observed tm9xb 2026-07-31: one of
+  # two ELB IPs timed out for 30+ min; annotation fixed it instantly).
+  # See docs/issues/gateway-elb-crosszone-blackhole.md. Remove the service
+  # key when the openshift gateway controller provisions LBs that serve
+  # from every enrolled AZ by default.
+  service: |
+    metadata:
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
   deployment: |
     spec:
       template:

@@ -12,7 +12,12 @@ This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.x
 
 **Key Principle**: This repository uses a declarative GitOps model where components are deployed by committing Kustomize configurations to git, which ArgoCD automatically syncs to the cluster.
 
-**Workarounds**: Because this tracks nightly builds, the repo carries local workarounds for upstream/OLM/version-skew bugs. The canonical index — what each is, why it exists, whether it's in-repo or manual cluster-state, and when to remove it — is [docs/known-issues.md](docs/known-issues.md). Update it whenever you add or retire a workaround.
+**Mission — surface bugs, don't paper over them**: A primary purpose of this repository is to exercise RHOAI nightlies early and **surface product bugs so they get fixed upstream before release**. The deliverable is the bug report, not the workaround. Consequences:
+
+- [docs/issues/](docs/issues/) is the bug ledger — one file per upstream issue with symptom, root cause, detection, and Jira. **Every issue gets filed upstream** (files carry ready-to-file drafts until they are); an issue we found but never filed is a failure of the mission.
+- **Workarounds are a last resort**, accepted only when the rig cannot function or keep testing without one. Never build a workaround for a bug that merely degrades UX — document it, file it, and let it hurt; the pain is the signal that gets it fixed. Each workaround we do carry must be **Temporary** with a Jira and a "remove when" condition, indexed in [docs/known-issues.md](docs/known-issues.md).
+- **Remove workarounds aggressively**: as soon as a nightly contains the upstream fix (verify with the entry's Detection command), delete ours. A redundant workaround hides regressions of the very bug it covered.
+- When a bug appears, the order of work is: root-cause → file/comment upstream (docs/issues entry) → only then decide if a workaround is truly required to keep testing.
 
 ## Repository Structure
 
@@ -1069,6 +1074,7 @@ oc get mcp  # MachineConfigPool status
 - **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `enable-uwm.sh`, and `restart-catalog.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative. `install-maas.sh`, `install-observability.sh`, and `install-evalhub.sh` are independent; none invokes another.
 - After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets/Authorino)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
+- **Bugs are the product**: when you hit an upstream bug, the priority is root-cause + a `docs/issues/` entry (with a filing draft) — NOT inventing a workaround. Propose a workaround only if testing is blocked without it, and give it a Jira + remove-when condition
 - **Never commit secrets** - this is a public repository
 - All file paths should be **absolute** when referencing in responses
 - When suggesting changes, show both the **file content** and the **git workflow** to apply it

@@ -344,9 +344,21 @@ AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpa
 AP_MSG=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].message}' 2>/dev/null || echo "")
 if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant Operator"; then
     log_warn "Kuadrant operator cached a missing Gateway API provider — restarting it (known-issues §E1)"
-    oc delete pod -n openshift-operators -l control-plane=controller-manager,app=kuadrant 2>/dev/null \
-        || oc delete pod -n openshift-operators "$(oc get pods -n openshift-operators -o name 2>/dev/null | grep kuadrant-operator-controller-manager | head -1 | cut -d/ -f2)" 2>/dev/null \
-        || log_warn "Could not restart kuadrant-operator pod automatically"
+    # NB: `oc delete pod -l <selector>` exits 0 even when the selector matches
+    # nothing, so an `||` chain would never reach the fallback. Check the
+    # deleted-names output instead. (Do NOT widen the selector to bare
+    # control-plane=controller-manager — that matches several unrelated
+    # operators in openshift-operators.)
+    # (grep for pod/ names: some oc versions print "No resources found" on stdout)
+    KDELETED=$(oc delete pod -n openshift-operators -l control-plane=controller-manager,app=kuadrant -o name 2>/dev/null | grep '^pod/' || true)
+    if [ -z "$KDELETED" ]; then
+        KPOD=$(oc get pods -n openshift-operators -o name 2>/dev/null | grep kuadrant-operator-controller-manager | head -1 | cut -d/ -f2 || true)
+        if [ -n "$KPOD" ]; then
+            oc delete pod -n openshift-operators "$KPOD" 2>/dev/null || log_warn "Could not restart kuadrant-operator pod automatically"
+        else
+            log_warn "Could not find a kuadrant-operator pod to restart"
+        fi
+    fi
     K_ELAPSED=0
     while [ $K_ELAPSED -lt 180 ]; do
         AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")

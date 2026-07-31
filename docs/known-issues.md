@@ -241,7 +241,14 @@ These fix an active bug or version mismatch. Remove each only when its
 - **Remove when:** the operator build stops waiting for the legacy Tenant CR
   (DSC goes Ready=True with MaaS Managed).
 
-### A9. feast-operator — grant `get` on `apiservers.config.openshift.io`
+### A9. feast-operator — grant `apiservers.config.openshift.io` AND `notebooks.kubeflow.org`
+
+> This entry covers TWO RBAC gaps in the same file/ClusterRole. The
+> apiservers gap is fixed upstream ([RHOAIENG-79331](https://redhat.atlassian.net/browse/RHOAIENG-79331),
+> live-verified on 3.5.0); the notebooks gap (found 2026-07-31 on 3.5.0 GA,
+> [docs/issues/feast-operator-notebooks-rbac.md](issues/feast-operator-notebooks-rbac.md),
+> not yet filed) is NOT — so do **not** remove this workaround until BOTH
+> remove-when conditions below hold.
 
 - **File:** `components/instances/rhoai-instance/base/feast-operator-apiserver-rbac.yaml`
 - **Symptom without it:** `DataScienceCluster` stuck `Ready=False` with
@@ -262,16 +269,30 @@ These fix an active bug or version mismatch. Remove each only when its
   ClusterRole (`feast-operator-manager-role`, `opendatahub-feast-manager-role`)
   grants `config.openshift.io/apiservers`. Does not self-heal — the RBAC comes
   from the operator bundle.
+- **Second gap (2026-07-31, 3.5.0 GA, cluster-fzgjg):** the same controller's
+  new Notebook ConfigMap controller watches `notebooks.kubeflow.org` with no
+  grant — `Unable to validate Notebook CRD (insufficient permissions)`, the
+  notebook cache group never syncs, manager exits → CrashLoopBackOff. The rule
+  exists in the feast manifests but the `odh-feast-module-operator` wrapper
+  drops it from the controller's ClusterRole. Full analysis + filing draft:
+  [docs/issues/feast-operator-notebooks-rbac.md](issues/feast-operator-notebooks-rbac.md).
 - **Fix:** a supplementary ClusterRole/Binding granting `get/list/watch` on
-  `apiservers`, bound to the `feast-operator-controller-manager` SA in
-  `redhat-ods-applications` (additive; RBAC rules union, so no fight with the
-  operator's reconcile).
-- **Status:** **Temporary** (operator CSV RBAC gap in the current nightly). In-repo.
-- **Detection:**
-  `oc auth can-i get apiservers.config.openshift.io --as=system:serviceaccount:redhat-ods-applications:feast-operator-controller-manager` → `no`, or
-  `oc get clusterrole feast-operator-manager-role -o json | jq '[.rules[]|select(.apiGroups[]?=="config.openshift.io")]|length'` → `0`.
-- **Remove when:** the operator CSV's feast ClusterRole includes
-  `config.openshift.io/apiservers get`.
+  BOTH `config.openshift.io/apiservers` and `kubeflow.org/notebooks`, bound to
+  the `feast-operator-controller-manager` SA in `redhat-ods-applications`
+  (additive; RBAC rules union, so no fight with the operator's reconcile).
+- **Status:** **Temporary**. In-repo. Apiservers half fixed upstream
+  (RHOAIENG-79331, in 3.5.0); notebooks half open and unfiled.
+- **Detection:** run BOTH —
+  `oc auth can-i get apiservers.config.openshift.io --as=system:serviceaccount:redhat-ods-applications:feast-operator-controller-manager`, and
+  `oc auth can-i list notebooks.kubeflow.org --as=system:serviceaccount:redhat-ods-applications:feast-operator-controller-manager`
+  (each must be `yes` from the operator's OWN roles for that half to be removable;
+  with our ClusterRole present both return `yes` — check the operator-shipped
+  `feast-operator-manager-role` rules instead when auditing).
+- **Remove when:** the operator-shipped controller ClusterRole includes BOTH
+  `config.openshift.io/apiservers get` (done in 3.5.0) AND
+  `kubeflow.org/notebooks get/list/watch` (not yet). The workaround stays until
+  the second condition holds; drop the apiservers rule alone if you want the
+  minimal form earlier.
 
 ### A10. gen-ai-ui — allow egress to LlamaStack on :8321
 
@@ -509,6 +530,7 @@ model looks healthy in the picker. Re-verified on 3.5.0 GA. **Workaround A**
 regenerates on recreate/"Update configuration") are both documented, with the
 full defect analysis and Jira status, in
 [docs/issues/playground-maas-autowiring.md](issues/playground-maas-autowiring.md).
+
 ---
 
 **Workaround A — register it as a custom endpoint (durable, supported, RECOMMENDED).**

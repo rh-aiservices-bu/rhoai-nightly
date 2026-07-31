@@ -1,19 +1,31 @@
 # Known Issues, Workarounds & Local Overrides
 
-This repo deploys **RHOAI nightly** builds, so it routinely hits upstream bugs,
-version skews, and OLM/GitOps quirks that a stable release wouldn't. Some we work
-around; some we simply live with. **This file is the canonical index of both.**
+This repo deploys **RHOAI nightly** builds. Its mission is to **surface product
+bugs early so they get fixed upstream before release** — the deliverable is the
+bug report ([docs/issues/](issues/README.md)), not the workaround. Accordingly,
+we carry the **absolute minimum of workarounds**:
+
+- A workaround is justified only when the rig **cannot function or keep
+  testing** without it (install blocked, data plane down, DSC never Ready).
+- Bugs that merely degrade UX get documented and **filed**, not patched —
+  visible pain upstream is what gets them scheduled.
+- Every workaround is **Temporary**: it must reference its upstream Jira and a
+  "remove when" condition, and gets **removed as soon as a nightly ships the
+  fix** (verified via its Detection command). A redundant workaround hides
+  regressions of the very bug it covered.
 
 Two kinds of entry live here, and the distinction matters when you're debugging:
 
 1. **Things we work around** (sections A–C) — a fix exists in this repo, or as
-   manual cluster state. If one of these regresses, the workaround stopped
-   working; go read it.
-2. **Things that are just broken** (sections D–F) — no fix, or no *declarative*
-   fix. If you hit one of these, you are not doing anything wrong and there is
-   nothing to repair. Knowing that up front saves the afternoon.
+   manual cluster state, because testing was blocked without it. If one of
+   these regresses, the workaround stopped working; go read it.
+2. **Things that are just broken** (sections D–F) — no fix, or none we're
+   willing to carry. If you hit one of these, you are not doing anything wrong
+   and there is nothing to repair. Knowing that up front saves the afternoon.
 
-When you add or retire either kind, update this file.
+When you add or retire either kind, update this file — and when you *find* an
+upstream bug, the order of work is: root-cause → `docs/issues/` entry → file
+upstream → only then ask whether a workaround is genuinely required.
 
 > **Scope note:** section E covers install-time failures that look alarming but
 > have a known one-command remedy — most of them are operators caching a
@@ -42,6 +54,13 @@ Legend:
 > per-item below.
 
 ---
+
+## Upstream issue index
+
+Upstream OpenShift AI product issues we have hit — each with its Jira (or a
+ready-to-file draft) — live in [docs/issues/](issues/README.md), including the
+full Jira sweep table (2026-07-31) and per-branch source verification of every
+"fixed" claim. This document is centered on the workarounds this repo carries.
 
 ## A. Load-bearing bug / version-skew workarounds
 
@@ -411,6 +430,11 @@ genuinely stuck and may warrant filing/escalation.
   MaaS catalog non-empty but playground empty; `oc get datasciencecluster
   default-dsc -o jsonpath='{range .status.conditions[*]}{.type}={.status}{"\n"}{end}'`
   shows `AIGatewayReady` and no `ModelsAsServiceReady`.
+- **MaaS 3.5.0-ea.2: HTTP/2 responses never close — every H2 client hangs**
+  **until its read-timeout.** Fixed in `rhods-operator.3.5.0` (payload image
+  `84cee292`); no fix exists within the ea.2 line — the remedy is the in-place
+  channel upgrade. Full analysis, detection, and fix lineage:
+  [docs/issues/maas-payload-h2-endstream-hang.md](issues/maas-payload-h2-endstream-hang.md).
 
 ### D2. Unfixed — no upstream fix (manual remedy or genuinely stuck)
 
@@ -462,115 +486,29 @@ genuinely stuck and may warrant filing/escalation.
 
 ### D2a. MaaS catalog advertises the bare gateway base as the model URL
 
-- **Symptom:** `make maas-verify` reports **11 passed / 3 failed** — inference
-  404, unauthenticated 404 (expected 401/403), and "No 429 responses". All three
-  are the *same* bug: the test URL is wrong, so every request 404s before auth or
-  rate limiting is reached. Reproduces on repeated runs; not timing.
-- **Detection:**
-  ```bash
-  oc get maasmodelref <model> -n llm -o jsonpath='{.status.endpoint}{"\n"}'
-  # https://maas.apps.<domain>/           <- bare base, WRONG
-  curl -sk "$MAAS/maas-api/v1/models" -H "Authorization: Bearer $KEY" | jq '.data[0]|{id,url}'
-  # url is the same bare base; expected https://maas.apps.<domain>/llm/<model>
-  ```
-- **Root cause (3.5.0 nightly, 2026-07-29):** maas-controller sets
-  `MaaSModelRef.status.endpoint` to the BBR base (`/`) instead of the path-based
-  `/<ns>/<model>`; maas-api echoes it as the catalog `url`. This is the
-  pre-#1142 BBR-endpoint bug resurfacing in a *new* variant — the catalog is
-  **populated** here (discovery worked), only the `url` field is wrong, so the
-  empty-catalog guard in `verify-maas.sh` does not trigger.
-- **The data plane is NOT broken.** Verified against the correct path:
-  inference 200, no-auth 401, invalid token 403, and 5 rapid free-tier requests
-  gave `200 200 429 429 429`. Auth and rate limiting both work.
-- **Blast radius:** anything that trusts the catalog `url` builds a 404 — which
-  is how this reaches the Gen AI playground (see D2c; the LlamaStack provider
-  `base_url` is derived from it via `ensureVLLMCompatibleURL`).
-- **Fix:** none available — maas-controller/maas-api behavior. Optional
-  hardening: make `verify-maas.sh` fall back to `${HOST}/${NS}/${MODEL}` when
-  `.data[0].url` has an empty path, and WARN naming this bug, so a genuine
-  data-plane regression isn't masked by a metadata bug.
-- **Remove when:** `MaaSModelRef.status.endpoint` reports the path-based URL.
-
+`MaaSModelRef.status.endpoint` / catalog `url` is `https://maas.<domain>/`
+instead of the per-model path — everything that trusts the catalog 404s
+(including `make maas-verify` pre-`7b5f4f5`, which now falls back and WARNs,
+and the playground's generated `base_url`, see D2c). The data plane is fine at
+the real path URL. Detection, root cause, and blast radius:
+[docs/issues/maas-catalog-bare-model-url.md](issues/maas-catalog-bare-model-url.md).
 ### D2b. Two operator ServiceMonitors rejected by UWM (`bearerTokenFile`)
 
-- **Symptom:** none user-visible — `make diagnose` is green and the Observability
-  dashboard loads. But two components' metrics are silently never scraped.
-- **Detection:**
-  ```bash
-  oc get events -n redhat-ods-applications --field-selector type=Warning,reason=InvalidConfiguration \
-    -o jsonpath='{range .items[*]}{.involvedObject.name}: {.message}{"\n"}{end}'
-  # controller-manager-metrics-monitor / odh-model-controller-metrics-monitor:
-  #   rejected due to invalid configuration: endpoints[0]: it accesses file system
-  #   via bearer token file which Prometheus specification prohibits
-  ```
-- **Root cause (3.5.0):** both ServiceMonitors set
-  `endpoints[0].bearerTokenFile`. The prometheus-operator backing OpenShift
-  user-workload monitoring prohibits filesystem token access for tenant workloads
-  and rejects the whole object. The modern equivalent is
-  `authorization.credentials` with a Secret reference.
-- **Owners (cannot be fixed in-repo):** `DataScienceCluster/default-dsc` and
-  `Kserve/default-kserve` — reconciled by the RHOAI operator, so a local patch is
-  reverted, and there is no DSC field to override them.
-- **Impact:** RHOAI controller-manager and odh-model-controller metrics are
-  absent from UWM. MaaS/gateway/vLLM metrics are unaffected (those come from the
-  Kuadrant monitors, `istio-gateway-metrics` and `kserve-llm-models`), so the
-  Observability dashboard still populates — but panels fed by these two
-  controllers stay empty. Easy to misread as "observability is broken".
-- **Diagnosis note:** invisible to resource-existence checks — the objects exist
-  and look correct; only Prometheus's rejection *event* reveals they are inert.
-- **Fix:** none available — upstream must switch to `authorization.credentials`.
-
+`controller-manager-metrics-monitor` and `odh-model-controller-metrics-monitor`
+use `bearerTokenFile`, which UWM prohibits — both are rejected and those
+controllers' metrics are silently never scraped. Operator-owned; not fixable
+in-repo. Detection and details:
+[docs/issues/servicemonitors-bearertokenfile.md](issues/servicemonitors-bearertokenfile.md).
 ### D2c. Playground auto-wiring of MaaS models is broken in THREE places
 
-**There is a supported workaround — see "Workaround A" below.** What has no
-declarative fix is the *auto-wired* MaaS path; you can sidestep it entirely.
-
-The playground registers a MaaS model as a LlamaStack provider by generating a
-`run.yaml` into ConfigMap `llama-stack-config` (owned by
-`OGXServer/lsd-genai-playground`) plus env vars on the OGXServer CR. **Three
-separate fields are wrong**, and each one masks the next — expect to "fix it" and
-find it still broken twice more:
-
-| # | Field | Generated value | Result |
-|---|---|---|---|
-| 1 | `api_token` (via `VLLM_API_TOKEN_<N>`) | `fake` | 401 listing models → **0 models registered** |
-| 2 | `base_url` | `https://maas.apps.<domain>/v1` | `/v1/models` 200 (!) but `/v1/chat/completions` **404** |
-| 3 | `provider_model_id` | *absent* | LlamaStack sends the catalog path; vLLM serves `gpt-oss-20b` → **404** |
-
-Symptoms in order, as you fix each:
-
-1. Playground shows *"You need at least one model"*; LlamaStack logs
-   `list_provider_model_ids() failed error=Error code: 401` +
-   `Model refresh skipped provider_id=maas-vllm-inference-<N>`.
-2. Model **appears** in the picker, chat returns **"Server error"**; LlamaStack logs
-   `Provider SDK error during response generation exc=Error code: 404`.
-   Defect 2 is especially deceptive: the bare base *does* serve `/v1/models`
-   (that is maas-api's catalog endpoint), so discovery succeeds and the config
-   looks correct.
-3. Chat still fails; vLLM replies
-   `The model 'publishers/llm/models/gpt-oss-20b' does not exist`.
-
-**Root causes** (`packages/gen-ai/bff/internal/integrations/kubernetes/token_k8s_client.go`):
-
-- **#1** — the credential lookup (~line 1519) resolves a model's token by finding an
-  `InferenceService`/`LLMInferenceService` **in the user's own project namespace**
-  and reading its ServiceAccount token secret. A MaaS model is in `llm`, is not
-  SA-token authenticated, and is not at a plain in-cluster URL — so the lookup
-  fails, and the env builder (~line 1596) falls to `else → Value: "fake"`.
-  `"fake"` is a deliberate sentinel for *"no credential configured"* (see also
-  `external_models.go:157`, `lsd_responses_handler.go:1301`) — harmless for an
-  unauthenticated in-cluster vLLM, fatal for a gateway that checks keys.
-  Note the irony: installing a MaaS model **requires** the user token (~line 1802,
-  `"user auth token is required to install MaaS models"`) and threads it into
-  `generateLlamaStackConfig`, which uses it only to *list* models via the MaaS BFF.
-  The token is present and then dropped.
-- **#2** — `endpointURL := ensureVLLMCompatibleURL(maasModel.URL)` takes the catalog's
-  `url` (the bare gateway base, see **§D2a**) and appends `/v1`. Fixing D2a upstream
-  fixes this one for free.
-- **#3** — the generator emits `provider_model_id` for the sentence-transformers
-  embedding model in the very same file, but omits it for MaaS models. An
-  oversight, not a design choice.
-
+Fresh playgrounds get `api_token: fake`, a bare-base `base_url` (from D2a),
+and no `provider_model_id` — first chat fails "Server error"/404 while the
+model looks healthy in the picker. Re-verified on 3.5.0 GA. **Workaround A**
+(register the model as an AI asset endpoint — durable, user-doable) and
+**Workaround B** (patch the generated config + real key — per-playground,
+regenerates on recreate/"Update configuration") are both documented, with the
+full defect analysis and Jira status, in
+[docs/issues/playground-maas-autowiring.md](issues/playground-maas-autowiring.md).
 ---
 
 **Workaround A — register it as a custom endpoint (durable, supported, RECOMMENDED).**

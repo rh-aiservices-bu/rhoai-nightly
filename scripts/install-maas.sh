@@ -332,6 +332,31 @@ else
     log_warn "maas-api deployment not found after ${TIMEOUT}s. The operator may still be reconciling."
 fi
 
+# Kuadrant stale-provider guard (docs/known-issues.md §E1).
+# On a fresh install the kuadrant-operator routinely starts BEFORE the DSC has
+# created istiod, caches "Gateway API provider is not installed", and never
+# re-checks — every AuthPolicy stays Accepted=False, zero AuthConfigs exist,
+# and API-key creation fails with AUTH_FAILURE while all infra looks healthy.
+# The operator's own condition message says to restart it; do that here so
+# installs don't need the manual E1 step. (Hit on every fresh cluster so far:
+# r8mf7 2026-07-29, fzgjg 2026-07-30.)
+AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
+AP_MSG=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].message}' 2>/dev/null || echo "")
+if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant Operator"; then
+    log_warn "Kuadrant operator cached a missing Gateway API provider — restarting it (known-issues §E1)"
+    oc delete pod -n openshift-operators -l control-plane=controller-manager,app=kuadrant 2>/dev/null \
+        || oc delete pod -n openshift-operators "$(oc get pods -n openshift-operators -o name 2>/dev/null | grep kuadrant-operator-controller-manager | head -1 | cut -d/ -f2)" 2>/dev/null \
+        || log_warn "Could not restart kuadrant-operator pod automatically"
+    K_ELAPSED=0
+    while [ $K_ELAPSED -lt 180 ]; do
+        AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
+        [ "$AP_ACCEPTED" = "True" ] && { log_info "AuthPolicy Accepted=True after kuadrant-operator restart"; break; }
+        sleep 10
+        K_ELAPSED=$((K_ELAPSED + 10))
+    done
+    [ "$AP_ACCEPTED" != "True" ] && log_warn "AuthPolicy still not Accepted after restart — see docs/known-issues.md §E1"
+fi
+
 # Check Gateway status
 GATEWAY_STATUS=$(oc get gateway maas-default-gateway -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || echo "Unknown")
 

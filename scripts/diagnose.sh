@@ -455,8 +455,16 @@ section "9. RHOAI"
 
 CATALOG_IMAGE=$(oc get catalogsource rhoai-catalog-nightly -n openshift-marketplace -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
 if [[ -n "$CATALOG_IMAGE" ]]; then
-    # Extract just the tag
-    CATALOG_TAG="${CATALOG_IMAGE##*:}"
+    # Extract the tag, or for a digest-pinned image the repo + short digest —
+    # "${CATALOG_IMAGE##*:}" alone turns an @sha256: pin into 64 hex characters
+    # and loses the version identification this line exists to give.
+    if [[ "$CATALOG_IMAGE" == *"@sha256:"* ]]; then
+        CATALOG_REPO="${CATALOG_IMAGE%@sha256:*}"      # quay.io/rhoai/rhoai-fbc-fragment
+        CATALOG_DIGEST="${CATALOG_IMAGE##*@sha256:}"
+        CATALOG_TAG="${CATALOG_REPO##*/}@sha256:${CATALOG_DIGEST:0:12} (digest-pinned)"
+    else
+        CATALOG_TAG="${CATALOG_IMAGE##*:}"
+    fi
     pass "Catalog" "$CATALOG_TAG"
 else
     info "Catalog" "Not configured"
@@ -491,8 +499,15 @@ if [[ -n "$DSC_PHASE" ]]; then
     if [[ "$DSC_PHASE" == "Ready" ]]; then
         pass "DSC" "Ready"
     else
-        # Check if Not Ready is just due to missing MaaS prereqs (expected before make maas)
-        MAAS_MSG=$(oc get datascienceclusters -o jsonpath='{.items[0].status.conditions[?(@.type=="ModelsAsServiceReady")].message}' 2>/dev/null || echo "")
+        # Check if Not Ready is just due to missing MaaS prereqs (expected before
+        # make maas). 3.5 renamed the condition ModelsAsServiceReady ->
+        # AIGatewayReady; check both so this keeps working across the ea.2/3.5.0
+        # split until every cluster is upgraded.
+        MAAS_MSG=""
+        for c in AIGatewayReady ModelsAsServiceReady; do
+            MAAS_MSG=$(oc get datascienceclusters -o jsonpath="{.items[0].status.conditions[?(@.type=='$c')].message}" 2>/dev/null || echo "")
+            [[ -n "$MAAS_MSG" ]] && break
+        done
         if echo "$MAAS_MSG" | grep -q "maas-db-config.*not found\|database Secret"; then
             info "DSC" "$DSC_PHASE (MaaS prereqs missing — run 'make maas' to fix)"
         else
@@ -707,7 +722,56 @@ if oc get crd perses.perses.dev &>/dev/null; then
         if [[ -n "$PERSES_SVC" ]]; then
             PERSES_PORT=$(oc get svc "$PERSES_NAME" -n redhat-ods-monitoring -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || echo "")
             if [[ "$PERSES_PORT" == "8080" ]]; then
-                pass "Perses Dashboard Backend" "$PERSES_NAME (operator-managed) Service reachable on port 8080 in redhat-ods-monitoring"
+                # A Service on :8080 is NOT proof the dashboard can use it. On
+                # 2026-08-04 (tm9xb) every server-side signal was green while the
+                # Observability page was 100% broken, two ways:
+                # Root cause is a SINGLE unset field: Dashboard.spec.observability.enabled
+                # defaults false and no rhods-operator path sets it, so the dashboard
+                # operator skips the whole manifests/observability/rhoai/ bundle. The
+                # missing dashboard-perses-access NetworkPolicy and the missing RHOAI
+                # PersesDashboards are consequences of that, not separate blockers, so
+                # the .enabled test must come first and the reachability test is only
+                # meaningful once it is true.
+                # See docs/issues/observability-dashboard-unreachable.md
+                #
+                # Test .enabled explicitly, not mere presence of the object: it is
+                # +kubebuilder:default=false, so once anything causes the object to
+                # materialize as {"enabled":false} a presence check reads non-empty and
+                # would blame the network path while the flag is still off.
+                DASH_OBS=$(oc get dashboard default-dashboard -o jsonpath='{.spec.observability.enabled}' 2>/dev/null || echo "")
+                DASH_POD=$(oc get pods -n redhat-ods-applications -l app=rhods-dashboard \
+                    --field-selector=status.phase=Running -o name 2>/dev/null | head -1 | sed 's|pod/||')
+                PERSES_REACH=""
+                if [[ -n "$DASH_POD" ]]; then
+                    # Capture curl's code and the exec status separately: on failure
+                    # curl -w already prints '000' with no newline, so a `|| echo 000`
+                    # fallback would concatenate into '000000'.
+                    PERSES_REACH=$(oc exec -n redhat-ods-applications "$DASH_POD" -c rhods-dashboard -- \
+                        curl -s -m 5 -o /dev/null -w '%{http_code}' \
+                        "http://${PERSES_NAME}.redhat-ods-monitoring.svc.cluster.local:8080/api/v1/dashboards" 2>/dev/null)
+                    PERSES_EXEC_RC=$?
+                    [[ -z "$PERSES_REACH" ]] && PERSES_REACH="000"
+                else
+                    PERSES_EXEC_RC=0
+                fi
+
+                if [[ "$DASH_OBS" != "true" ]]; then
+                    warn "Observability Dashboard" "Dashboard CR spec.observability.enabled is not true — the whole observability bundle (Perses proxy config, dashboard-perses-access NetworkPolicy, RHOAI PersesDashboards) is skipped; UI shows 'Unable to reach observability dashboards' (RHOAIENG-80354)"
+                elif [[ -z "$DASH_POD" ]]; then
+                    warn "Observability Dashboard" "No Running rhods-dashboard pod — cannot test the path to $PERSES_NAME"
+                elif [[ "$PERSES_REACH" != "200" ]]; then
+                    # Distinguish a real drop from an inability to run the probe:
+                    # diagnose.sh is otherwise read-only, so a non-admin run lands
+                    # here on missing pods/exec rather than on a network problem.
+                    if [[ "$PERSES_EXEC_RC" -ne 0 && "$PERSES_REACH" == "000" ]]; then
+                        info "Observability Dashboard" "Could not probe $PERSES_NAME from the dashboard pod (oc exec rc=$PERSES_EXEC_RC — needs pods/exec; not evidence of a network problem)"
+                    else
+                        warn "Observability Dashboard" "Dashboard pod cannot reach $PERSES_NAME:8080 (HTTP '$PERSES_REACH') — check for a NetworkPolicy in redhat-ods-monitoring denying ingress from redhat-ods-applications"
+                    fi
+                else
+                    pass "Observability Dashboard" "$PERSES_NAME reachable from the dashboard pod (HTTP 200) and proxy configured"
+                fi
+                pass "Perses Dashboard Backend" "$PERSES_NAME (operator-managed) Service present on port 8080 in redhat-ods-monitoring"
             else
                 warn "Perses Dashboard Backend" "$PERSES_NAME Service exists but port 8080 not found"
             fi

@@ -9,12 +9,32 @@ We carry the **minimum workarounds**: only when the rig cannot function
 without one, always **Temporary** with a Jira and a remove-when condition,
 removed as soon as a nightly ships the fix.
 
-> **Last audit: 2026-07-31** — strip-audit on a fresh 3.5.0 install
-> (cluster-tm9xb, catalog `rhoai-3.5-nightly`, operator `dca3c007`, SM 3.4.0):
-> every A-entry was removed, the cluster installed bare, and only
-> proven-needed entries were re-added. Removed as fixed upstream: feast RBAC
-> (both gaps), ai-gateway NetworkPolicy RBAC, payload-processing NetworkPolicy,
-> gen-ai :8321 egress, trustyai pods/log RBAC for EvalHub.
+> **Strip-audit: 2026-07-31** — on a fresh 3.5.0 install (cluster-tm9xb,
+> catalog `rhoai-3.5-nightly`, operator `dca3c007`, SM 3.4.0): every A-entry
+> was removed, the cluster installed bare, and only proven-needed entries were
+> re-added. Removed as fixed upstream: feast RBAC (both gaps), ai-gateway
+> NetworkPolicy RBAC, payload-processing NetworkPolicy, gen-ai :8321 egress,
+> trustyai pods/log RBAC for EvalHub.
+>
+> **Re-check: 2026-08-04** — after the in-place upgrade to the released-track
+> FBC `f4183f7e` (operator `0017d555`), each entry was re-checked against the
+> live cluster. A1 re-proven needed (Kuadrant's filters are still
+> selector-less on this build). **A2 confirmed needed by measurement** — the
+> istio-proxy holds ~1450Mi steady, 40% above the 1Gi default it would revert
+> to, so it would OOMKill on restart before serving a request; no strip test
+> warranted. **A11 strip-tested and did not reproduce, but was kept** — the
+> precondition (an ELB enrolled in an AZ with no instances) is absent on this
+> single-AZ cluster; the upstream behavior is unchanged. See its entry.
+> **A8 was removed**: RHOAIENG-76548 is Resolved and the DSC reports
+> `Ready=True`; on 3.5 the condition it keyed on was also renamed
+> (`ModelsAsServiceReady` → `AIGatewayReady`), so on this build the tolerance
+> could no longer fire at all. **Caveat for ea.2 clusters:** bu-nightly-2 still
+> emits the old condition name, so there the tolerance *was* live — if that
+> cluster still exhibits `Tenant CR not available yet`, `make observability`
+> and `make evalhub` will now abort at the settle-gate instead of continuing.
+> That is the intended sequencing (upgrade first, then run those targets), and
+> aborting is the safe direction, but it is a behavior change for that cluster
+> until it is upgraded.
 
 ---
 
@@ -30,6 +50,17 @@ removed as soon as a nightly ships the fix.
   (+77007, 78869)
 - **Verified needed 2026-07-31** (tm9xb, SM 3.4.0): stripped it → OOM ×6 within
   minutes of Kuadrant programming its EnvoyFilters.
+- **Re-confirmed 2026-08-04** on FBC `f4183f7e`: models-as-a-service#1313 gave
+  `payload-processing` a `workloadSelector` (that's the RHOAIENG-80043 401 leg,
+  now fixed), but the OOM leg is Kuadrant-owned and untouched —
+  `kuadrant-maas-default-gateway`, `kuadrant-auth-*` and
+  `kuadrant-ratelimiting-*` still carry `targetRefs` only, which Istio ignores
+  without `ENABLE_ENHANCED_RESOURCE_SCOPING`, so they still leak. Detection:
+  ```bash
+  oc get envoyfilter -n openshift-ingress -o json | \
+    jq -r '.items[] | select(.spec.workloadSelector == null) | .metadata.name'
+  ```
+  Any `kuadrant-*` name in that output means the leak is live and A1 is needed.
 - **Remove when:** a bare install keeps the dashboard gateway at 1/1 with
   Kuadrant policies enforced on the MaaS gateway.
 
@@ -59,17 +90,28 @@ removed as soon as a nightly ships the fix.
   never re-resolves; naive Subscription deletion orphans the CSV into a
   `ConstraintsNotSatisfiable` deadlock. **Permanent** (OLM behavior).
 
-### A8. "Tenant CR not available yet" — settle-gate/verify tolerance
+### A12. Catalog digest-pinned to the released-track 3.5 FBC (TEMPORARY)
 
-- **Files:** `scripts/install-observability.sh`, `scripts/install-evalhub.sh`,
-  `scripts/verify-maas.sh`
-- **What:** the gates tolerate exactly the condition signature
-  `ModelsAsServiceReady=False: Tenant CR not available yet` (a version skew that
-  pinned DSC NotReady while MaaS worked fine).
-- **Jira:** [RHOAIENG-76548](https://redhat.atlassian.net/browse/RHOAIENG-76548) Resolved.
-- **Status:** likely obsolete — on `dca3c007` (2026-07-31) the DSC went
-  Ready=True immediately. The tolerance is inert when the condition is absent.
-  **Remove when:** one more clean install confirms DSC Ready without it.
+- **File:** `components/operators/rhoai-operator/base/catalogsource.yaml`
+- **What:** `image:` is pinned to
+  `quay.io/rhoai/rhoai-fbc-fragment@sha256:f4183f7e…` instead of the floating
+  `:rhoai-3.5-nightly` tag. That digest is the first build carrying the
+  RHOAIENG-80043 EnvoyFilter `workloadSelector` fix
+  ([models-as-a-service#1313](https://github.com/opendatahub-io/models-as-a-service/pull/1313)),
+  which ends the dashboard-wide 401s on every POST while MaaS is enabled.
+- **Why it's a workaround, not config:** this repo exists to exercise *new*
+  nightlies. A digest pin freezes that — `updateStrategy.registryPoll` becomes
+  a no-op and every install from `main` deploys an August build forever. It is
+  carried only because the nightly tag had not yet rebuilt past the fix.
+- **Jira:** [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043)
+  (fix merged upstream 2026-07-31)
+- **Detection / remove when:** the floating nightly contains the fix — then
+  revert to `:rhoai-3.5-nightly` in one commit.
+  ```bash
+  # does the current nightly carry the maas fix (58e59dec or later)?
+  skopeo inspect docker://quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly \
+    | jq -r '.Labels["odh-maas-controller.git.commit"]'
+  ```
 
 ### A11. MaaS gateway ELB — enable cross-zone load balancing
 
@@ -82,8 +124,23 @@ removed as soon as a nightly ships the fix.
   the dead IP immediately. Upstream target is **OCPBUGS** (OpenShift
   ingress/Gateway API — no RHOAI component owns the Service):
   [issues/gateway-elb-crosszone-blackhole.md](issues/gateway-elb-crosszone-blackhole.md)
-- **Detection / remove when:** every `dig +short maas.<domain>` IP answers
-  `curl --resolve` with 200 without the annotation.
+- **Strip-tested 2026-08-04 — did NOT reproduce, and we kept it anyway.**
+  Removed the annotation, confirmed the AWS cloud-controller pushed the
+  attribute change (`Updating load-balancer attributes` in
+  `openshift-cloud-controller-manager`), then probed every LB IP every 10s:
+  40/40 samples returned 200 on both IPs over 7 minutes. The reason is
+  topology, not a fix — every MachineSet is in `us-east-2c` and the ELB is
+  currently enrolled only in an AZ that holds instances, so there is no empty
+  AZ to black-hole. Nothing in OpenShift or AWS changed.
+- **Remove when:** OpenShift provisions the gateway LB with cross-zone enabled
+  (or as an NLB) by default — *not* merely when a given cluster's IPs all
+  answer. The old wording tested only today's topology, so it went green on any
+  single-AZ cluster and would have deleted a workaround that silently returns
+  the moment a cluster's nodes and its ELB's subnets stop overlapping.
+- **Detection** (does this cluster have the precondition?): more distinct
+  `dig +short maas.<domain>` IPs than AZs containing Ready nodes
+  (`oc get nodes -L topology.kubernetes.io/zone`) means an empty AZ is enrolled
+  and the annotation is actively load-bearing.
 
 ---
 

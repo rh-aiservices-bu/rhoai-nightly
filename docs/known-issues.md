@@ -2,18 +2,20 @@
 
 Product issues found in **RHOAI 3.5 nightlies** by this deployment. Each
 problem links to its full analysis; workaround links go to the exact steps.
-Last audit: **2026-07-31** (fresh 3.5.0 install, cluster-tm9xb).
+Last audit: **2026-08-04** (cluster-tm9xb, 3.5.0 released-track FBC
+`f4183f7e`) — every row below re-checked against a live cluster on that build.
 
 ## Open — you may hit these
 
 | Problem | What you'll see | Jira | Workaround |
 |---|---|---|---|
-| [Playground chat with a MaaS model fails](issues/playground-maas-autowiring.md) | First message → 404 "Server error", model looks healthy in the picker | [RHOAIENG-79529](https://redhat.atlassian.net/browse/RHOAIENG-79529) New | [Register the model as an AI asset endpoint](issues/playground-maas-autowiring.md#workaround-a--register-the-model-as-a-custom-ai-asset-endpoint-durable-supported) (pending live verification) |
-| [MaaS catalog advertises the wrong model URL](issues/maas-catalog-bare-model-url.md) | API clients trusting the catalog URL get 404 | not filed (draft ready) | Use `https://maas.<domain>/<namespace>/<model>/v1` |
+| [Playground's llama-stack API unusable outside the UI](issues/playground-maas-autowiring.md) | UI chat works, but direct API calls to the playground endpoint 401; 401 noise in pod logs at startup | [RHOAIENG-79529](https://redhat.atlassian.net/browse/RHOAIENG-79529) New; full fix [RHOAIENG-38993](https://redhat.atlassian.net/browse/RHOAIENG-38993) targets 3.6 EA1, no 3.5 backport | [Patch a real MaaS key into the playground](issues/playground-maas-autowiring.md#workaround--minimal-token-only) (only needed for direct API use) |
 | [Per-subscription usage metrics missing labels](issues/telemetrypolicy-labels-not-emitted.md) | Per-subscription Observability breakdowns empty | not filed (RHCL wasm-shim) | none |
 | [Playgrounds break after an RHOAI (ogx) upgrade](issues/ogx-upgrade-breaks-playgrounds.md) | Playgrounds created before the upgrade show `Failed` (workload still runs) | not filed | Delete + recreate the playground; recurs next upgrade |
 | [Some component metrics silently never collected](issues/servicemonitors-bearertokenfile.md) | Two operator controllers absent from Prometheus; recurring `InvalidConfiguration` warning events | not filed | none |
 | [Removing a telemetry label doesn't take effect](issues/telemetrypolicy-removals-not-propagated.md) | Deleted TelemetryPolicy labels keep flowing; policy reports Enforced | not filed (found 2026-08-01) | Admin: delete the policy; ArgoCD recreates it clean |
+| [Observability dashboard unreachable](issues/observability-dashboard-unreachable.md) | Observe & monitor → Dashboard shows "Unable to reach observability dashboards / not valid JSON"; metrics still collected | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress | none |
+| Dashboard dead (503) after an in-place RHOAI upgrade | Whole dashboard "no healthy upstream"; operator logs `spec.selector … field is immutable` | [RHOAIENG-79525](https://redhat.atlassian.net/browse/RHOAIENG-79525) Testing | Admin: `oc delete deployment rhods-dashboard -n redhat-ods-applications` — operator recreates it correctly (hit on tm9xb 2026-08-04 upgrading to 3.5.0 released FBC) |
 
 ## Worked around in this deployment — you should NOT hit these
 

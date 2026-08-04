@@ -215,6 +215,62 @@ oc get pods -n redhat-ods-applications --no-headers
 
 Wait until DataScienceCluster shows Ready and pods are Running.
 
+**Step 5.5: Known upgrade-path breakages (verified 2026-08-04, see CLUSTERS.md)**
+
+Check for and remediate each of these — pods "Running" is NOT sufficient:
+
+1. **Immutable-selector outage (RHOAIENG-79525 class).** The operator may be
+   unable to patch `spec.selector` on pre-existing Deployments while it HAS
+   updated the matching Service selectors → empty endpoints → 503 despite
+   Running pods. Sweep:
+   ```
+   # Every selector-backed Service must have at least one READY endpoint.
+   # Two precision requirements, because the remedy below deletes Deployments:
+   #  - filter on conditions.ready==true. A Service whose pods are Running but
+   #    not Ready still lists addresses, which is exactly the 503 case we are
+   #    hunting — an addresses-only check reports it healthy.
+   #  - skip Services with no selector (headless/ExternalName/manually managed);
+   #    they legitimately have no endpointslices and are not upgrade damage.
+   for ns in redhat-ods-applications redhat-ai-gateway-infra; do
+     for s in $(oc get svc -n $ns -o name); do
+       name=${s#service/}
+       sel=$(oc get svc "$name" -n "$ns" -o jsonpath='{.spec.selector}' 2>/dev/null)
+       [ -z "$sel" ] || [ "$sel" = "{}" ] && continue        # not selector-backed
+       READY=$(oc get endpointslices -n "$ns" -l kubernetes.io/service-name="$name" \
+         -o jsonpath='{.items[*].endpoints[?(@.conditions.ready==true)].addresses[0]}' 2>/dev/null)
+       [ -z "$READY" ] && echo "$ns/$name — NO READY ENDPOINTS"
+     done
+   done
+   # Cross-check before deleting anything: a component intentionally scaled to
+   # zero also reports NO READY ENDPOINTS and must NOT be deleted.
+   oc get deploy -n redhat-ods-applications -o custom-columns=NAME:.metadata.name,DESIRED:.spec.replicas,READY:.status.readyReplicas
+   # and check operator logs for the signature
+   oc logs -n redhat-ods-applications deploy/dashboard-operator --since=30m | grep "field is immutable"
+   ```
+   Remedy for each hit: `oc delete deployment <name> -n <ns>` — the owning
+   operator recreates it with the new selector (verified: rhods-dashboard,
+   <1 min recovery). Known candidates: rhods-dashboard (79525),
+   maas-controller (78140), workbenches (79547).
+2. **EnvoyFilter scoping (RHOAIENG-80043).**
+   `oc get envoyfilter payload-processing -n openshift-ingress -o jsonpath='{.spec.workloadSelector}'`
+   must be non-empty on builds ≥ maas `58e59dec`; if empty, dashboard POSTs
+   will 401 (leaked ext_proc). Do NOT remove the A1 wasm strip — the Kuadrant
+   filter is still selector-less.
+3. **Dashboard write probe** (catches both of the above end-to-end):
+   ```
+   TOKEN=$(oc whoami -t); BASE=https://rh-ai.<apps-domain>
+   curl -sk -m 15 -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{"resourceAttributes":{"verb":"create","resource":"projectrequests","group":"project.openshift.io"}}}' \
+     "$BASE/api/k8s/apis/authorization.k8s.io/v1/selfsubjectaccessreviews"
+   # must be 200 — 401 = EnvoyFilter leak, 503 = empty endpoints
+   ```
+4. **H2 close** (the ea.2 END_STREAM bug this upgrade fixes): an HTTP/2 chat
+   completion through the MaaS gateway must return in <1s, not hang to the
+   client's --max-time. See docs/issues/maas-payload-h2-endstream-hang.md.
+5. **Tenant impact:** existing playgrounds break (ogx upgrade issue) — comms
+   before the window; MaaS API keys survive.
+
 **Step 6: Re-enable auto-sync**
 ```
 make sync-enable

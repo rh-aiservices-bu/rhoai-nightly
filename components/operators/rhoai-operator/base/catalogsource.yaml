@@ -5,8 +5,13 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly
-  displayName: RHOAI 3.5 Nightly
+  # TEMPORARY (2026-08-04): digest-pinned released-track 3.5 FBC — first build
+  # containing the RHOAIENG-80043 EnvoyFilter workloadSelector fix
+  # (models-as-a-service 58e59dec / #1313), which the floating nightly does not
+  # have yet. Doubles as the dress rehearsal for the bu-nightly-2 upgrade.
+  # REVERT to :rhoai-3.5-nightly once the nightly tag rebuilds with the fix.
+  image: quay.io/rhoai/rhoai-fbc-fragment@sha256:f4183f7e1811e4d43d697dea8e764d6d8be02eeede69e540ac075d02081c804e
+  displayName: RHOAI 3.5 Released FBC (pinned, temp)
   publisher: RHOAI Dev
   updateStrategy:
     registryPoll:

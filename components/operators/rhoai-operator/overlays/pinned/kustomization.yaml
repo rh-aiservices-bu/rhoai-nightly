@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Pinned RHOAI catalog overlay
+# Uses a specific catalog image instead of floating nightly tag
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: CatalogSource
+      name: rhoai-catalog-nightly
+    patch: |-
+      - op: replace
+        path: /spec/image
+        # Pinned to 3.5 EA2 nightly build - Jul 9, 2026 (sha256:6ef49d54)
+        # Newer nightly: re-vendored MaaS manifests carry the ExternalProvider
+        # (inference.opendatahub.io) CRD rename that fixes payload-processing.
+        value: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-ea.2-nightly@sha256:6ef49d545fc00c7e5a9010a1441ac6e04c3f078d0bbdefc3ca18549b2f9a8dbb

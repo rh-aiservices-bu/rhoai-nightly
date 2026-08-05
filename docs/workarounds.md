@@ -90,29 +90,6 @@ removed as soon as a nightly ships the fix.
   never re-resolves; naive Subscription deletion orphans the CSV into a
   `ConstraintsNotSatisfiable` deadlock. **Permanent** (OLM behavior).
 
-### A12. Catalog digest-pinned to the released-track 3.5 FBC (TEMPORARY)
-
-- **File:** `components/operators/rhoai-operator/base/catalogsource.yaml`
-- **What:** `image:` is pinned to
-  `quay.io/rhoai/rhoai-fbc-fragment@sha256:f4183f7e…` instead of the floating
-  `:rhoai-3.5-nightly` tag. That digest is the first build carrying the
-  RHOAIENG-80043 EnvoyFilter `workloadSelector` fix
-  ([models-as-a-service#1313](https://github.com/opendatahub-io/models-as-a-service/pull/1313)),
-  which ends the dashboard-wide 401s on every POST while MaaS is enabled.
-- **Why it's a workaround, not config:** this repo exists to exercise *new*
-  nightlies. A digest pin freezes that — `updateStrategy.registryPoll` becomes
-  a no-op and every install from `main` deploys an August build forever. It is
-  carried only because the nightly tag had not yet rebuilt past the fix.
-- **Jira:** [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043)
-  (fix merged upstream 2026-07-31)
-- **Detection / remove when:** the floating nightly contains the fix — then
-  revert to `:rhoai-3.5-nightly` in one commit.
-  ```bash
-  # does the current nightly carry the maas fix (58e59dec or later)?
-  skopeo inspect docker://quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly \
-    | jq -r '.Labels["odh-maas-controller.git.commit"]'
-  ```
-
 ### A11. MaaS gateway ELB — enable cross-zone load balancing
 
 - **File:** `components/instances/maas-instance/chart/templates/maas-gateway-options.yaml`
@@ -141,6 +118,37 @@ removed as soon as a nightly ships the fix.
   `dig +short maas.<domain>` IPs than AZs containing Ready nodes
   (`oc get nodes -L topology.kubernetes.io/zone`) means an empty AZ is enrolled
   and the annotation is actively load-bearing.
+
+### A13. Observability dashboard — set `Dashboard.spec.observability` manually (TEMPORARY)
+
+- **Applied:** cluster-side patch (not in git — one-time `oc patch`, survives
+  reconciliation because the rhods-operator's SSA apply doesn't own the field):
+  ```bash
+  oc patch dashboard default-dashboard --type merge -p \
+    '{"spec":{"observability":{"enabled":true,"persesService":{"name":"data-science-perses","namespace":"redhat-ods-monitoring","port":8080}}}}'
+  ```
+- **Without it:** Observe & monitor → Dashboard is dead ("Unexpected token
+  '<'"): nothing sets `spec.observability.enabled`, so the dashboard backend
+  never registers the `/perses` proxy route (the SPA catch-all returns HTML to
+  a JSON fetch) and the observability bundle (NetworkPolicy, RHOAI
+  PersesDashboards) is never rendered. Details:
+  [issues/observability-dashboard-unreachable.md](issues/observability-dashboard-unreachable.md)
+- **Jira:** [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354)
+  (In Progress; fix PR
+  [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923))
+- **Why carried:** the Observability dashboards are themselves a feature under
+  test; without the patch they are untestable. Applied bu-nightly-2 2026-08-05;
+  verified `ObservabilityAvailable=True reason=Deployed`, pods rolled,
+  `/perses/api` answering.
+- **Remove when:** a nightly carries opendatahub-operator#3923. Detection —
+  the operator owns the field (manual patch redundant):
+  ```bash
+  oc get dashboard default-dashboard -o json | jq -r \
+    '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | .fieldsV1["f:spec"]["f:observability"] // empty'
+  ```
+  Non-empty output = operator projects it; delete the manual field ownership by
+  re-applying without it or simply leave (operator now authoritative) and drop
+  this entry.
 
 ---
 

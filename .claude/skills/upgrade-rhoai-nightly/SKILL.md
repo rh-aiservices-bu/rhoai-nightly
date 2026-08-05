@@ -84,7 +84,27 @@ Then check if `clusters` is behind `origin/main` (rev-list count > 0):
    ```
    oc get packagemanifest rhods-operator -n openshift-marketplace -o jsonpath='{range .status.channels[*]}{.name}: {.currentCSV}{"\n"}{end}'
    ```
-4. If the installed CSV was from a different channel than the target, or if there's a version gap (e.g., skipping ea.1 to go to ea.2), warn the user:
+4. **Same-name rule (post-GA nightlies — the common case since 3.5.0 GA):** if
+   the target catalog's channel head has the SAME CSV name as the installed CSV
+   (e.g. both `rhods-operator.3.5.0`), OLM has **no upgrade edge at all** —
+   CSV names are the identity OLM upgrades between, and every post-GA nightly
+   reuses the GA name (see `docs/issues/nightly-csv-name-static.md`). The
+   Subscription will sit `AtLatestKnown` on the old build forever. The ONLY
+   path is the clean reinstall: delete Subscription AND installed CSV, let
+   ArgoCD recreate the Subscription, OLM installs fresh from the new catalog
+   (DSC and application resources are preserved). Compare builds by operator
+   image, not name:
+   ```
+   # installed
+   oc get csv <installed-csv> -n redhat-ods-operator -o jsonpath='{.metadata.annotations.containerImage}'
+   # catalog head
+   oc get packagemanifest -n openshift-marketplace -l catalog=rhoai-catalog-nightly \
+     -o jsonpath="{.items[?(@.metadata.name=='rhods-operator')].status.channels[?(@.name=='<channel>')].currentCSVDesc.annotations.containerImage}"
+   ```
+   `scripts/restart-catalog.sh` implements this decision (image-aware guard,
+   deletes the CSV together with the Subscription when names collide) — prefer
+   running it over hand-rolling the deletes.
+5. If the installed CSV was from a different channel than the target, or if there's a version gap (e.g., skipping ea.1 to go to ea.2), warn the user:
    - "Installed CSV `rhods-operator.X.Y.Z` was on channel `<old>`. Target `rhods-operator.A.B.C` is on channel `<new>`. OLM may not have a direct upgrade path."
    - "Recommend: delete the old subscription/CSV and let ArgoCD recreate it on the new channel (clean install of operator only — DSC and application resources are preserved)."
    - Ask user: "Delete old subscription/CSV for a clean install? (Recommended when skipping versions or switching channels)"

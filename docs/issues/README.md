@@ -29,6 +29,7 @@ Working rules:
 | [telemetrypolicy-removals-not-propagated.md](telemetrypolicy-removals-not-propagated.md) | **NOT FILED** (target CONNLINK) | Open — **severity escalated 2026-08-04**: a stale removed label hung every inference response on bu-nightly-2 (client-timeout on all protocols); proven by controlled experiment tm9xb 2026-08-01 + live outage + instant fix on regen |
 | [observability-dashboard-unreachable.md](observability-dashboard-unreachable.md) | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress, fix PR [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923) | Open — root cause source-verified; bu-nightly-2 2026-08-05 proved the missing `/perses` proxy route is the direct cause (network path was fine); workaround A13 applied + verified |
 | [maas-payload-h2-endstream-hang.md](maas-payload-h2-endstream-hang.md) | **NOT FILED** — no Jira exists; fixed by [ai-gateway-payload-processing#419](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/419) with no Jira trail | ea.2 line only (incl. released `beta` channel) — live re-confirmed bu-nightly-2 2026-08-03; main unaffected |
+| [nightly-csv-name-static.md](nightly-csv-name-static.md) | **NOT FILED** — target RHOAI build/release eng | Open — found tm9xb 2026-08-05: post-GA nightlies all ship CSV `rhods-operator.3.5.0`, so OLM never upgrades; every nightly bump needs a manual Subscription+CSV reinstall |
 
 ## Open Jiras backing carried workarounds
 

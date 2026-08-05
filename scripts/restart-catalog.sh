@@ -9,14 +9,20 @@
 # deletes the Subscription so ArgoCD recreates it and OLM generates a fresh
 # InstallPlan against the new catalog content.
 #
-# Same-version guard: if the installed CSV already matches the catalog channel
-# head (i.e. the catalog image flipped but the resolved version did NOT change —
-# common when re-pulling a *moving* nightly tag that still points at the same
-# build), the Subscription delete is SKIPPED. Deleting it in that case orphans
-# the running CSV and deadlocks OLM with ConstraintsNotSatisfiable ("two
-# providers of the same API"), which then needs a manual CSV delete to recover.
-# The pod bounce alone is sufficient when the version is unchanged. Override
-# with --force-resub.
+# Same-version guard (image-aware): CSV *names* stopped being a build identity
+# at 3.5.0 GA — every post-GA nightly ships the same head name
+# (rhods-operator.3.5.0, see docs/issues/nightly-csv-name-static.md), so the
+# guard compares the operator containerImage as well:
+#   - names differ                  -> version change: delete Subscription,
+#     OLM re-resolves (an upgrade edge or fresh install).
+#   - names equal, images equal     -> true no-op (moving tag re-pulled, same
+#     build): pod bounce only. Deleting the Subscription here orphans the
+#     running CSV and deadlocks OLM with ConstraintsNotSatisfiable.
+#   - names equal, images DIFFER    -> post-GA nightly bump: OLM has no edge
+#     (same name), so delete Subscription AND CSV — the clean-reinstall path.
+#     Deleting only the Subscription would hit the same deadlock.
+# --force-resub forces the delete path; it too removes the CSV when the head
+# name matches the installed name.
 #
 # See docs/workarounds.md §A6 for the empirical failure this guards
 # against (cluster-hm2fl 2026-04-20).
@@ -74,9 +80,9 @@ SOURCE="${SUB_REST##*|}"
 
 log_step "Restarting catalog pod"
 oc delete pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly 2>/dev/null || true
-log_info "Waiting up to 120s for catalog pod Ready"
-if ! oc wait --for=condition=Ready pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly --timeout=120s 2>/dev/null; then
-    log_warn "Catalog pod didn't reach Ready within 120s — continuing anyway"
+log_info "Waiting up to 240s for catalog pod Ready (nightly FBC pulls are slow)"
+if ! oc wait --for=condition=Ready pod -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly --timeout=240s 2>/dev/null; then
+    log_warn "Catalog pod didn't reach Ready within 240s — continuing anyway"
 fi
 
 log_step "Restarting rhods-operator pod"
@@ -92,7 +98,8 @@ if [[ "$RESUB" == "true" ]]; then
     # ships one on a different version), so an unscoped lookup reads the wrong head.
     # PackageManifests carry a catalog=<source> label.
     HEAD_CSV=""
-    if [[ "$FORCE_RESUB" != "true" && -n "$CHANNEL" && -n "$SOURCE" ]]; then
+    HEAD_IMAGE=""
+    if [[ -n "$CHANNEL" && -n "$SOURCE" ]]; then
         log_info "Resolving catalog '$SOURCE' channel '$CHANNEL' head (waiting for packagemanifest)..."
         for _ in $(seq 1 36); do
             HEAD_CSV=$(oc get packagemanifest -n openshift-marketplace -l "catalog=$SOURCE" \
@@ -100,15 +107,30 @@ if [[ "$RESUB" == "true" ]]; then
             [[ -n "$HEAD_CSV" ]] && break
             sleep 5
         done
+        if [[ -n "$HEAD_CSV" ]]; then
+            HEAD_IMAGE=$(oc get packagemanifest -n openshift-marketplace -l "catalog=$SOURCE" \
+                -o jsonpath="{.items[?(@.metadata.name=='rhods-operator')].status.channels[?(@.name=='$CHANNEL')].currentCSVDesc.annotations.containerImage}" 2>/dev/null || echo "")
+        fi
+    fi
+    INSTALLED_IMAGE=""
+    if [[ -n "$OLD_CSV" ]]; then
+        INSTALLED_IMAGE=$(oc get csv "$OLD_CSV" -n redhat-ods-operator \
+            -o jsonpath='{.metadata.annotations.containerImage}' 2>/dev/null || echo "")
     fi
 
-    # Decide whether to delete the Subscription (single delete path below avoids
-    # duplicating the delete + monitor-hint logging across branches).
+    # Decide whether to delete the Subscription, and whether the installed CSV
+    # must go with it. DELETE_CSV_TOO is required whenever the catalog head has
+    # the SAME name as the installed CSV (post-GA nightlies all ship
+    # rhods-operator.<GA-version>): OLM has no upgrade edge between same-named
+    # CSVs, and deleting only the Subscription would orphan the running CSV
+    # against a same-named catalog head -> ConstraintsNotSatisfiable deadlock.
     DO_DELETE=false
+    DELETE_CSV_TOO=false
     DELETE_REASON=""
     if [[ "$FORCE_RESUB" == "true" ]]; then
         DO_DELETE=true
         DELETE_REASON="--force-resub"
+        [[ -n "$OLD_CSV" && "$OLD_CSV" == "$HEAD_CSV" ]] && DELETE_CSV_TOO=true
     elif [[ -z "$HEAD_CSV" ]]; then
         # FAIL SAFE: could not confirm the catalog head (catalog pod not serving
         # PackageManifests in time). Do NOT delete — deleting on an unconfirmed
@@ -123,15 +145,19 @@ if [[ "$RESUB" == "true" ]]; then
         log_warn "Verify 'oc get packagemanifest -l catalog=$SOURCE' is serving, then re-run with: make restart-catalog FORCE_RESUB=true"
         HEAD_UNRESOLVED=true
     elif [[ -n "$OLD_CSV" && "$OLD_CSV" == "$HEAD_CSV" ]]; then
-        # Same-version guard. The catalog image changed but the resolved version
-        # did not (e.g. re-pulling a moving nightly tag still pointing at the same
-        # build). Deleting the Subscription here would orphan the running CSV and
-        # deadlock OLM: the catalog's identical CSV and the orphaned one both
-        # provide the same API GVK -> ConstraintsNotSatisfiable. Pod bounce is enough.
-        log_step "Skipping Subscription deletion — catalog channel head unchanged"
-        log_info "Installed CSV ($OLD_CSV) already matches catalog '$CHANNEL' head ($HEAD_CSV)."
-        log_info "Pod bounce above is sufficient; deleting the Subscription would orphan the CSV and deadlock OLM."
-        log_info "To force a re-resolve anyway, re-run with: make restart-catalog FORCE_RESUB=true"
+        # Same CSV name. Since 3.5.0 GA this does NOT mean same build — compare
+        # operator images to tell a moving-tag re-pull (no-op) from a post-GA
+        # nightly bump (upgrade OLM cannot deliver).
+        if [[ -n "$HEAD_IMAGE" && -n "$INSTALLED_IMAGE" && "$HEAD_IMAGE" != "$INSTALLED_IMAGE" ]]; then
+            DO_DELETE=true
+            DELETE_CSV_TOO=true
+            DELETE_REASON="head ${HEAD_CSV} name matches installed but operator image differs (installed ${INSTALLED_IMAGE##*@} -> head ${HEAD_IMAGE##*@}) — post-GA nightly bump, no OLM edge exists"
+        else
+            log_step "Skipping Subscription deletion — catalog head is the same build"
+            log_info "Installed CSV ($OLD_CSV) matches catalog '$CHANNEL' head ($HEAD_CSV) and the operator image is unchanged."
+            log_info "Pod bounce above is sufficient; deleting the Subscription would orphan the CSV and deadlock OLM."
+            log_info "To force a re-resolve anyway, re-run with: make restart-catalog FORCE_RESUB=true"
+        fi
     else
         DO_DELETE=true
         DELETE_REASON="catalog '$CHANNEL' head ${HEAD_CSV} differs from installed ${OLD_CSV:-<none>} — version change"
@@ -139,8 +165,12 @@ if [[ "$RESUB" == "true" ]]; then
 
     if [[ "$DO_DELETE" == "true" ]]; then
         log_step "Deleting rhods-operator Subscription so OLM re-resolves ($DELETE_REASON)"
-        [[ -n "$OLD_CSV" ]] && log_info "Previous installedCSV: $OLD_CSV"
+        [[ -n "$OLD_CSV" ]] && log_info "Previous installedCSV: $OLD_CSV (image ${INSTALLED_IMAGE:-unknown})"
         oc delete subscription rhods-operator -n redhat-ods-operator
+        if [[ "$DELETE_CSV_TOO" == "true" && -n "$OLD_CSV" ]]; then
+            log_step "Deleting installed CSV $OLD_CSV (same name as catalog head — clean reinstall path)"
+            oc delete csv "$OLD_CSV" -n redhat-ods-operator
+        fi
         log_info "Subscription deleted. ArgoCD will recreate it from components/operators/rhoai-operator/; OLM will generate a fresh InstallPlan against the new catalog."
         log_info "Monitor progress: oc get subscription,installplan,csv -n redhat-ods-operator -w"
     fi

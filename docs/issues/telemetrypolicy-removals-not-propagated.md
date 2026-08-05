@@ -22,6 +22,40 @@ dropping a label whose CEL source turned unresolvable — the CONNLINK-1300
 rate-limit killer) silently do nothing. The operator says Enforced; the data
 plane runs the old config.
 
+## Severity escalation (2026-08-04, cluster bu-nightly-2): a stale removed
+## label HANGS every inference response on the gateway
+
+Live production impact observed, far beyond missing metrics: a `costCenter`
+label that had been removed from the TelemetryPolicy weeks earlier was still
+present in the generated wasm config (this bug). Its CEL source no longer
+resolved, and the wasm-shim's **response-phase** evaluation failed on every
+inference request:
+
+```
+wasm log kuadrant-wasm-shim: Failed to evaluate message builder:
+  CelError::Resolve { NoSuchKey("costCenter") }
+```
+
+Effect: every `POST /…/v1/chat/completions` through the gateway returned the
+complete response body and then **never terminated the stream** — no chunked
+terminator/END_STREAM — so every client hung to its own read timeout (curl
+`-m 30` → exactly 30.0s), on **both** HTTP/2 and HTTP/1.1, streaming and
+non-streaming. Envoy never wrote an access-log line for these requests (the
+stream never completed inside envoy). OpenAI-style SDKs hang per call.
+
+Proof of mechanism: deleting the TelemetryPolicy (ArgoCD selfHeal recreated
+it from git within a second; Kuadrant regenerated the wasm config without
+`costCenter` immediately) fixed it instantly — same request went from 30s
+client-timeout to **0.55s (H2) / 0.18s (H1.1)**, CelErrors stopped. A second
+cluster (tm9xb) with identical build + identical EnvoyFilter content but no
+stale label never exhibited the hang.
+
+Two product asks follow:
+1. Propagate removals (this issue's core ask).
+2. A CEL evaluation failure in the wasm-shim's response path must fail open
+   for stream lifecycle — log and skip the label, never withhold end-of-stream
+   from the client.
+
 ## Steps to reproduce
 
 1. RHOAI 3.5.0 with MaaS; RHCL 1.4.2; a `TelemetryPolicy` targeting

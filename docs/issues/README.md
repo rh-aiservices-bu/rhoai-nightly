@@ -26,7 +26,7 @@ Working rules:
 | [servicemonitors-bearertokenfile.md](servicemonitors-bearertokenfile.md) (D2b) | **NOT FILED** | Open — confirmed tm9xb 2026-07-31 |
 | [telemetrypolicy-labels-not-emitted.md](telemetrypolicy-labels-not-emitted.md) | **NOT FILED** | Open |
 | [ogx-upgrade-breaks-playgrounds.md](ogx-upgrade-breaks-playgrounds.md) | **NOT FILED** (nearest: [RHAIENG-6384](https://redhat.atlassian.net/browse/RHAIENG-6384)) | Open — recurs on every in-place ogx upgrade |
-| [telemetrypolicy-removals-not-propagated.md](telemetrypolicy-removals-not-propagated.md) | **NOT FILED** (target CONNLINK) | Open — proven by controlled experiment, tm9xb 2026-08-01 (RHCL 1.4.2) |
+| [telemetrypolicy-removals-not-propagated.md](telemetrypolicy-removals-not-propagated.md) | **NOT FILED** (target CONNLINK) | Open — **severity escalated 2026-08-04**: a stale removed label hung every inference response on bu-nightly-2 (client-timeout on all protocols); proven by controlled experiment tm9xb 2026-08-01 + live outage + instant fix on regen |
 | [observability-dashboard-unreachable.md](observability-dashboard-unreachable.md) | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress (filed by others) | Open — found tm9xb 2026-08-04; root cause source-verified, corroborating comment drafted |
 | [maas-payload-h2-endstream-hang.md](maas-payload-h2-endstream-hang.md) | **NOT FILED** — no Jira exists; fixed by [ai-gateway-payload-processing#419](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/419) with no Jira trail | ea.2 line only (incl. released `beta` channel) — live re-confirmed bu-nightly-2 2026-08-03; main unaffected |
 

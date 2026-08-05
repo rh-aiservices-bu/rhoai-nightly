@@ -5,8 +5,9 @@ kind: Kustomization
 # Apply with: kubectl apply -k clusters/overlays/rhoaibu-cluster-nightly
 #
 # Customizations:
-# - Pinned RHOAI catalog (stable sha256 instead of floating nightly)
 # - Console notification banner
+# - rhoai-operator added explicitly (not via auto-discovery) so this overlay
+#   can flip it between base (floating nightly) and a pinned overlay when needed
 
 resources:
   - ../../base
@@ -28,7 +29,7 @@ patches:
           path: components/operators/rhoai-operator
           exclude: true
 
-  # Add pinned rhoai-operator only (no console-notification here - it's a direct resource)
+  # Add rhoai-operator explicitly (no console-notification here - it's a direct resource)
   - target:
       group: argoproj.io
       kind: ApplicationSet
@@ -43,7 +44,7 @@ patches:
           cluster: local
           values:
             name: rhoai-operator
-            path: components/operators/rhoai-operator/overlays/pinned
+            path: components/operators/rhoai-operator
             namespace: openshift-gitops
 
   # Cluster config ApplicationSet - sets paths to rhoaibu-cluster-nightly overlays

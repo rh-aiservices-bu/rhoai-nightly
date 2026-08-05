@@ -2,8 +2,9 @@
 
 Product issues found in **RHOAI 3.5 nightlies** by this deployment. Each
 problem links to its full analysis; workaround links go to the exact steps.
-Last audit: **2026-08-04** (cluster-tm9xb, 3.5.0 released-track FBC
-`f4183f7e`) — every row below re-checked against a live cluster on that build.
+Last audit: **2026-08-05** (fresh install on cluster-g767p, OCP 4.20.32,
+`rhoai-3.5-nightly` built 2026-08-05) — every row below re-checked against a
+live cluster on that build, Jira statuses re-pulled the same day.
 
 ## Open — you may hit these
 
@@ -14,8 +15,9 @@ Last audit: **2026-08-04** (cluster-tm9xb, 3.5.0 released-track FBC
 | [Playgrounds break after an RHOAI (ogx) upgrade](issues/ogx-upgrade-breaks-playgrounds.md) | Playgrounds created before the upgrade show `Failed` (workload still runs) | not filed | Delete + recreate the playground; recurs next upgrade |
 | [Some component metrics silently never collected](issues/servicemonitors-bearertokenfile.md) | Two operator controllers absent from Prometheus; recurring `InvalidConfiguration` warning events | not filed | none |
 | [Removing a telemetry label doesn't take effect](issues/telemetrypolicy-removals-not-propagated.md) | Deleted TelemetryPolicy labels keep flowing; policy reports Enforced | not filed (found 2026-08-01) | Admin: delete the policy; ArgoCD recreates it clean |
-| [Observability dashboard unreachable](issues/observability-dashboard-unreachable.md) | Observe & monitor → Dashboard shows "Unable to reach observability dashboards / not valid JSON" out of the box; metrics still collected | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress (fix PR up) | A13 — Dashboard CR patched on bu-nightly-2 2026-08-05, page works |
+| [Observability dashboard unreachable](issues/observability-dashboard-unreachable.md) | Observe & monitor → Dashboard shows "Unable to reach observability dashboards / not valid JSON" out of the box; metrics still collected | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress (fix PR #3923 still open) | [A13](workarounds.md#a13-observability-dashboard--set-dashboardspecobservability-manually-temporary) — a one-line `oc patch`, **must be applied on each cluster** (done: bu-nightly-2 + g767p, 2026-08-05) |
 | Dashboard dead (503) after an in-place RHOAI upgrade | Whole dashboard "no healthy upstream"; operator logs `spec.selector … field is immutable` | [RHOAIENG-79525](https://redhat.atlassian.net/browse/RHOAIENG-79525) Testing | Admin: `oc delete deployment rhods-dashboard -n redhat-ods-applications` — operator recreates it correctly (hit on tm9xb 2026-08-04 upgrading to 3.5.0 released FBC) |
+| [Nightly-to-nightly upgrades never happen via OLM](issues/nightly-csv-name-static.md) | Cluster admin: catalog serves a newer nightly but the operator never upgrades; Subscription says `AtLatestKnown` | not filed (build/release eng) | Admin: [`make restart-catalog`](workarounds.md#a6-catalog-re-resolution-guards--restart-catalogsh) — its image-aware guard does the required clean reinstall |
 
 ## Worked around in this deployment — you should NOT hit these
 
@@ -26,7 +28,7 @@ has regressed — tell the maintainers.
 
 | Problem | Would look like | Jira | Workaround |
 |---|---|---|---|
-| Kuadrant wasm config leaks onto the dashboard gateway → OOM crash-loop | RHOAI dashboard unreachable | [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043) | [A1](workarounds.md#a1-dashboard-gateway--strip-leaked-kuadrant-wasm) |
+| Kuadrant wasm config leaks onto the dashboard gateway → OOM crash-loop | RHOAI dashboard unreachable | [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043) Resolved (401 leg only — the leak itself is still live 2026-08-05 and untracked on the Kuadrant side) | [A1](workarounds.md#a1-dashboard-gateway--strip-leaked-kuadrant-wasm) |
 | MaaS gateway proxy OOMs at its default memory limit | All MaaS API calls dead | [RHOAIENG-68589](https://redhat.atlassian.net/browse/RHOAIENG-68589) + siblings | [A2](workarounds.md#a2-maas-gateway--raise-istio-proxy-memory-to-2gi) |
 | Gateway load balancer provisioned half-dead on AWS | ~50% of external MaaS calls hang | not filed (OCPBUGS draft in [issue](issues/gateway-elb-crosszone-blackhole.md)) | [A11](workarounds.md#a11-maas-gateway-elb--enable-cross-zone-load-balancing) |
 | Operators cache a failed dependency probe at startup | API-key creation 500s; components stuck NotReady after install | [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925) Backlog | [E1 auto-remedy](workarounds.md#e1-operators-cache-a-dependency-probe-at-startup-and-never-re-check) in the install script |

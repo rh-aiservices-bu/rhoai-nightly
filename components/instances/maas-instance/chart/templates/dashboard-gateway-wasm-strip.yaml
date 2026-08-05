@@ -14,18 +14,21 @@
 # no Kuadrant policy of its own (its auth is ext_authz + lua via
 # `data-science-authn-filter`, not wasm).
 #
-# That wasm's PluginConfig contains the field `allow_on_headers_stop_iteration`.
-# Red Hat Service Mesh 3 v3.3.5 (istio 1.26) REJECTS that unknown field, so the
-# dashboard gateway's envoy can never load its listener config -> the
-# `:15021/healthz/ready` probe fails -> CrashLoopBackOff / 0-1 Ready -> the
-# dashboard returns "Application is not available" (503). Older Service Mesh
-# (v3.3.3) tolerated the field, which is why the break appeared only after the
-# Service Mesh 3.3.3 -> 3.3.5 upgrade. This is a wasm-shim <-> envoy ABI skew
-# between RHCL v1.4.1 and Service Mesh 3.3.5, NOT an "RHCL too old" problem:
-# RHCL v1.4.1 already meets MaaS's RHOAI prerequisite (RHCL v1.3+; the separate
-# "Kuadrant v1.4.2+" figure is the community/ODH version line, for an unrelated
-# auth-header-stripping feature). MaaS upstream avoids the skew by hand-matching
-# community istio 1.26.2 to its community Kuadrant.
+# HOW THE LEAK BREAKS THE DASHBOARD GATEWAY (two legs, by istio version):
+# - On SM 3.3.5 (istio 1.26.2-era; e.g. the prod `clusters` line): envoy REJECTS
+#   the wasm PluginConfig field `allow_on_headers_stop_iteration` -> listener
+#   config never loads -> readiness probe fails -> CrashLoopBackOff (503).
+# - On SM 3.4.0 / sail-library istio (fresh 3.5 installs): the config loads but
+#   the leaked wasm enters a remote-fetch/regeneration loop on a gateway with no
+#   Kuadrant policy of its own -> memory climbs -> OOMKilled at 1Gi ->
+#   CrashLoopBackOff. Plus, until models-as-a-service#1313 (in nightlies since
+#   ~2026-08-04), the leaked IPP filter also 401'd every dashboard POST.
+# Either way the dashboard dies; only the mechanism differs.
+#
+# Still-leaking filters as of the 2026-08-05 nightly (all selector-less):
+# kuadrant-maas-default-gateway, kuadrant-auth-*, kuadrant-ratelimiting-*
+# (Kuadrant operator — no CONNLINK bug exists for this) and
+# maas-default-gateway-authn-ssl (odh-model-controller, not covered by #1313).
 #
 # WHAT THIS DOES
 # --------------
@@ -36,10 +39,10 @@
 # filter of its own, so removing wasm there is safe; if no wasm is present (e.g.
 # on a fixed Service Mesh/RHCL pair) the REMOVE is a harmless no-op.
 #
-# REMOVE THIS once Red Hat ships an RHCL build whose wasm-shim matches Service
-# Mesh 3.3.5's envoy (i.e. stops emitting `allow_on_headers_stop_iteration`), or
-# once Kuadrant scopes its generated EnvoyFilter with a proper workloadSelector.
-# See .tmp/issues/dashboard-gateway-kuadrant-wasm-leak.md for the full writeup.
+# REMOVE THIS once a bare install keeps the dashboard gateway at 1/1 with
+# Kuadrant policies enforced on the MaaS gateway — i.e. every generated
+# EnvoyFilter carries a workloadSelector. Detection + Jira status:
+# docs/workarounds.md A1 (RHOAIENG-80043 and siblings).
 apiVersion: networking.istio.io/v1alpha3
 kind: EnvoyFilter
 metadata:

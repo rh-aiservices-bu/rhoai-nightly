@@ -35,3 +35,8 @@ Thumbs.db
 # Backup files
 *.bak
 *~
+
+# VS Code AI-extension auto-generated instruction files (local editor config,
+# not part of this repo — one git add -A away from a public commit otherwise)
+.github/copilot-instructions.md
+.github/instructions/

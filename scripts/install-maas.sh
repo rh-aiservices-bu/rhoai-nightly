@@ -345,15 +345,35 @@ fi
 # (tm9xb: guard read an EMPTY condition, skipped, and the AUTH_FAILURE showed
 # up in maas-verify later) — so first wait up to 120s for the Accepted
 # condition to be written at all before deciding.
+#
+# The policy NAME is not stable across builds: 3.5 nightlies have shipped it
+# as `maas-gateway-auth` and as `gateway-default-auth` (g767p 2026-08-05, and
+# it flapped back to the old name after an operator restart). Resolve it by
+# its targetRef (the MaaS gateway) instead of hardcoding.
+find_maas_authpolicy() {
+    # `|| echo ""` guards the whole pipeline: a transient oc/API failure under
+    # pipefail would otherwise propagate through the assignment and errexit the
+    # install mid-polling.
+    oc get authpolicy -n openshift-ingress -o json 2>/dev/null | \
+        jq -r '[.items[] | select(.spec.targetRef.name == "maas-default-gateway")] | first | .metadata.name // empty' \
+        2>/dev/null || echo ""
+}
 AP_WAIT=0
+AP_NAME=""
+AP_ACCEPTED=""
 while [ $AP_WAIT -lt 120 ]; do
-    AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
-    [ -n "$AP_ACCEPTED" ] && break
+    # re-resolve the name EVERY iteration — the maas-controller can delete and
+    # recreate the policy under its other name mid-wait (the documented flap)
+    AP_NAME=$(find_maas_authpolicy)
+    if [ -n "$AP_NAME" ]; then
+        AP_ACCEPTED=$(oc get authpolicy "$AP_NAME" -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
+        [ -n "$AP_ACCEPTED" ] && break
+    fi
     sleep 10
     AP_WAIT=$((AP_WAIT + 10))
 done
-[ -z "$AP_ACCEPTED" ] && log_warn "AuthPolicy maas-gateway-auth has no Accepted condition after ${AP_WAIT}s — cannot evaluate §E1 guard"
-AP_MSG=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].message}' 2>/dev/null || echo "")
+[ -z "$AP_ACCEPTED" ] && log_warn "AuthPolicy for maas-default-gateway (${AP_NAME:-not found}) has no Accepted condition after ${AP_WAIT}s — cannot evaluate §E1 guard"
+AP_MSG=$(oc get authpolicy "$AP_NAME" -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].message}' 2>/dev/null || echo "")
 if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant Operator"; then
     log_warn "Kuadrant operator cached a missing Gateway API provider — restarting it (workarounds.md §E1)"
     # NB: `oc delete pod -l <selector>` exits 0 even when the selector matches
@@ -373,8 +393,11 @@ if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant O
     fi
     K_ELAPSED=0
     while [ $K_ELAPSED -lt 180 ]; do
-        AP_ACCEPTED=$(oc get authpolicy maas-gateway-auth -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
-        [ "$AP_ACCEPTED" = "True" ] && { log_info "AuthPolicy Accepted=True after kuadrant-operator restart"; break; }
+        # the maas-controller may recreate the policy under a different name
+        # after the restart — re-resolve each iteration
+        AP_NAME=$(find_maas_authpolicy)
+        AP_ACCEPTED=$(oc get authpolicy "$AP_NAME" -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || echo "")
+        [ "$AP_ACCEPTED" = "True" ] && { log_info "AuthPolicy $AP_NAME Accepted=True after kuadrant-operator restart"; break; }
         sleep 10
         K_ELAPSED=$((K_ELAPSED + 10))
     done

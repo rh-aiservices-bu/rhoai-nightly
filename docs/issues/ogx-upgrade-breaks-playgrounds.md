@@ -2,6 +2,30 @@
 
 **Jira: NOT FILED** — filing target: RHOAIENG/RHAIENG, component OGX/Gen AI. This file is the ready-to-file draft.
 
+> **Status check 2026-08-05:** unfixed everywhere. The cleanup code exists
+> upstream (`ogx-k8s-operator` `configmap_reconciler.go`
+> `cleanupOldGeneratedConfigMaps`, since #295/#309, 2026-06), but
+> `config/rbac/role.yaml` ClusterRole `manager-role` still grants configmaps
+> only `create/get/list/patch/update/watch` — **no `delete`** — on upstream
+> HEAD, rhds `main`, and rhds `rhoai-3.5`. Confirmed live on the 2026-08-05
+> nightly (g767p): `ClusterRole/ogx-k8s-operator-manager-role` ships without
+> configmaps delete. [RHAIENG-6384](https://redhat.atlassian.net/browse/RHAIENG-6384)
+> (New, no progress, triage-bot comment only) covers only the low-severity
+> accumulation half — the upgrade breakage remains unfiled.
+
+## Detection
+
+```bash
+# RBAC half (works on any cluster, no upgrade needed):
+oc get clusterrole ogx-k8s-operator-manager-role -o json | \
+  jq -c '.rules[] | select(.resources // [] | index("configmaps")) | .verbs'
+# BUG present: verbs list lacks "delete".
+
+# Full symptom (only after an in-place ogx upgrade with pre-existing playgrounds):
+oc get ogxserver -A   # pre-upgrade instances report Failed
+# operator logs: configmaps ... is forbidden: cannot delete / template mismatch
+```
+
 ## Summary
 
 After an in-place upgrade of the ogx operator (RHOAI 3.5 line), every

@@ -10,6 +10,16 @@ narrowed it to **one**: the generated static `api_token` is the literal
 request), in Review with fixVersion **3.6 EA1 only**; no rhoai-3.5
 cherry-pick exists. Prepared Jira comment at the end of this file.
 
+> **Re-checked 2026-08-05** (fresh install g767p, nightly built 2026-08-05):
+> verified by build inspection — the shipped dashboard commit `51128b23`
+> (rhoai-3.5 head, 2026-08-04) predates #8364, which remains merged to `main`
+> only (contained in rhds `main`/`rhoai-3.6-ea.1`, absent from
+> `rhoai-3.5`/`rhoai-3.5-ea.2`). RHOAIENG-79529 unchanged (New, unassigned);
+> RHOAIENG-38993 Resolved/Done with fixVersion still 3.6 EA1 only. The
+> fake-token defect is definitionally still present on 3.5; no cluster-side
+> re-test needed (would require an interactive dashboard login on this
+> throwaway cluster).
+
 ## Current state (live-verified 2026-08-04, tm9xb, released-track 3.5 FBC `f4183f7e`)
 
 | Path | Result |

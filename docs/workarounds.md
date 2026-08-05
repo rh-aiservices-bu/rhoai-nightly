@@ -35,6 +35,18 @@ removed as soon as a nightly ships the fix.
 > That is the intended sequencing (upgrade first, then run those targets), and
 > aborting is the safe direction, but it is a behavior change for that cluster
 > until it is upgraded.
+>
+> **Fresh-install audit: 2026-08-05** — full install on cluster-g767p (OCP
+> 4.20.32, single-AZ us-east-2a) from the floating `rhoai-3.5-nightly` built
+> 2026-08-05 13:55Z (operator `b3e086ed`/image `676d1a94`, maas `58e59dec` —
+> carries models-as-a-service#1313, dashboard `51128b23`). Every entry below
+> re-verified against that build; per-entry dates updated. Environment change
+> found on OCP **4.20.32**: there is **no `servicemeshoperator3` OLM operator
+> at all** — the ingress operator embeds the sail library and runs istiod
+> directly (`managed-by=sail-library`, istio 1.26.8, no Subscription/CSV).
+> The observability settle-gate now requires the SM CSV only when a
+> servicemeshoperator3 Subscription exists, and gates on istiod health
+> otherwise.
 
 ---
 
@@ -47,15 +59,28 @@ removed as soon as a nightly ships the fix.
   CrashLoopBackOff) once Kuadrant programs enforcement — dashboard dead.
   Kuadrant's wasm config leaks onto the dashboard gateway it was never meant for.
 - **Jira:** [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043)
-  (+77007, 78869)
+  **Resolved/Done 2026-08-05** (401 leg — fix = models-as-a-service#1313,
+  cherry-picked downstream 2026-08-04, QE-verified). The OOM leg's
+  [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227) was also
+  marked Resolved 2026-08-05 but carries **no fix PR, no fixVersion, no linked
+  change** — resolved with zero fix evidence, and the leak mechanism is still
+  live on today's nightly (below), so the Jira state does NOT make this entry
+  removable. The generic Kuadrant-side bug (its EnvoyFilters ship `targetRefs`
+  only, which Istio ignores without `ENABLE_ENHANCED_RESOURCE_SCOPING`) has
+  **no CONNLINK Jira at all** — filing gap, see issues/README.md queue.
 - **Verified needed 2026-07-31** (tm9xb, SM 3.4.0): stripped it → OOM ×6 within
   minutes of Kuadrant programming its EnvoyFilters.
 - **Re-confirmed 2026-08-04** on FBC `f4183f7e`: models-as-a-service#1313 gave
   `payload-processing` a `workloadSelector` (that's the RHOAIENG-80043 401 leg,
   now fixed), but the OOM leg is Kuadrant-owned and untouched —
   `kuadrant-maas-default-gateway`, `kuadrant-auth-*` and
-  `kuadrant-ratelimiting-*` still carry `targetRefs` only, which Istio ignores
-  without `ENABLE_ENHANCED_RESOURCE_SCOPING`, so they still leak. Detection:
+  `kuadrant-ratelimiting-*` still carry `targetRefs` only, so they still leak.
+- **Re-confirmed 2026-08-05** (fresh install, g767p, nightly with #1313 in the
+  build): the three `kuadrant-*` filters are still selector-less, and so is a
+  fourth — `maas-default-gateway-authn-ssl`, owned by **odh-model-controller**
+  (labels `app.kubernetes.io/managed-by=odh-model-controller`), which #1313 did
+  not cover. `make diagnose` independently reports "Leak present but strip
+  filter has priority=100". Detection:
   ```bash
   oc get envoyfilter -n openshift-ingress -o json | \
     jq -r '.items[] | select(.spec.workloadSelector == null) | .metadata.name'
@@ -72,8 +97,16 @@ removed as soon as a nightly ships the fix.
   once the Kuadrant wasm enforcement config lands (AuthPolicy +
   TokenRateLimitPolicy) — MaaS endpoint dead.
 - **Jira:** [RHOAIENG-68589](https://redhat.atlassian.net/browse/RHOAIENG-68589)
-  Resolved; open siblings 79227, 79551
+  Closed/Done; [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227)
+  Resolved (no fix evidence);
+  [RHOAIENG-79551](https://redhat.atlassian.net/browse/RHOAIENG-79551)
+  In Progress — note 79551 is about the **data-science-gateway** 1Gi default
+  (candidate fix opendatahub-operator#3904, unmerged as of 2026-08-05), not
+  this gateway; no upstream change to istio-proxy memory defaults exists yet
+  for either gateway.
 - **Verified needed 2026-07-31** (tm9xb): stripped it → OOM ×5 at 1Gi.
+- **Re-measured 2026-08-05** (fresh g767p): istio-proxy at **1217Mi** during a
+  plain `maas-verify` run — above the 1Gi default it would revert to.
 - **Remove when:** a bare install survives Kuadrant enforcement under
   `maas-verify` load with the default limit.
 
@@ -81,7 +114,8 @@ removed as soon as a nightly ships the fix.
 
 - **File:** `bootstrap/argocd-instance/patch-controller-resources.yaml`
 - **Without it:** app-controller OOMKills at the operator-default 2Gi with the
-  full app set (measured ~2.2Gi steady). **Permanent** sizing.
+  full app set (measured ~2.2Gi steady; 1932Mi on fresh g767p 2026-08-05
+  before MaaS/observability apps even landed). **Permanent** sizing.
 
 ### A6. Catalog re-resolution guards — `restart-catalog.sh`
 
@@ -118,6 +152,12 @@ removed as soon as a nightly ships the fix.
   `dig +short maas.<domain>` IPs than AZs containing Ready nodes
   (`oc get nodes -L topology.kubernetes.io/zone`) means an empty AZ is enrolled
   and the annotation is actively load-bearing.
+- **Precondition PRESENT 2026-08-05** (fresh g767p): 2 ELB IPs vs 1 AZ with
+  nodes (all MachineSets in us-east-2a) — the empty-AZ enrollment is real on
+  this cluster, and with the annotation applied both IPs answer 200. First
+  cluster since tm9xb where the workaround is demonstrably load-bearing, not
+  just precautionary. Still unfiled upstream (OCPBUGS search 2026-08-05 found
+  nothing covering cross-zone/empty-AZ on Gateway API classic ELBs).
 
 ### A13. Observability dashboard — set `Dashboard.spec.observability` manually (TEMPORARY)
 
@@ -140,15 +180,25 @@ removed as soon as a nightly ships the fix.
   test; without the patch they are untestable. Applied bu-nightly-2 2026-08-05;
   verified `ObservabilityAvailable=True reason=Deployed`, pods rolled,
   `/perses/api` answering.
+- **Re-proven on fresh install 2026-08-05** (g767p): operator does not set the
+  field (pre-patch: `ObservabilityAvailable=False reason=Disabled`, no
+  `dashboard-perses-access` NetworkPolicy, in-pod curl to Perses times out);
+  after the patch all three flip healthy within ~2 min. Fix PR
+  opendatahub-operator#3923 is still **open** — not merged to any branch, and
+  the dashboard module handler on `rhoai-3.5` has no observability code at all.
+  **Must be re-applied on every new cluster** — nothing in this repo applies it
+  (deliberate: it is Temporary and the operator fix is in flight).
 - **Remove when:** a nightly carries opendatahub-operator#3923. Detection —
   the operator owns the field (manual patch redundant):
   ```bash
-  oc get dashboard default-dashboard -o json | jq -r \
-    '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | .fieldsV1["f:spec"]["f:observability"] // empty'
+  oc get dashboard default-dashboard -o json --show-managed-fields | jq -r \
+    '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | (.fieldsV1["f:spec"]["f:observability"])? // empty'
   ```
   Non-empty output = operator projects it; delete the manual field ownership by
   re-applying without it or simply leave (operator now authoritative) and drop
-  this entry.
+  this entry. NB `--show-managed-fields` is required — modern `oc` strips
+  `managedFields` from `-o json` by default, which made the previous form of
+  this command (and the variant in the issue file) silently useless.
 
 ---
 
@@ -156,7 +206,7 @@ removed as soon as a nightly ships the fix.
 
 | What | Where | Why |
 |---|---|---|
-| **Service Mesh operator NOT GitOps-managed** | *(intentionally absent from `components/operators/`)* | On OCP 4.20+ the **ingress operator owns** the `servicemeshoperator3` subscription for Gateway API (Manual approval, pinned to its istio version). A GitOps-managed subscription fights it and can kill every gateway. See C2. |
+| **Service Mesh operator NOT GitOps-managed** | *(intentionally absent from `components/operators/`)* | On OCP 4.20+ the **ingress operator owns** istio for Gateway API. Through 4.20.30 that meant owning a `servicemeshoperator3` subscription (Manual approval, pinned istio); from **4.20.32** there is no SM OLM operator at all — the ingress operator embeds the **sail library** and runs istiod directly (`managed-by=sail-library`). Either way, a GitOps-managed subscription fights it and can kill every gateway. See C2. |
 | `maas-db-config` mirrored into `redhat-ai-gateway-infra` | `scripts/install-maas.sh` / `uninstall-maas.sh` | 3.5.0 moved maas-api there; PostgreSQL stays in `redhat-ods-applications` |
 | `SkipDryRunOnMissingResource=true` on ~15 CRs | rhoai / maas / evalhub / nfs / nfd+nvidia / connectivity-link kustomizations | CRs sync before operator-created CRDs exist |
 | `ignoreDifferences` — Subscription `installPlanApproval`; ClusterPolicy licensing | `components/argocd/apps/*-appset.yaml` | Operators mutate these fields |
@@ -185,6 +235,11 @@ audit) SM 3.4.0 refused the pinned istio as EOL and every gateway died; on
 So: don't blind-approve on a shared/prod cluster — check the OCP z-stream's
 istio pin first. (See also F1: `make sync` currently auto-approves these.)
 
+On OCP **4.20.32+** this whole class disappears: no servicemeshoperator3
+subscription exists (istiod is run by the ingress operator's embedded sail
+library), so there is nothing to approve — but the guard stays for older
+z-streams and for clusters upgraded from them.
+
 ---
 
 ## E. Install-time hazards — transient, known remedy
@@ -196,8 +251,17 @@ istio pin first. (See also F1: `make sync` currently auto-approves these.)
 demonstrably exists. Confirmed instances: TrustyAI ("InferenceServices CRD does
 not exist" — CRD present) and Kuadrant ("Gateway API provider is not installed"
 — istiod Running; consequence: zero AuthConfigs, `POST /v1/api-keys` → 500
-AUTH_FAILURE). Reproduced on every fresh cluster to date (r8mf7, fzgjg, tm9xb).
-Jira: [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925).
+AUTH_FAILURE). Reproduced on every fresh cluster to date (r8mf7, fzgjg, tm9xb,
+g767p 2026-08-05 — Kuadrant CR's own message says "please restart Kuadrant
+Operator pod once dependency has been installed").
+Jira: [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925)
+(still Backlog as of 2026-08-05).
+
+**Gotcha:** the MaaS gateway AuthPolicy's *name* is not stable across builds
+(`maas-gateway-auth` vs `gateway-default-auth`, and it can flap back after an
+operator restart) — `install-maas.sh` resolves it by targetRef since
+2026-08-05; older revisions hardcoded the name and reported "cannot evaluate
+§E1 guard" when it differed.
 
 **Remedy — delete the operator pod.** `oc rollout restart` does NOT work (OLM
 reverts the annotation; silent no-op):
@@ -215,7 +279,10 @@ condition to materialize, then bounces the pod on the known message).
 The wait budget (900s) is shorter than a cold pull + vLLM load (~18 min: two
 large images then engine init). If there's no CrashLoop/ImagePull error it's
 just slow — watch `oc get pods -n llm -w` to 2/2. Candidate fix: raise the GPU
-timeout in `scripts/setup-maas-model.sh` to ~1500s.
+timeout in `scripts/setup-maas-model.sh` to ~1500s. (2026-08-05 g767p: script
+exited 0 at ~17 min with the pod still 1/2 — vLLM finished loading ~4 min
+later; the hazard is now "script declares done before the model serves" rather
+than a hard timeout.)
 
 ---
 

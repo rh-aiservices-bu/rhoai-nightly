@@ -2,9 +2,18 @@
 
 **Jira: [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354)**
 "RHOAI Perses proxy not auto-configured — observability field on Dashboard CR
-is never set" (filed 2026-08-03 by others, **In Progress**). Source-verified
-here: that single unset field explains the whole failure. No separate filing
-needed; a corroborating comment is drafted at the end.
+is never set" (filed 2026-08-03 by others, **In Progress** as of 2026-08-05,
+no fixVersion; fix PR
+[opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923)
+still **open**, merged nowhere). Source-verified here: that single unset field
+explains the whole failure. No separate filing needed; a corroborating comment
+is drafted at the end.
+
+**Re-verified on fresh install 2026-08-05** (cluster-g767p, nightly built
+2026-08-05): operator still does not set the field; pre-patch all three
+detection probes fail exactly as documented; the A13 patch flips
+`ObservabilityAvailable=True reason=Deployed`, creates
+`dashboard-perses-access`, and the in-pod curl returns 200 within ~2 min.
 
 ## Symptom
 
@@ -185,8 +194,16 @@ Carried as A13 in [../workarounds.md](../workarounds.md) because the
 Observability dashboards are a feature under test and are untestable without
 it. Remove when a nightly carries
 [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923)
-(the fix projects DSCI monitoring config into `Dashboard.Spec.Observability`;
-detection: `oc get dashboard default-dashboard -o json | jq
-'.metadata.managedFields[] | select(.manager != "kubectl-patch") |
-.fieldsV1."f:spec"."f:observability"'` — non-null means the operator now owns
-the field and the manual patch is redundant).
+(the fix projects DSCI monitoring config into `Dashboard.Spec.Observability`).
+Detection (canonical form — kept in sync with A13 in workarounds.md):
+
+```bash
+oc get dashboard default-dashboard -o json --show-managed-fields | jq -r \
+  '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | (.fieldsV1["f:spec"]["f:observability"])? // empty'
+```
+
+Non-empty output means the operator now owns the field and the manual patch is
+redundant. Two fixes to the earlier form of this command (2026-08-05): it must
+pass `--show-managed-fields` (modern `oc` strips `managedFields` from `-o
+json`, so the old command matched nothing on any result), and it must exclude
+every kubectl-family manager, not just the literal `kubectl-patch`.

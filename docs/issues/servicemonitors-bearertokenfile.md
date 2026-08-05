@@ -2,6 +2,28 @@
 
 **Jira: NOT FILED** for 3.5 (precedent fix pattern: [RHOAIENG-19954](https://redhat.atlassian.net/browse/RHOAIENG-19954), Kueue, rhoai-2.19). Filing draft below.
 
+> **Re-confirmed 2026-08-05** on a fresh 3.5-nightly install (g767p): both
+> rejection events present, verbatim.
+>
+> **Upstream status (2026-08-05):** a partial fix EXISTS —
+> opendatahub-operator `6f918568` (#3812, 2026-08-04) removes
+> `bearerTokenFile` from the *operator-metrics* ServiceMonitor — but it is on
+> upstream `main`/`rhoai` and downstream `rhoai-3.6-ea.1` only, **not
+> `rhoai-3.5`**, and it does not cover `odh-model-controller-metrics-monitor`.
+> When filing, request a rhoai-3.5 cherry-pick + odh-model-controller
+> coverage. Strong precedent for the mechanism across products:
+> [OCPBUGS-88022](https://issues.redhat.com/browse/OCPBUGS-88022) (New) is the
+> **identical** rejection for NFD's `nfd-controller-manager-metrics-monitor` —
+> relevant to this rig since we deploy NFD; also OCPBUGS-87487
+> (compliance-operator), OCPBUGS-97868 (MetalLB, Verified).
+>
+> **Wider footprint (g767p sweep 2026-08-05):** the same rejection fires in
+> **five namespaces** on this cluster — beyond RHOAI's two monitors, also
+> `opentelemetry-operator-metrics-monitor` (openshift-operators),
+> `jobset-controller-manager-metrics-monitor` (openshift-jobset-operator), and
+> one in openshift-gitops-operator. Same operator-SDK scaffolding bug across
+> products; cite in the filing as evidence the pattern is systemic.
+
 
 - **Symptom:** none user-visible — `make diagnose` is green and the Observability
   dashboard loads. But two components' metrics are silently never scraped.

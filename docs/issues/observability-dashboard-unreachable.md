@@ -142,13 +142,51 @@ panels (request rate, success rate, GPU/CPU/memory, per-subscription usage).
 > the BFF's HTML error page after the blocked upstream request times out.
 > `Dashboard/default-dashboard` reports
 > `ObservabilityAvailable=False reason=Disabled`.
+>
+> Addendum from a second cluster (same build): the NetworkPolicy is only half
+> the blast radius. With `dashboard-perses-access` present and an in-pod curl
+> from the dashboard pod to Perses returning 200, the page still fails
+> identically — the frontend's `/perses/api/v1/...` fetch has no registered
+> proxy route while `observability.enabled` is unset, so the SPA catch-all
+> serves `index.html` (HTTP 200, text/html) and the JSON parse throws. Also
+> confirming the documented workaround: the manual Dashboard patch survives
+> reconciliation (the operator's SSA apply doesn't claim `spec.observability`),
+> flips `ObservabilityAvailable=True reason=Deployed`, rolls the dashboard
+> pods with the module, and the page loads.
 
-## No workaround carried
+## bu-nightly-2 evidence (2026-08-05): the network block is only half the bug
 
-The rig functions without the page (metrics are still collected and
-queryable via Prometheus/Thanos), so per repo policy this is documented and
-tracked, not worked around. If a demo needs it before the fix ships, an admin
-can apply the missing `dashboard-perses-access` NetworkPolicy from the
-dashboard repo's `manifests/observability/rhoai/network-policy.yaml` into
-`redhat-ods-monitoring` — note that patching `Dashboard.spec.observability`
-directly is reverted by the rhods-operator module reconciler.
+On bu-nightly-2 (3.5.0, same FBC) the `dashboard-perses-access` NetworkPolicy
+existed (manually applied months earlier) and an in-pod curl from the
+dashboard pod to Perses returned **200** — yet the page was still broken with
+the same `Unexpected token '<'`. Proven cause: the frontend fetches
+`/perses/api/v1/...` (path confirmed in the plugin bundle), and with
+`observability.enabled` unset the backend never registers the `/perses`
+proxy route, so the SPA catch-all returns `index.html` with HTTP 200 and the
+JSON parse fails. The browser error is the missing proxy route, not the
+NetworkPolicy — both are gated on the same flag.
+
+## Workaround A13 (temporary): set the field manually
+
+The Jira's documented workaround **works and persists** — contrary to the
+earlier claim here that the module reconciler reverts it (it does not: the
+rhods-operator's SSA apply doesn't own `spec.observability`, so a manual
+merge-patch survives reconciliation). Verified live on bu-nightly-2
+2026-08-05: field intact after reconcile, `ObservabilityAvailable=True
+reason=Deployed`, dashboard pods rolled with the observability module, and
+the `/perses/api` route began answering.
+
+```bash
+oc patch dashboard default-dashboard --type merge -p \
+  '{"spec":{"observability":{"enabled":true,"persesService":{"name":"data-science-perses","namespace":"redhat-ods-monitoring","port":8080}}}}'
+```
+
+Carried as A13 in [../workarounds.md](../workarounds.md) because the
+Observability dashboards are a feature under test and are untestable without
+it. Remove when a nightly carries
+[opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923)
+(the fix projects DSCI monitoring config into `Dashboard.Spec.Observability`;
+detection: `oc get dashboard default-dashboard -o json | jq
+'.metadata.managedFields[] | select(.manager != "kubectl-patch") |
+.fieldsV1."f:spec"."f:observability"'` — non-null means the operator now owns
+the field and the manual patch is redundant).

@@ -7,6 +7,32 @@ draft.
 Found 2026-08-05 on cluster-tm9xb (RHOAI 3.5.0) when the
 `rhoai-3.5-nightly` tag rebuilt after 3.5.0 GA.
 
+> **Jira search 2026-08-05:** nothing tracks this (nearest misses:
+> RHOAIENG-75776/75777 EA-CSV naming/stuck-subscription variants,
+> RHOAIENG-80314 Jenkins FBC version tracer). No build-config commit
+> addresses it either. This repo's carried mitigation is
+> `scripts/restart-catalog.sh`'s image-aware guard (workarounds.md A6):
+> CSV names equal + bundle images differ → clean reinstall.
+
+## Detection
+
+```bash
+# Baseline (any healthy cluster): record what OLM thinks is latest.
+oc get subscription rhods-operator -n redhat-ods-operator \
+  -o jsonpath='{.status.state} {.status.installedCSV}{"\n"}'   # AtLatestKnown rhods-operator.3.5.0
+
+# The bug is live when the catalog serves a NEWER bundle under the SAME name.
+# NB: two packagemanifests named rhods-operator exist (redhat-operators + the
+# nightly catalog) and a bare `oc get packagemanifest rhods-operator` resolves
+# to the RELEASED catalog — the label selector is required or the comparison
+# reports a false positive on every healthy cluster:
+INSTALLED=$(oc get deployment rhods-operator -n redhat-ods-operator -o jsonpath='{.spec.template.spec.containers[0].image}')
+OFFERED=$(oc get packagemanifest -l catalog=rhoai-catalog-nightly \
+  -o jsonpath='{.items[?(@.metadata.name=="rhods-operator")].status.channels[?(@.name=="stable-3.x")].currentCSVDesc.annotations.containerImage}' 2>/dev/null)
+echo "installed=$INSTALLED"; echo "offered=  $OFFERED"
+# Different digests + Subscription AtLatestKnown = OLM will never upgrade; use restart-catalog.sh.
+```
+
 ## Summary
 
 Every post-GA rebuild of the `rhoai-3.5-nightly` FBC ships its head bundle as

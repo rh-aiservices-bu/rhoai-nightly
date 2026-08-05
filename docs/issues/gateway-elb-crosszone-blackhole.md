@@ -6,8 +6,14 @@ Gateway API on AWS), with a secondary note to opendatahub-io/models-as-a-service
 **Found:** 2026-07-31, fresh RHOAI 3.5.0 nightly install on cluster-tm9xb
 (OCP 4.20.30, AWS us-east-2, single-AZ cluster — all 5 nodes in us-east-2c).
 **Workaround in this repo:** `components/instances/maas-instance/chart/templates/maas-gateway-options.yaml`
-(`service` key adds the cross-zone annotation). **Temporary** — remove when the
-gateway controller provisions LBs that serve from every enrolled AZ by default.
+(`service` key adds the cross-zone annotation, workarounds.md **A11**).
+**Temporary** — remove only when OpenShift provisions the gateway LB with
+cross-zone enabled (or as an NLB) **by default**, not merely when a given
+cluster's IPs all answer (see A11 for why the topology-based check is a trap).
+**Re-verified 2026-08-05** (cluster-g767p, OCP 4.20.32, single-AZ us-east-2a,
+istiod now run by the ingress operator's embedded sail library): the ELB still
+enrolls 2 AZs with nodes in only 1 — the precondition is live and the
+annotation is load-bearing on this cluster.
 
 ## Symptom
 
@@ -71,9 +77,16 @@ mechanism for its service-ca annotation, so this is the supported knob.
 
 ## Remove when
 
-The Detection loop shows every ELB IP serving without the annotation
-(i.e., the gateway controller either enables cross-zone, restricts LB AZ
-enrollment to AZs with instances, or moves to NLB with sane defaults).
+OpenShift provisions the gateway LB with cross-zone enabled (or as an NLB, or
+with AZ enrollment restricted to AZs holding instances) **by default** — i.e.,
+an upstream change, verified in release notes or the cloud-provider code.
+
+Do NOT remove based on the Detection loop alone: every-IP-answers only proves
+*today's topology* has no empty AZ (it goes green on any cluster whose node
+AZs happen to cover the ELB's enrolled AZs) — the earlier wording here nearly
+retired a live workaround that way (see workarounds.md A11, 2026-08-04 note).
+Precondition check instead: more distinct `dig +short` IPs than AZs containing
+Ready nodes means an empty AZ is enrolled and the annotation is load-bearing.
 
 ## Steps to reproduce
 

@@ -1,12 +1,33 @@
 # TelemetryPolicy label REMOVALS never propagate to the wasm config (RHCL 1.4.2)
 
 **Jira: NOT FILED** — filing target: CONNLINK (RHCL). This file is the
-ready-to-file draft.
+ready-to-file draft. **File it referencing
+[CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300)** (see
+below) rather than as an isolated report.
 
 Found 2026-08-01 on cluster-tm9xb (RHOAI 3.5.0 nightly, RHCL 1.4.2) during a
 controlled propagation experiment. Supersedes the RHCL 1.4.1-era
 "spec updates don't propagate at all" issue: on 1.4.2 propagation is
 **asymmetric** — additions apply within seconds, removals never apply.
+
+> **Re-verified 2026-08-05** (fresh install, cluster-g767p, nightly built
+> 2026-08-05, RHCL 1.4.2): addition propagated to the EnvoyFilter in **≤5s**;
+> removal still absent from the EnvoyFilter after **120s** with the policy
+> reporting Accepted=True/Enforced=True throughout. Delete+recreate (ArgoCD
+> selfHeal) cleaned it in ~15s. Inference stayed healthy during the probe (the
+> probe label is a resolvable literal — the hang below needs an unresolvable
+> stale source).
+>
+> **CONNLINK-1300 linkage (checked 2026-08-05):** 1300 (Refinement, fixVersion
+> RHCL 1.4.3, now attached to 3 customer cases) tracks the *unresolvable
+> stale-label → CEL NoSuchKey → rate limiting silently disabled* leg. Its
+> comments **describe this removal-propagation bug as a workaround obstacle**
+> ("I had to delete the tenant cr and create it again because TelemetryPolicy
+> changes were not propagated to the WASM EnvoyFilter") but do NOT track it,
+> and the response-stream hang below appears nowhere in it. So: comment on
+> 1300 with the propagation asymmetry + stream-hang evidence, and get either a
+> scope extension or a linked bug. Related same-class finding from Kuadrant's
+> security audit: CONNLINK-1443 (fail-open on pipeline build error).
 
 ## Summary
 

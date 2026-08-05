@@ -9,6 +9,19 @@
 > (Config propagation itself works on 1.4.2 — a label added to the policy
 > reached the EnvoyFilter within seconds — so this is squarely an emission
 > bug, not a propagation one.)
+>
+> Re-verified again 2026-08-05 (fresh install, cluster-g767p, nightly built
+> 2026-08-05, RHCL 1.4.2): same result — wasm `requestData` carries
+> `metrics.labels.{model,subscription,user}`, policy Enforced, traffic 200s,
+> zero series in UWM with any of the three labels; `kuadrant_allowed` label
+> set = infra only.
+>
+> **Jira triangulation 2026-08-05:** still nothing filed for this.
+> [CONNLINK-1132](https://redhat.atlassian.net/browse/CONNLINK-1132) (Closed)
+> was the nearest candidate — wasm-shim filtered response-property CEL out of
+> request-only actions — but its fix (wasm-shim#378, v0.14.0) shipped **in RHCL
+> 1.4.1**, and this bug reproduces on 1.4.2, so it is not covered by 1132.
+> CONNLINK-1300 remains the unresolvable-source complement (see below).
 
 ## Summary
 
@@ -30,6 +43,25 @@ report task. This issue is the complement: **all sources resolvable, no error
 logged, labels still absent**. Either the wasm-shim never attaches the labels
 to the metrics it emits, or the emission path ignores the telemetry config
 entirely.
+
+## Detection
+
+```bash
+# 1. Policy Enforced and config present in the wasm EnvoyFilter:
+oc get telemetrypolicy maas-telemetry -n openshift-ingress \
+  -o jsonpath='{.status.conditions}'         # expect Accepted=True, Enforced=True
+oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress -o json \
+  | grep -o 'metrics.labels.[a-z_]*' | sort -u   # expect model/subscription/user
+
+# 2. Fire authenticated inference traffic, wait ~2 min, then:
+TOKEN=$(oc whoami -t)
+THANOS=$(oc get route thanos-querier -n openshift-monitoring -o jsonpath='{.spec.host}')
+curl -sk -H "Authorization: Bearer $TOKEN" "https://$THANOS/api/v1/query" \
+  --data-urlencode 'query=kuadrant_allowed' \
+  | jq -r '[.data.result[].metric | keys] | flatten | unique | join(",")'
+# BUG: only infra labels (container,endpoint,instance,job,namespace,pod,...).
+# FIXED: model / subscription / user present.
+```
 
 ## Steps to reproduce
 

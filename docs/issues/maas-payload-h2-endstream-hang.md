@@ -22,6 +22,15 @@ find. Filing gives support/QE a searchable record and a vehicle for the
 "respin ea.2 or document it" decision. Delete this file once a Jira exists or
 the beta channel moves past ea.2.
 
+**Re-verified fixed 2026-08-05** on a fresh 3.5-nightly install (g767p):
+payload-processing image is the fixed `84cee292…` digest; H2 inference
+completes in 0.75s, H1.1 in 0.16s. **Jira re-search 2026-08-05:** still
+nothing tracks this specifically. Closest existing:
+[RHOAIENG-79535](https://redhat.atlassian.net/browse/RHOAIENG-79535) (Closed —
+"IPP response api-translation plugin breaks SSE streaming for internal
+models"; same stream-never-completes symptom family but its fix was a config
+default, not #419). When filing, link 79535 as related.
+
 ## Summary
 
 On every RHOAI 3.5.0-ea.2 build, any request to a MaaS LLM route through

@@ -147,14 +147,33 @@ run_settle_gate() {
     # on failure, prints nothing AND returns zero on success. We rely on the
     # stdout signal, not the exit code (the `|| true` is here so set -e doesn't
     # abort before we can read $csv_report; an empty $csv_report = pass).
+    local csv_entries=(
+        "rhods-operator:redhat-ods-operator"
+        "cluster-observability-operator:openshift-cluster-observability-operator"
+        "opentelemetry-operator:openshift-operators"
+        "authorino-operator:kuadrant-system"
+        "limitador-operator:kuadrant-system"
+    )
+    # servicemeshoperator3 is an OLM operator only when istio is OLM-managed.
+    # From OCP 4.20.32 the ingress operator embeds the sail library and runs
+    # istiod directly (istiod deployment labelled managed-by=sail-library, no
+    # Subscription/CSV at all) — in that mode gate on istiod health instead.
+    if oc get subscription -A --no-headers 2>/dev/null | grep -q servicemeshoperator3; then
+        csv_entries+=("servicemeshoperator3:openshift-operators")
+    else
+        local istiod_ready
+        # `|| echo ""` is load-bearing: with no matching deployment the jsonpath
+        # index errors and oc exits 1, which under set -e would kill the script
+        # before abort_settle_gate could print its diagnostic.
+        istiod_ready=$(oc get deployment -n openshift-ingress -l app=istiod \
+            -o jsonpath='{.items[0].status.readyReplicas}' 2>/dev/null || echo "")
+        if [[ -z "$istiod_ready" || "$istiod_ready" == "0" ]]; then
+            abort_settle_gate "no servicemeshoperator3 Subscription and no ready istiod deployment in openshift-ingress"
+        fi
+        log_info "  ✓ istiod managed by ingress-operator sail library (no OLM CSV) — istiod Ready"
+    fi
     local csv_report
-    csv_report=$(settle_check_csvs \
-        "rhods-operator:redhat-ods-operator" \
-        "cluster-observability-operator:openshift-cluster-observability-operator" \
-        "opentelemetry-operator:openshift-operators" \
-        "servicemeshoperator3:openshift-operators" \
-        "authorino-operator:kuadrant-system" \
-        "limitador-operator:kuadrant-system" 2>&1) || true
+    csv_report=$(settle_check_csvs "${csv_entries[@]}" 2>&1) || true
     if [[ -n "$csv_report" ]]; then
         abort_settle_gate "$csv_report"
     fi

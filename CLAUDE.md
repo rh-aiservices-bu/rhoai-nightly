@@ -39,6 +39,8 @@ rhoai-nightly/
 │   ├── setup-maas-model.sh             # Deploy/delete/status MaaS models
 │   ├── verify-maas.sh                  # End-to-end MaaS verification
 │   ├── status.sh                        # Show ArgoCD app status
+│   ├── compare-builds.sh               # Which RHOAI build is where (git pins vs clusters vs quay)
+│   ├── cleanup-stale-projects.sh       # Audit/delete stale dashboard projects (audit-only default)
 │   ├── diagnose.sh                      # Comprehensive cluster diagnosis
 │   ├── preflight-check.sh              # Quick cluster readiness check
 │   ├── validate-config.sh              # Validate .env against cluster capabilities
@@ -1054,6 +1056,8 @@ oc get mcp  # MachineConfigPool status
 | `components/instances/maas-instance/chart/` | MaaS Helm chart (PostgreSQL + PVC, Gateway) |
 | `components/instances/maas-observability/base/` | MaaS observability GitOps manifests (TelemetryPolicy, Istio Telemetry) |
 | `bootstrap/cluster-monitoring-config/` | UWM ConfigMap applied by `scripts/enable-uwm.sh` during `make infra` |
+| `scripts/compare-builds.sh` | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift) |
+| `scripts/cleanup-stale-projects.sh` | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`) |
 | `scripts/enable-uwm.sh` | Enable UWM (idempotent merge; --check / --dry-run modes) |
 | `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app, Authorino, default observability) |
 | `scripts/install-observability.sh` | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors) |

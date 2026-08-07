@@ -16,18 +16,41 @@ Found 2026-08-07 on **bu-nightly-2** (RHOAI 3.5.0, nightly `3a41d1ee` built
 2026-08-05). **Not reproducible on a fresh install**: cluster-g767p runs the
 byte-identical build and shows one tab.
 
-**Who is affected — the trigger is narrower than "an upgrade".** What matters
-is whether the cluster *existed continuously across the 2026-08-04
-`maas-controller` change* that moved its Perses output between namespaces:
+**Who is affected — proven against released builds (2026-08-07), not just this
+rig.** The app-namespace dashboard was added by `2af4155f` "feat: add a usage
+dashboard (#624)" (2026-04-01) and the namespace move by `a86b3a82` (#1087,
+2026-07-07). Mapping both onto the release branches and GA build dates:
 
-- bu-nightly-2 created the old object on **2026-07-25**, was still running when
-  the controller rolled on **2026-08-04**, and kept it. Affected.
-- g767p was installed **2026-08-05**, after the move, so it only ever created
-  the new object. Clean.
+| Build | Built | Behavior |
+|---|---|---|
+| `rhoai-3.4.0-ga` | 2026-05-13 | creates in app ns, no ownerRef |
+| `rhoai-3.4.1-ga` | 2026-06-17 | creates in app ns, no ownerRef |
+| `rhoai-3.4.2-ga` | 2026-06-30 | creates in app ns, no ownerRef |
+| `rhoai-3.5-ea.1` | 2026-06-25 | creates in app ns, no ownerRef |
+| `rhoai-3.5-ea.2` | 2026-07-18 | monitoring ns (move landed on its branch 07-07) |
+| `rhoai-3.5` GA / nightlies | — | monitoring ns; **no cleanup of the old object** |
 
-A cluster that merely took a nightly-to-nightly catalog bump across 2026-08-04
-is affected exactly the same way — no CSV version change is required. Any
-cluster installed after 2026-08-04 is permanently clean.
+The move **never landed on the `rhoai-3.4` branch**, so *every* 3.4 GA
+z-stream creates the orphan-precursor and no 3.4 build ever removes it.
+Preconditions on 3.4: MaaS enabled and the Perses CRDs present (COO) — the 3.4
+tenant reconciler skips the Perses bundle gracefully when the CRDs are absent
+(`tenantreconcile/constants.go`, `perses.dev` listed as optional).
+
+**Therefore: any customer running 3.4 GA with MaaS + observability who upgrades
+to 3.5 hits this.** It is not a nightly/interim-build artifact:
+
+- bu-nightly-2 was running **3.4.2** (rhoai-3.4 branch code) when its orphan
+  was created on 2026-07-25 — the same code every 3.4 GA customer runs. It
+  upgraded to 3.5.0 in August and kept the orphan.
+- g767p was installed 2026-08-05 directly on 3.5, so it only ever created the
+  new object. Clean.
+
+Developer response (2026-08-07, Slack): on being shown the duplicate, the
+developer deleted the orphaned dashboard on bu-nightly-2 and assessed it as
+"very likely an interim build issue". The build-date table above contradicts
+the interim-build reading — the creator code shipped in three GA releases —
+which is why this section exists: the filing must pre-empt an
+"interim-build, won't fix" triage.
 
 ## Summary
 
@@ -315,8 +338,10 @@ cannot be reclaimed by *any* path, so the distinction between a normal edge and 
 clean reinstall does not affect the conclusion. It would be falsified by finding
 either (a) a cleanup routine that selects on something this object does carry, or
 (b) that the 3.4 dashboard is only created under a configuration unique to this
-rig — but the 3.4 path is the ordinary tenant reconcile that runs for any MaaS
-tenant.
+rig. **(b) is now closed** (2026-08-07): the creator commit `2af4155f`
+(2026-04-01) predates all three 3.4 GA builds (05-13, 06-17, 06-30), sits on the
+`rhoai-3.4` branch, and is gated only on MaaS + the Perses CRDs — the ordinary
+tenant reconcile for any MaaS tenant with observability.
 
 ## Consequence
 
@@ -341,6 +366,11 @@ oc delete persesdatasource kuadrant-prometheus-datasource -n redhat-ods-applicat
 ```
 
 This is a per-cluster manual action, deliberately **not** automated in this repo.
+
+**Status on bu-nightly-2 (2026-08-07):** the developer deleted the orphaned
+*dashboard* manually — verified gone, tab strip back to 7 unique tabs. The
+orphaned **datasource is still present** and still fails reconcile every
+~16 min (`prometheus-web-tls-ca not found`); it needs the same deletion.
 
 ## Filing drafts
 

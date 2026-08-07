@@ -30,6 +30,7 @@ Working rules:
 | [observability-dashboard-unreachable.md](observability-dashboard-unreachable.md) | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress, fix PR [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923) still open (merged nowhere) | Open — re-proven on fresh g767p 2026-08-05; A13 must be re-applied per cluster |
 | [maas-payload-h2-endstream-hang.md](maas-payload-h2-endstream-hang.md) | **NOT FILED** — no Jira exists (re-searched 2026-08-05; closest: RHOAIENG-79535, different fix); fixed by [ai-gateway-payload-processing#419](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/419) with no Jira trail | ea.2 line only (incl. released `beta` channel) — verified FIXED on 3.5-nightly g767p 2026-08-05 (`84cee292`, h2 0.75s) |
 | [nightly-csv-name-static.md](nightly-csv-name-static.md) | **NOT FILED** — target RHOAI build/release eng (searched 2026-08-05: no build-project tracker found) | Open — mechanism unchanged on the 2026-08-05 nightly; mitigated by restart-catalog.sh image-aware guard (A6) |
+| [duplicate-usage-tab-after-upgrade.md](duplicate-usage-tab-after-upgrade.md) | **NOT FILED** — needs **two** filings (RHOAIENG): maas-controller orphan + dashboard tab-key bug. Nearest existing: [RHOAIENG-60373](https://issues.redhat.com/browse/RHOAIENG-60373) Closed (added ownerRefs for *new* Perses resources only), [RHOAIENG-61344](https://issues.redhat.com/browse/RHOAIENG-61344) Closed (same cleanup-gap class) | Open — found 2026-08-07 on bu-nightly-2. Orphaned 3.4-era PersesDashboard shadows the 3.5 one, which becomes unreachable; affects any cluster living across the 2026-08-04 namespace move (incl. supported 3.4→3.5). Absent on fresh g767p |
 
 ## Open Jiras backing carried workarounds
 
@@ -49,5 +50,7 @@ TelemetryPolicy-removals (**as comment/linked bug on CONNLINK-1300**),
 ogx-upgrade (RHAIENG — link RHAIENG-6384), ea.2 H2 hang (RHOAIENG — link
 RHOAIENG-79535), nightly-csv-name-static (build/release eng), Kuadrant
 EnvoyFilter-without-workloadSelector leak (CONNLINK — the generic mechanism
-behind A1; only the MaaS-side symptom was ever filed) — plus the prepared
-RHOAIENG-79529 comment in the D2c file.
+behind A1; only the MaaS-side symptom was ever filed), duplicate-usage-tab
+(**two** RHOAIENG filings — maas-controller Perses orphan, and the dashboard
+tab-keying bug; added 2026-08-07) — plus the prepared RHOAIENG-79529 comment in
+the D2c file.

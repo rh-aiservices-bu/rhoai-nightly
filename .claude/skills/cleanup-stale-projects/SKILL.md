@@ -1,6 +1,6 @@
 ---
 name: cleanup-stale-projects
-description: Audit and delete stale RHOAI dashboard projects (empty shells and all-stopped projects) using scripts/cleanup-stale-projects.sh. Use when the user asks to clean up old/stale/abandoned AI projects or reclaim storage from unused workbenches and models.
+description: Audit and delete stale RHOAI dashboard projects (empty shells and all-stopped projects) via `make cleanup-projects`. Use when the user asks to clean up old/stale/abandoned AI projects or reclaim storage from unused workbenches and models.
 ---
 
 # Clean Up Stale AI Projects
@@ -59,8 +59,8 @@ Confirm with the user this is the intended cluster if there is any ambiguity
 ### Step 2: Audit + dry-run
 
 ```bash
-scripts/cleanup-stale-projects.sh          # full picture
-scripts/cleanup-stale-projects.sh --delete-empty <N> --delete-stopped <M> --dry-run
+make cleanup-projects                                    # full picture, audit only
+make cleanup-projects ARGS="--delete-empty <N> --delete-stopped <M> --dry-run"
 ```
 
 The dry-run prints the exact `Will delete:` list for the thresholds without
@@ -130,7 +130,7 @@ Do not proceed without the user approving the actual dry-run list.
 ### Step 5: Execute
 
 ```bash
-scripts/cleanup-stale-projects.sh --delete-empty <N> --delete-stopped <M> [--exclude ...]
+make cleanup-projects ARGS="--delete-empty <N> --delete-stopped <M> [--exclude ...]"
 ```
 
 The script re-verifies each namespace immediately before deleting it and

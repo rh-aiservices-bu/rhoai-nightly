@@ -252,11 +252,40 @@ Asked and checked, because it is the first question a triager will raise:
   `tenantreconcile/apply.go:120` takes the labels-only `else` branch for any
   resource outside the tenant's namespace. Nothing an operator of the cluster
   can influence.
-- **No upgrade path removes it.** With no owner there is nothing for GC to
-  cascade from, so a textbook OLM upgrade strands it exactly as ours did.
-  `restart-catalog.sh`'s clean reinstall (workarounds.md §A6) deletes the
-  Subscription and CSV, which reclaims operator-*owned* resources — this object
-  is owned by nothing, so that step is neither cause nor cure.
+- **No cleanup mechanism has a handle on it — and this does not depend on how
+  the upgrade was performed.** Checked on the live object 2026-08-07:
+
+  ```
+  ownerReferences:                   NONE     -> Kubernetes GC has nothing to cascade from
+  labels matching /olm|operator/:    {}       -> OLM CSV replacement cannot reclaim it
+  platform.opendatahub.io/part-of:   ABSENT   -> the ODH generic GC cannot select it
+  finalizers:                        none
+  ```
+
+  For contrast `redhat-ods-monitoring/dashboard-0-cluster-admin` carries both an
+  ownerRef (`Dashboard/default-dashboard`) *and* `part-of: dashboard`. The orphan
+  has neither. Combined with the code facts below — maas-controller's only Perses
+  delete path is ownership-gated, and the RHOAI monitoring controller deletes
+  only the Tempo dashboard by exact name — **no upgrade mechanism, normal OLM
+  edge or clean reinstall, has anything to act on.** `restart-catalog.sh`
+  (workarounds.md §A6) reclaims operator-*owned* resources; this object is owned
+  by nothing, so that step is neither cause nor cure.
+
+- **The `app.kubernetes.io/managed-by: maas-observability` label on the orphan
+  is upstream's, not this repo's** — a name collision worth pre-empting, since
+  this repo uses the same label value elsewhere. Upstream sets it in
+  `deployment/components/observability/observability/dashboards/kustomization.yaml`
+  (kustomization literally named `maas-observability`) on `origin/rhoai-3.4`.
+  This repo creates **no** `PersesDashboard` at all, and applies its own
+  identically-valued label only to the TelemetryPolicy and Istio Telemetry in
+  `openshift-ingress`. The orphan's field manager is `maas-controller`.
+
+  Corroboration from the same bundle: it also ships
+  `prometheus-web-tls-ca-configmap.yaml`. In 3.4 the CA ConfigMap and the
+  dashboard were deployed together into the application namespace; the move took
+  the CA to `redhat-ods-monitoring` and stranded the dashboard, which is exactly
+  why the orphaned datasource now fails with `configmaps "prometheus-web-tls-ca"
+  not found`.
 - **Upstream already owns this class of bug.**
   [RHOAIENG-60373](https://issues.redhat.com/browse/RHOAIENG-60373) fixed
   ownership for newly-created Perses resources without migrating existing ones,
@@ -265,11 +294,29 @@ Asked and checked, because it is the first question a triager will raise:
   from `rhoai-3.4`, so any supported 3.4 → 3.5 upgrade with MaaS enabled
   crosses this move. This is not a nightly-rig artifact.
 
-**Known limit of this analysis:** the conclusion is drawn from code and from the
-object's provenance, not from an observed 3.4-GA → 3.5-GA OLM upgrade. It would
-be falsified if the 3.4 dashboard were only created under some configuration
-unique to this rig — but the 3.4 path is the ordinary tenant reconcile that runs
-for any MaaS tenant.
+**Known limit of this analysis, stated precisely.** No 3.4-GA → 3.5-GA OLM
+upgrade was *observed*; the argument above is from the object's ownership state
+and from code. That distinction was checked rather than assumed:
+
+- bu-nightly-2 retains exactly **one** InstallPlan, `install-v6lfz`, created
+  `2026-08-05T16:19:42Z` — this repo's `restart-catalog.sh` deletes the
+  Subscription, which cascade-removes prior InstallPlans, so the upgrade history
+  for the relevant window is **gone and cannot be reconstructed** from the
+  cluster.
+- No second upgraded cluster exists to compare: a sweep of all 14 kubeconfig
+  contexts on 2026-08-07 found RHOAI installed on only two — bu-nightly-2
+  (8 dashboards, 1 orphan) and the fresh g767p (7, none).
+- The namespace handoff is timestamped `2026-08-04T21:53`, roughly 18.5 hours
+  *before* that CSV reinstall, so the reinstall did not perform the relocation.
+
+This is why the argument is deliberately built on ownership rather than on
+upgrade mechanics: an object with no ownerRef, no OLM labels and no GC label
+cannot be reclaimed by *any* path, so the distinction between a normal edge and a
+clean reinstall does not affect the conclusion. It would be falsified by finding
+either (a) a cleanup routine that selects on something this object does carry, or
+(b) that the 3.4 dashboard is only created under a configuration unique to this
+rig — but the 3.4 path is the ordinary tenant reconcile that runs for any MaaS
+tenant.
 
 ## Consequence
 

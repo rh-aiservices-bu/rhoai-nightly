@@ -49,6 +49,7 @@ help:
 	@echo "  make diagnose       - Full cluster diagnosis (connectivity, config, RHOAI, MaaS)"
 	@echo "  make compare        - Which build is where: git pins vs clusters vs quay (exit 2 = drift)"
 	@echo "                        ARGS=\"--no-cluster\" offline, \"--repos\" adds upstream commits,"
+	@echo "                        \"--fixes\" hunts ledger Jira keys on the build branch,"
 	@echo "                        \"--image :rhoai-3.6-ea.1-nightly\" adds an explicit reference point"
 	@echo "  make preflight      - Quick readiness check (pass/warn/fail)"
 	@echo "  make validate-config - Validate .env against cluster capabilities"

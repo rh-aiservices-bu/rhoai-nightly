@@ -32,6 +32,7 @@
 #   scripts/compare-builds.sh --cluster CTX          # a specific oc context (repeatable)
 #   scripts/compare-builds.sh --image :rhoai-3.6-ea.1-nightly
 #   scripts/compare-builds.sh --repos                # also report upstream commits since the build
+#   scripts/compare-builds.sh --fixes                # which ledger issues have fixes on the build branch
 #   scripts/compare-builds.sh --list-tags            # authoritative milestone discovery (SLOW, ~216k tags)
 #   scripts/compare-builds.sh --json                 # machine-readable
 #
@@ -42,9 +43,21 @@
 #   --stream/--no-stream
 #   --components/--no-components   component-layer diff (default: on when a cluster resolves)
 #   --repos           check the upstream org clones for commits since the build
+#   --fixes           search the downstream release branch for commits citing the
+#                     Jira keys in docs/, split into already-in-this-build vs pending
+#   --since DAYS      API history window for --fixes (default 90; clones use full history)
 #   --list-tags       discover milestone tags from the registry instead of probing
 #   --json            emit JSON instead of the table
 #   -q, --quiet       suppress progress chatter
+#
+# --fixes portability: nothing about this machine is assumed. Local clones are
+# located by their ORIGIN REMOTE URL (override the search roots with
+# RHOAI_SRC_ROOTS, colon-separated) and are only an optimisation -- with none
+# present it falls back to `gh` if authenticated, else the anonymous GitHub API
+# (these repos are public; 60 requests/hour, one per repo). Jira has NO anonymous
+# read, so it needs JIRA_TOKEN, or JIRA_EMAIL + JIRA_API_TOKEN, and is skipped
+# with an explicit notice otherwise. Every run prints which capabilities it had,
+# so "no hits" is never ambiguous between "nothing landed" and "could not look".
 #
 # Exit codes:
 #   0 = every resolved reference point agrees (same digest)
@@ -74,9 +87,25 @@ USE_CLUSTER=true
 USE_STREAM=true
 USE_COMPONENTS=""      # empty = auto (on when a cluster resolves)
 USE_REPOS=false
+USE_FIXES=false
+SINCE_DAYS=90
 LIST_TAGS=false
 JSON=false
 QUIET=false
+
+# Downstream repos that build RHOAI components. Fixes must land HERE (not just
+# in opendatahub-io) to reach a nightly. Each carries branches named exactly
+# after the release: rhoai-3.5, rhoai-3.5-ea.2, rhoai-3.6-ea.1 ...
+RHDS_ORG="red-hat-data-services"
+RHDS_REPOS=(
+    rhods-operator
+    models-as-a-service
+    odh-dashboard
+    ai-gateway-payload-processing
+    ai-gateway-operator
+    ogx-k8s-operator
+    odh-model-controller
+)
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/compare-builds.XXXXXX")" || { echo "cannot create temp dir" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT INT TERM
@@ -96,10 +125,13 @@ while [[ $# -gt 0 ]]; do
         --components)    USE_COMPONENTS=true; shift ;;
         --no-components) USE_COMPONENTS=false; shift ;;
         --repos)         USE_REPOS=true; shift ;;
+        --fixes)         USE_FIXES=true; shift ;;
+        --since)         [[ $# -ge 2 ]] || { log_error "--since needs a number of days"; exit 1; }
+                         SINCE_DAYS="$2"; shift 2 ;;
         --list-tags)     LIST_TAGS=true; shift ;;
         --json)          JSON=true; QUIET=true; shift ;;
         -q|--quiet)      QUIET=true; shift ;;
-        -h|--help)   sed -n '3,55p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '3,66p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -394,6 +426,188 @@ RC=0
 [[ "$DISTINCT" -gt 1 ]] && RC=2
 $COMPONENT_DRIFT && RC=2
 
+# --- fix hunt -----------------------------------------------------------------
+#
+# "Has this ledger issue been fixed?" answered from the downstream branch that
+# actually builds the nightly. Three independent capabilities, each detected and
+# each degrading on its own; a missing one is REPORTED, never silently skipped,
+# so "no hits" is never ambiguous between "nothing landed" and "could not look".
+
+FIXES_REPORT="$WORK/fixes.txt"
+: > "$FIXES_REPORT"
+SRC_FALLBACK=""     # gh | anon | none  (used for repos with no local clone)
+CLONES_FOUND=0
+JIRA_MODE=none      # token | basic | none
+
+# BSD date (macOS) and GNU date disagree on relative dates; try both.
+iso_days_ago() {
+    date -u -v-"$1"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -d "$1 days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
+}
+
+# Portability: clones are located by their ORIGIN REMOTE URL, never by path, so
+# no directory layout is assumed. RHOAI_SRC_ROOTS (colon-separated) overrides
+# the guesses; finding nothing is fine, the API path covers everything.
+discover_clones() {
+    local roots=() r d url slug
+    if [[ -n "${RHOAI_SRC_ROOTS:-}" ]]; then
+        IFS=':' read -r -a roots <<< "$RHOAI_SRC_ROOTS"
+    else
+        roots=("$HOME/git" "$HOME/src" "$HOME/code" "$HOME/Projects" \
+               "$HOME/workspace" "$HOME/dev" "$(dirname "$REPO_ROOT")")
+    fi
+    for r in "${roots[@]}"; do
+        [[ -d "$r" ]] || continue
+        while IFS= read -r d; do
+            url="$(git -C "$d" remote get-url origin 2>/dev/null)" || continue
+            slug="$(printf '%s' "$url" | sed -E 's#\.git$##; s#^.*[:/]([^/]+/[^/]+)$#\1#')"
+            [[ -n "$slug" ]] && printf '%s=%s\n' "$slug" "$d"
+        done < <(find "$r" -maxdepth 4 -name .git -exec dirname {} \; 2>/dev/null)
+        # maxdepth 4, not 3: a root like ~/git holds <host>/<org>/<repo>/.git
+    done
+}
+
+clone_for() { grep -m1 "^${RHDS_ORG}/${1}=" "$WORK/clones.idx" 2>/dev/null | cut -d= -f2-; }
+
+detect_capabilities() {
+    discover_clones > "$WORK/clones.idx" 2>/dev/null || : > "$WORK/clones.idx"
+    local r
+    for r in "${RHDS_REPOS[@]}"; do
+        [[ -n "$(clone_for "$r")" ]] && CLONES_FOUND=$((CLONES_FOUND + 1))
+    done
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        SRC_FALLBACK=gh
+    elif command -v curl >/dev/null 2>&1; then
+        SRC_FALLBACK=anon
+    else
+        SRC_FALLBACK=none
+    fi
+    # No anonymous Jira read exists for this instance: it is credentials or nothing.
+    if   [[ -n "${JIRA_TOKEN:-}" ]]; then JIRA_MODE=token
+    elif [[ -n "${JIRA_EMAIL:-}" && -n "${JIRA_API_TOKEN:-}" ]]; then JIRA_MODE=basic
+    else JIRA_MODE=none; fi
+}
+
+# repo branch -> TSV: sha <TAB> ISO-date <TAB> subject
+fetch_commits() {
+    local repo="$1" br="$2" d since url
+    d="$(clone_for "$repo")"
+    if [[ -n "$d" ]]; then
+        git -C "$d" fetch --quiet origin "$br" 2>/dev/null || true
+        git -C "$d" log "origin/$br" --format='%H%x09%cI%x09%s' 2>/dev/null
+        return
+    fi
+    since="$(iso_days_ago "$SINCE_DAYS")"
+    url="repos/${RHDS_ORG}/${repo}/commits?sha=${br}&since=${since}&per_page=100"
+    case "$SRC_FALLBACK" in
+        gh)   gh api --paginate "$url" \
+                --jq '.[] | [.sha, .commit.committer.date, (.commit.message|split("\n")[0])] | @tsv' 2>/dev/null ;;
+        anon) curl -s --max-time 45 "https://api.github.com/$url" \
+                | jq -r 'if type=="array" then .[] | [.sha, .commit.committer.date, (.commit.message|split("\n")[0])] | @tsv else empty end' 2>/dev/null ;;
+        *)    return 1 ;;
+    esac
+}
+
+jira_status() {
+    local key="$1" base="${JIRA_URL:-https://issues.redhat.com}" resp
+    case "$JIRA_MODE" in
+        token) resp="$(curl -s --max-time 25 -H "Authorization: Bearer ${JIRA_TOKEN}" \
+                  "$base/rest/api/2/issue/$key?fields=status,resolution,fixVersions" 2>/dev/null)" ;;
+        basic) resp="$(curl -s --max-time 25 -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+                  "$base/rest/api/2/issue/$key?fields=status,resolution,fixVersions" 2>/dev/null)" ;;
+        *) return 1 ;;
+    esac
+    printf '%s' "$resp" | jq -r 'if .fields then
+        [(.fields.status.name // "?"),
+         (.fields.resolution.name // "Unresolved"),
+         ((.fields.fixVersions // []) | map(.name) | join(",") | if . == "" then "-" else . end)]
+        | join(" | ") else empty end' 2>/dev/null
+}
+
+run_fix_hunt() {
+    local tag branch boundary repo key line sha when subj state hits d src
+    tag="$(cut -f2 "$WORK/actionable.tsv" | head -1 | sed 's#.*:##')"
+    # Tag family -> downstream branch is a pure string rule, no lookup table:
+    # rhoai-3.5-nightly -> rhoai-3.5, rhoai-3.6-ea.1-nightly -> rhoai-3.6-ea.1
+    branch="${tag%-nightly}"
+    boundary="${NEWEST_DATE:-}"
+
+    grep -rhoE "(RHOAIENG|RHAIENG|CONNLINK|OCPBUGS)-[0-9]+" "$REPO_ROOT/docs" 2>/dev/null \
+        | sort -u > "$WORK/keys.txt"
+
+    {
+        printf 'Ledger keys: %s   downstream branch: %s   build boundary: %s\n' \
+            "$(grep -c . "$WORK/keys.txt")" "$branch" "${boundary:-unknown}"
+        echo
+    } >> "$FIXES_REPORT"
+
+    : > "$WORK/hitkeys.txt"
+    for repo in "${RHDS_REPOS[@]}"; do
+        d="$(clone_for "$repo")"
+        [[ -n "$d" ]] && src="clone" || src="$SRC_FALLBACK"
+        if ! fetch_commits "$repo" "$branch" > "$WORK/commits.$repo" 2>/dev/null; then
+            printf '  %-30s unavailable (%s)\n' "$repo" "$src" >> "$FIXES_REPORT"
+            continue
+        fi
+        if [[ ! -s "$WORK/commits.$repo" ]]; then
+            printf '  %-30s no commits on %s (%s)\n' "$repo" "$branch" "$src" >> "$FIXES_REPORT"
+            continue
+        fi
+        while IFS= read -r key; do
+            hits="$(grep -i -- "$key" "$WORK/commits.$repo" 2>/dev/null)" || continue
+            [[ -n "$hits" ]] || continue
+            echo "$key" >> "$WORK/hitkeys.txt"
+            while IFS=$'\t' read -r sha when subj; do
+                if [[ -n "$boundary" && "$when" < "$boundary" ]]; then
+                    state="in-build "
+                else
+                    state="PENDING  "   # merged, but built after the running image
+                fi
+                printf '  %-26s %-15s %s %s  %.60s\n' \
+                    "$repo" "$key" "$state" "${when%T*}" "$subj" >> "$FIXES_REPORT"
+            done <<< "$hits"
+        done < "$WORK/keys.txt"
+    done
+
+    local nohit
+    nohit="$(comm -23 "$WORK/keys.txt" <(sort -u "$WORK/hitkeys.txt" 2>/dev/null) | tr '\n' ' ')"
+    if [[ -n "${nohit// /}" ]]; then
+        # Scope the claim to what was actually searched. Repos read through the
+        # API only see the --since window, so "no commit cites this" would be a
+        # lie about anything older.
+        local scope
+        if [[ $CLONES_FOUND -eq ${#RHDS_REPOS[@]} ]]; then
+            scope="in the full history of $branch"
+        elif [[ $CLONES_FOUND -eq 0 ]]; then
+            scope="on $branch in the last ${SINCE_DAYS}d (API window — older fixes not searched)"
+        else
+            scope="on $branch (full history for $CLONES_FOUND cloned repo(s), last ${SINCE_DAYS}d for the rest)"
+        fi
+        {
+            echo
+            echo "  No commit $scope cites these keys:"
+            printf '    %s\n' "$nohit" | fold -s -w 72 | sed '2,$s/^/    /'
+            echo "    (CONNLINK/OCPBUGS are Kuadrant/OpenShift — never in these repos.)"
+        } >> "$FIXES_REPORT"
+    fi
+
+    if [[ "$JIRA_MODE" != none ]]; then
+        {
+            echo
+            echo "  Jira status for keys with commits:"
+            while IFS= read -r key; do
+                printf '    %-15s %s\n' "$key" "$(jira_status "$key" || echo 'lookup failed')"
+            done < <(sort -u "$WORK/hitkeys.txt" 2>/dev/null)
+        } >> "$FIXES_REPORT"
+    fi
+}
+
+if $USE_FIXES; then
+    note "hunting for landed fixes"
+    detect_capabilities
+    run_fix_hunt
+fi
+
 if $JSON; then
     {
         echo '{'
@@ -469,6 +683,30 @@ if [[ -s "$COMPONENT_REPORT" ]]; then
     echo
     echo "Component layer:"
     cat "$COMPONENT_REPORT"
+fi
+
+if $USE_FIXES; then
+    echo
+    echo "Landed fixes (downstream branch that builds this nightly):"
+    # State the capabilities used, so a "no hits" result is never ambiguous
+    # between "nothing landed" and "we could not look".
+    LOCAL_NOTE="clones=${CLONES_FOUND}/${#RHDS_REPOS[@]} found"
+    [[ $CLONES_FOUND -eq 0 ]] && LOCAL_NOTE="$LOCAL_NOTE (set RHOAI_SRC_ROOTS for full history)"
+    case "$SRC_FALLBACK" in
+        gh)   API_NOTE="github=gh authenticated" ;;
+        anon) API_NOTE="github=anonymous (${SINCE_DAYS}d window only)" ;;
+        *)    API_NOTE="github=UNAVAILABLE" ;;
+    esac
+    case "$JIRA_MODE" in
+        none) JIRA_NOTE="jira=unavailable (set JIRA_TOKEN, or JIRA_EMAIL+JIRA_API_TOKEN)" ;;
+        *)    JIRA_NOTE="jira=${JIRA_MODE}" ;;
+    esac
+    printf '  sources: %s  %s\n           %s\n\n' "$LOCAL_NOTE" "$API_NOTE" "$JIRA_NOTE"
+    cat "$FIXES_REPORT"
+    echo
+    echo "  A cited key is evidence a fix exists, never that the bug is gone: a fix"
+    echo "  that does not name its key is invisible here. Only that entry's Detection"
+    echo "  command on a cluster running this build settles it."
 fi
 
 if $USE_REPOS; then

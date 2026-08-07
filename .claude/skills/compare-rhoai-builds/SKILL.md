@@ -19,6 +19,7 @@ reports; it never changes a cluster or a pin.**
 make compare                                    # main + clusters + current cluster + quay family
 make compare ARGS="--no-cluster"                # offline: git pins and quay only
 make compare ARGS="--repos"                     # also list upstream commits since the build
+make compare ARGS="--fixes"                     # which ledger Jira keys have commits on the build branch
 make compare ARGS="--image :rhoai-3.6-ea.1-nightly"
 make compare ARGS="--cluster <oc-context> --cluster current"
 ```
@@ -35,7 +36,31 @@ Map the request to flags rather than asking:
 | "is prod behind?" | `--branch clusters --cluster <bu-nightly context>` |
 | "what about 3.6?" | `--image :rhoai-3.6-ea.1-nightly` |
 | "what changed upstream?" | add `--repos` |
+| "has anything in the ledger been fixed?" | add `--fixes` |
 | "did a new milestone appear?" | add `--list-tags` (slow — only for discovery) |
+
+## `--fixes` — where it looks and how it degrades
+
+The fix hunt searches the **`red-hat-data-services` branch named after the tag
+family** (`rhoai-3.5-nightly` → branch `rhoai-3.5` — the branch that builds the
+nightly) for commits citing the Jira keys in `docs/`, split into **in-build**
+vs **PENDING** by the catalog image's build date. It is portable by design:
+
+- **Local clones** are found by origin-remote URL, never by path
+  (`RHOAI_SRC_ROOTS` overrides the search roots, colon-separated) — full
+  history, but purely an optimisation.
+- **No clones** → `gh` if authenticated, else the **anonymous GitHub API**
+  (public repos; ~1 request/repo, 60/hr limit, `--since` window only,
+  default 90d).
+- **Jira** enrichment needs `JIRA_TOKEN` or `JIRA_EMAIL`+`JIRA_API_TOKEN`
+  (there is no anonymous Jira read); it is skipped with a printed notice
+  otherwise — statuses recorded in the ledger remain the fallback.
+
+Every run prints a `sources:` line and scopes its no-hit claim to what was
+actually searched. Relay both to the user — a "no hits" from a 90-day window is
+a different statement than one from full history. A cited key is evidence a fix
+*exists*, never that the bug is gone; the entry's Detection command on a live
+cluster is still the only settle.
 
 ## Reference points
 

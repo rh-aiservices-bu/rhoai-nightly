@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose compare preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -82,6 +82,8 @@ help:
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
 	@echo "  make undeploy     - Remove ArgoCD apps only (keeps GitOps operator)"
+	@echo "  make cleanup-projects - Audit stale dashboard projects (audit only by default)"
+	@echo "                        ARGS=\"--delete-empty 30 --delete-stopped 45 --dry-run\" to delete"
 	@echo ""
 	@echo "Scaling:"
 	@echo "  make scale NAME=<machineset> REPLICAS=<N|+N|-N>"
@@ -152,6 +154,11 @@ diagnose:
 # Pass options through with ARGS, e.g. make compare ARGS="--no-cluster --repos"
 compare:
 	@scripts/compare-builds.sh $(ARGS) || [ $$? -eq 2 ]
+
+# Audit stale RHOAI dashboard projects; deletes ONLY with an explicit --delete-* flag
+# make cleanup-projects ARGS="--delete-empty 30 --delete-stopped 45 --dry-run"
+cleanup-projects:
+	@scripts/cleanup-stale-projects.sh $(ARGS)
 
 # Quick cluster readiness check (exit 2 = warnings only, still OK)
 preflight:

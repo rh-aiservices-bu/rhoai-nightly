@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(oc get *)",
+      "Bash(oc whoami)",
+      "Bash(oc whoami *)",
+      "Bash(oc logs *)",
+      "Bash(oc describe *)",
+      "Bash(oc adm top *)",
+      "Bash(oc kustomize *)",
+      "Bash(oc auth can-i *)",
+      "Bash(oc config get-contexts)",
+      "Bash(oc config get-contexts *)",
+      "Bash(oc config current-context)",
+      "Bash(git fetch)",
+      "Bash(git fetch *)",
+      "Bash(git merge-base *)",
+      "Bash(skopeo inspect *)",
+      "Bash(skopeo list-tags *)",
+      "Bash(make diagnose)",
+      "Bash(make preflight)",
+      "Bash(make status)",
+      "Bash(make compare)",
+      "Bash(make compare *)",
+      "mcp__claude_ai_Atlassian__searchJiraIssuesUsingJql",
+      "mcp__claude_ai_Atlassian__getJiraIssue",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__read_network_requests"
+    ]
+  }
+}

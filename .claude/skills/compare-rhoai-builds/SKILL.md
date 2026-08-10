@@ -20,6 +20,7 @@ make compare                                    # main + clusters + current clus
 make compare ARGS="--no-cluster"                # offline: git pins and quay only
 make compare ARGS="--repos"                     # also list upstream commits since the build
 make compare ARGS="--fixes"                     # which ledger Jira keys have commits on the build branch
+make compare ARGS="--against :rhoai-3.5"        # what another catalog build contains that ours doesn't
 make compare ARGS="--image :rhoai-3.6-ea.1-nightly"
 make compare ARGS="--cluster <oc-context> --cluster current"
 ```
@@ -37,6 +38,7 @@ Map the request to flags rather than asking:
 | "what about 3.6?" | `--image :rhoai-3.6-ea.1-nightly` |
 | "what changed upstream?" | add `--repos` |
 | "has anything in the ledger been fixed?" | add `--fixes` |
+| "what's in build X that we don't have?" | `--against <ref>` (e.g. `:rhoai-3.5`) |
 | "did a new milestone appear?" | add `--list-tags` (slow — only for discovery) |
 
 ## `--fixes` — where it looks and how it degrades
@@ -61,6 +63,23 @@ actually searched. Relay both to the user — a "no hits" from a 90-day window i
 a different statement than one from full history. A cited key is evidence a fix
 *exists*, never that the bug is gone; the entry's Detection command on a live
 cluster is still the only settle.
+
+## `--against` — what a different catalog build contains
+
+Diffs the baseline (the `main` pin's resolved build) against any other catalog
+image at two layers, **without a cluster and without opm**: it skopeo-copies
+both FBC images (~300MB each, deleted after read; needs `yq`), reads
+`configs/*/catalog.yaml` out of the layers, and compares the **channel-head
+bundle's** `relatedImages`. Then, for moved components that map to a
+`red-hat-data-services` source repo, it lists the release-branch commits
+between the two build dates — the source-level "what's in theirs".
+
+Reading the result: Konflux `chore(deps)` bumps are mechanical noise; the
+signal is named `fix:`/Jira-keyed commits and CVE respins. The commit window is
+an approximation (component images are built per-commit and released
+asynchronously); the digest columns are the ground truth. And if the against
+build is the released `rhoai-<ver>` track, adopting it is a **track change** —
+surface it as a decision.
 
 ## Reference points
 

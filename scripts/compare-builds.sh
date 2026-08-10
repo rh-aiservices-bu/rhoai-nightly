@@ -33,6 +33,7 @@
 #   scripts/compare-builds.sh --image :rhoai-3.6-ea.1-nightly
 #   scripts/compare-builds.sh --repos                # also report upstream commits since the build
 #   scripts/compare-builds.sh --fixes                # which ledger issues have fixes on the build branch
+#   scripts/compare-builds.sh --against :rhoai-3.5   # what another catalog build contains that ours doesn't
 #   scripts/compare-builds.sh --list-tags            # authoritative milestone discovery (SLOW, ~216k tags)
 #   scripts/compare-builds.sh --json                 # machine-readable
 #
@@ -46,6 +47,11 @@
 #   --fixes           search the downstream release branch for commits citing the
 #                     Jira keys in docs/, split into already-in-this-build vs pending
 #   --since DAYS      API history window for --fixes (default 90; clones use full history)
+#   --against REF     diff the baseline build's catalog against another catalog image:
+#                     per-component digest changes (via skopeo copy — no cluster, no opm;
+#                     pulls ~300MB per side, deleted after read; requires yq) plus the
+#                     source-branch commits between the two build dates for moved
+#                     components that map to a red-hat-data-services repo
 #   --list-tags       discover milestone tags from the registry instead of probing
 #   --json            emit JSON instead of the table
 #   -q, --quiet       suppress progress chatter
@@ -88,6 +94,7 @@ USE_STREAM=true
 USE_COMPONENTS=""      # empty = auto (on when a cluster resolves)
 USE_REPOS=false
 USE_FIXES=false
+AGAINST_REF=""
 SINCE_DAYS=90
 LIST_TAGS=false
 JSON=false
@@ -126,12 +133,14 @@ while [[ $# -gt 0 ]]; do
         --no-components) USE_COMPONENTS=false; shift ;;
         --repos)         USE_REPOS=true; shift ;;
         --fixes)         USE_FIXES=true; shift ;;
+        --against)       [[ $# -ge 2 ]] || { log_error "--against needs an image reference"; exit 1; }
+                         AGAINST_REF="$2"; shift 2 ;;
         --since)         [[ $# -ge 2 ]] || { log_error "--since needs a number of days"; exit 1; }
                          SINCE_DAYS="$2"; shift 2 ;;
         --list-tags)     LIST_TAGS=true; shift ;;
         --json)          JSON=true; QUIET=true; shift ;;
         -q|--quiet)      QUIET=true; shift ;;
-        -h|--help)   sed -n '3,66p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '3,72p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -605,7 +614,178 @@ run_fix_hunt() {
 if $USE_FIXES; then
     note "hunting for landed fixes"
     detect_capabilities
+    CAPS_DETECTED=true
     run_fix_hunt
+fi
+
+# --- against: what does another catalog build contain that ours doesn't? ------
+#
+# Compares the head bundle's relatedImages of the baseline build (branch:main's
+# image, else the first actionable point) against an arbitrary catalog image,
+# with NO cluster and NO opm: skopeo-copy both FBC images and read
+# configs/*/catalog.yaml out of the layer tarballs. Then, for the moved
+# components that map to a red-hat-data-services source repo, list the branch
+# commits between the two build dates — the source-level "what's in theirs".
+
+AGAINST_REPORT="$WORK/against.txt"
+: > "$AGAINST_REPORT"
+
+# component image basename -> RHDS source repo (only the ones worth a commit log)
+repo_for_component() {
+    case "$1" in
+        odh-dashboard-rhel9|odh-dashboard-operator-rhel9) echo odh-dashboard ;;
+        odh-maas-api-rhel9|odh-maas-controller-rhel9|odh-mod-arch-maas-rhel9) echo models-as-a-service ;;
+        odh-rhel9-operator|odh-operator-bundle) echo rhods-operator ;;
+        odh-ai-gateway-operator-rhel9) echo ai-gateway-operator ;;
+        odh-ai-gateway-payload-processing-rhel9) echo ai-gateway-payload-processing ;;
+        odh-ogx-core-rhel9|odh-ogx-k8s-operator-rhel9|odh-ogx-module-operator-rhel9) echo ogx-k8s-operator ;;
+        odh-model-controller-rhel9) echo odh-model-controller ;;
+        *) return 1 ;;
+    esac
+}
+
+# Pull one catalog image and emit its head bundle's images as "repo digest"
+# pairs. Prints the head bundle name on stdout. The ~300MB pull is deleted as
+# soon as the yaml is out.
+extract_catalog_pairs() {
+    local ref="$1" out="$2" dir blob f path cy headname
+    dir="$(mktemp -d "$WORK/fbc.XXXXXX")"
+    skopeo copy --override-os linux --override-arch amd64 -q "docker://$ref" "dir:$dir" 2>/dev/null || return 1
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        # No -m1/-q here: an early-closing grep SIGPIPEs tar, and under
+        # pipefail that fails the substitution and silently skips every blob.
+        path="$(tar -tzf "$f" 2>/dev/null | grep '^configs/.*/catalog\.yaml$' || true)"
+        path="${path%%$'\n'*}"
+        [[ -n "$path" ]] && { blob="$f"; break; }
+    done
+    [[ -n "${blob:-}" ]] || { rm -rf "$dir"; return 1; }
+    cy="$WORK/catalog.$$.yaml"
+    tar -xzf "$blob" -O "$path" > "$cy" 2>/dev/null || { rm -rf "$dir"; return 1; }
+    rm -rf "$dir"
+    # The head bundle comes from the CHANNEL's replaces-graph (the entry no
+    # other entry replaces) — never from version-sorting the bundle names:
+    # these catalogs also carry a frozen 3.5.0-ea.2 bundle that sort -V ranks
+    # ABOVE 3.5.0, which made both sides "identical" during development.
+    headname="$(yq ea "select(.schema==\"olm.channel\" and .name==\"$CHANNEL\")" -o=json "$cy" 2>/dev/null \
+        | jq -rs '[.[].entries]|flatten | (map(.name)) - (map(.replaces)|map(select(.!=null))) | .[0] // empty' 2>/dev/null)"
+    if [[ -z "$headname" ]]; then
+        # channel absent (foreign catalog): fall back to highest bundle name,
+        # filtering yq's '---' separators and pre-release suffixes.
+        headname="$(yq ea 'select(.schema=="olm.bundle") | .name' "$cy" 2>/dev/null \
+            | grep -vE '^(---|null)$' | grep -vE -- '-ea\.|-rc\.' | sort -uV | tail -1)"
+    fi
+    [[ -n "$headname" ]] || return 1
+    yq ea "select(.schema==\"olm.bundle\" and .name==\"$headname\") | .relatedImages[].image" "$cy" 2>/dev/null \
+        | grep -oE '[a-z0-9.:/_-]+@sha256:[0-9a-f]{64}' | sed 's/@/ /' | sort -u > "$out"
+    rm -f "$cy"
+    [[ -s "$out" ]] || return 1
+    echo "$headname"
+}
+
+# Branch commits in (since, until] — clone if present, else gh, else anon API.
+commits_between() {
+    local repo="$1" br="$2" since="$3" until="$4" d url
+    d="$(clone_for "$repo")"
+    if [[ -n "$d" ]]; then
+        git -C "$d" fetch --quiet origin "$br" 2>/dev/null || true
+        git -C "$d" log "origin/$br" --since="$since" --until="$until" --format='  %cI  %s' 2>/dev/null
+        return
+    fi
+    url="repos/${RHDS_ORG}/${repo}/commits?sha=${br}&since=${since}&until=${until}&per_page=100"
+    case "$SRC_FALLBACK" in
+        gh)   gh api --paginate "$url" \
+                --jq '.[] | "  " + .commit.committer.date + "  " + (.commit.message|split("\n")[0])' 2>/dev/null ;;
+        anon) curl -s --max-time 45 "https://api.github.com/$url" \
+                | jq -r 'if type=="array" then .[] | "  " + .commit.committer.date + "  " + (.commit.message|split("\n")[0]) else empty end' 2>/dev/null ;;
+        *)    echo "  (no github access — commit log unavailable)" ;;
+    esac
+}
+
+run_against() {
+    local base_row base_ref base_dig base_date base_tag branch
+    local ag_ref ag_meta ag_dig ag_date head_a head_b moved=0 gone=0 added=0
+
+    # Baseline = branch:main when present, else the first actionable row.
+    base_row="$(grep -m1 $'^branch:main\t' "$WORK/actionable.tsv" 2>/dev/null || head -1 "$WORK/actionable.tsv")"
+    [[ -n "$base_row" ]] || { echo "  no actionable baseline resolved — nothing to compare against" >> "$AGAINST_REPORT"; return; }
+    base_ref="$(printf '%s' "$base_row" | cut -f2)"
+    base_dig="$(printf '%s' "$base_row" | cut -f3)"
+    base_date="$(printf '%s' "$base_row" | cut -f4)"
+    # cut the ref field FIRST — a greedy sed over the whole TSV row would chop
+    # at the last colon inside the sha256 digest, not the tag separator.
+    base_tag="$(printf '%s' "$base_row" | cut -f2 | sed 's/.*://')"
+
+    ag_ref="$(full_ref "$AGAINST_REF")"
+    if ! ag_meta="$(inspect_ref "$AGAINST_REF")"; then
+        echo "  $ag_ref: not resolvable on the registry" >> "$AGAINST_REPORT"; return
+    fi
+    IFS=$'\t' read -r ag_dig ag_date _ _ <<< "$ag_meta"
+
+    {
+        printf '  baseline %-44s %s  built %s\n' "$(echo "$base_ref" | sed "s#^${FBC_REPO}##")" "$(short "$base_dig")" "$base_date"
+        printf '  against  %-44s %s  built %s\n' "$(echo "$ag_ref" | sed "s#^${FBC_REPO}##")" "$(short "$ag_dig")" "$ag_date"
+    } >> "$AGAINST_REPORT"
+
+    if [[ "$base_dig" == "$ag_dig" ]]; then
+        echo "  identical build — no component or commit delta" >> "$AGAINST_REPORT"; return
+    fi
+
+    note "pulling both catalog images (~300MB each, deleted after read)"
+    head_a="$(extract_catalog_pairs "${FBC_REPO}@${base_dig}" "$WORK/against-a.pairs")" \
+        || { echo "  could not read baseline catalog content" >> "$AGAINST_REPORT"; return; }
+    head_b="$(extract_catalog_pairs "$ag_ref" "$WORK/against-b.pairs")" \
+        || { echo "  could not read against catalog content" >> "$AGAINST_REPORT"; return; }
+    [[ "$head_a" != "$head_b" ]] && \
+        echo "  NOTE: different head bundles — baseline $head_a vs against $head_b" >> "$AGAINST_REPORT"
+
+    local moved_repos="$WORK/against-repos.txt"
+    : > "$moved_repos"
+    {
+        echo
+        echo "  components whose digest differs (baseline -> against):"
+        while read -r repo da db; do
+            if [[ "$da" != "$db" ]]; then
+                moved=$((moved + 1))
+                printf '    %-58s %s -> %s\n' "${repo##*/}" "$(short "$da")" "$(short "$db")"
+                repo_for_component "${repo##*/}" >> "$moved_repos" || true
+            fi
+        done < <(join "$WORK/against-a.pairs" "$WORK/against-b.pairs")
+        comm -23 <(cut -d' ' -f1 "$WORK/against-a.pairs") <(cut -d' ' -f1 "$WORK/against-b.pairs") \
+            | while read -r r; do gone=$((gone+1)); printf '    only in baseline: %s\n' "${r##*/}"; done
+        comm -13 <(cut -d' ' -f1 "$WORK/against-a.pairs") <(cut -d' ' -f1 "$WORK/against-b.pairs") \
+            | while read -r r; do added=$((added+1)); printf '    only in against:  %s\n' "${r##*/}"; done
+        echo "    ($moved moved of $(grep -c . "$WORK/against-a.pairs") baseline components)"
+    } >> "$AGAINST_REPORT"
+
+    # Source-level delta for the ledger-relevant repos that moved, bounded by
+    # the two build dates. Branch derives from the baseline tag family.
+    branch="${base_tag%-nightly}"
+    sort -u "$moved_repos" -o "$moved_repos"
+    if [[ -s "$moved_repos" ]]; then
+        local since until repo
+        if [[ "$base_date" < "$ag_date" ]]; then since="$base_date"; until="$ag_date"
+        else since="$ag_date"; until="$base_date"; fi
+        {
+            echo
+            echo "  commits on $branch between the two builds ($since .. $until),"
+            echo "  for the moved components that map to a source repo:"
+            while read -r repo; do
+                echo "    ${RHDS_ORG}/${repo}:"
+                commits_between "$repo" "$branch" "$since" "$until" | sed 's/^/    /' | head -25
+            done < "$moved_repos"
+        } >> "$AGAINST_REPORT"
+    fi
+}
+
+if [[ -n "$AGAINST_REF" ]]; then
+    if ! command -v yq >/dev/null 2>&1; then
+        echo "  --against requires yq (brew install yq)" >> "$AGAINST_REPORT"
+    else
+        note "comparing against $AGAINST_REF"
+        [[ "${CAPS_DETECTED:-false}" == true ]] || detect_capabilities
+        run_against
+    fi
 fi
 
 if $JSON; then
@@ -707,6 +887,16 @@ if $USE_FIXES; then
     echo "  A cited key is evidence a fix exists, never that the bug is gone: a fix"
     echo "  that does not name its key is invisible here. Only that entry's Detection"
     echo "  command on a cluster running this build settles it."
+fi
+
+if [[ -n "$AGAINST_REF" ]]; then
+    echo
+    echo "Against $AGAINST_REF:"
+    cat "$AGAINST_REPORT"
+    echo
+    echo "  A moved digest or a listed commit is a reason to check, never evidence of"
+    echo "  a fix. If the against build is the released rhoai-<ver> track, adopting it"
+    echo "  is a TRACK CHANGE, not a refresh — decide deliberately."
 fi
 
 if $USE_REPOS; then

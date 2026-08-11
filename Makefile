@@ -155,7 +155,7 @@ diagnose:
 # Compare RHOAI builds across git pins, clusters and quay (exit 2 = drift found)
 # Pass options through with ARGS, e.g. make compare ARGS="--no-cluster --repos"
 compare:
-	@scripts/compare-builds.sh $(ARGS) || [ $$? -eq 2 ]
+	@scripts/compare-builds.sh $(ARGS)
 
 # Audit stale RHOAI dashboard projects; deletes ONLY with an explicit --delete-* flag
 # make cleanup-projects ARGS="--delete-empty 30 --delete-stopped 45 --dry-run"

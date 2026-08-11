@@ -2,7 +2,7 @@
 name: compare-rhoai-builds
 description: Use when asking which RHOAI nightly build is where — comparing the catalog image pinned on main or clusters against a connected cluster, a newer build on quay, or a user-supplied tag/digest; also when deciding whether a new nightly could have fixed a docs/ ledger entry.
 argument-hint: "[what to compare, e.g. 'offline only' or 'vs rhoai-3.6-ea.1-nightly' or 'also check the repos']"
-allowed-tools: Bash(make compare*), Bash(scripts/compare-builds.sh*), Bash(./scripts/compare-builds.sh*), Bash(oc *), Bash(git *), Read, Grep, Glob
+allowed-tools: Bash(make compare*), Bash(scripts/compare-builds.sh*), Bash(./scripts/compare-builds.sh*), Bash(oc get *), Bash(oc whoami *), Bash(oc config get-contexts*), Bash(oc config current-context), Bash(git fetch *), Bash(skopeo inspect *), Read, Grep, Glob
 ---
 
 # Compare RHOAI Builds

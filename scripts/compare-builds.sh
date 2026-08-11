@@ -43,7 +43,9 @@
 #   --image REF       add an explicit image ref      (a bare ":tag" means the FBC repo)
 #   --stream/--no-stream
 #   --components/--no-components   component-layer diff (default: on when a cluster resolves)
-#   --repos           check the upstream org clones for commits since the build
+#   --repos           list upstream (opendatahub-io) main-branch commits since the
+#                     build — what is coming, not yet downstream. Uses the same
+#                     clone/gh/anonymous fallback chain as --fixes.
 #   --fixes           search the downstream release branch for commits citing the
 #                     Jira keys in docs/, split into already-in-this-build vs pending
 #   --since DAYS      API history window for --fixes (default 90; clones use full history)
@@ -56,7 +58,7 @@
 #   --json            emit JSON instead of the table
 #   -q, --quiet       suppress progress chatter
 #
-# --fixes portability: nothing about this machine is assumed. Local clones are
+# --fixes/--repos portability: nothing about this machine is assumed. Local clones are
 # located by their ORIGIN REMOTE URL (override the search roots with
 # RHOAI_SRC_ROOTS, colon-separated) and are only an optimisation -- with none
 # present it falls back to `gh` if authenticated, else the anonymous GitHub API
@@ -80,7 +82,7 @@ FBC_REPO="quay.io/rhoai/rhoai-fbc-fragment"
 CATALOG_NAME="rhoai-catalog-nightly"
 CATALOG_NS="openshift-marketplace"
 OPERATOR_NS="redhat-ods-operator"
-CHANNEL="stable-3.x"
+CHANNEL="${COMPARE_CHANNEL:-}"   # empty = derive from main's patch-channel.yaml (it has flipped before: beta during EA)
 CATALOG_PATH="components/operators/rhoai-operator/base/catalogsource.yaml"
 CHANNEL_PATH="components/operators/rhoai-operator/base/patch-channel.yaml"
 OC_TIMEOUT="--request-timeout=20s"
@@ -106,6 +108,19 @@ QUIET=false
 RHDS_ORG="red-hat-data-services"
 RHDS_REPOS=(
     rhods-operator
+    models-as-a-service
+    odh-dashboard
+    ai-gateway-payload-processing
+    ai-gateway-operator
+    ogx-k8s-operator
+    odh-model-controller
+)
+
+# Upstream development happens in opendatahub-io on main. --repos reports what
+# has landed there since the build — what is coming, not yet downstream.
+UPSTREAM_ORG="opendatahub-io"
+UPSTREAM_REPOS=(
+    opendatahub-operator
     models-as-a-service
     odh-dashboard
     ai-gateway-payload-processing
@@ -140,7 +155,7 @@ while [[ $# -gt 0 ]]; do
         --list-tags)     LIST_TAGS=true; shift ;;
         --json)          JSON=true; QUIET=true; shift ;;
         -q|--quiet)      QUIET=true; shift ;;
-        -h|--help)   sed -n '3,72p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)   sed -n '3,73p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) log_error "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -154,6 +169,14 @@ $USE_BRANCHES && [[ ${#BRANCHES[@]} -eq 0 ]] && BRANCHES=(main clusters)
 $USE_BRANCHES || BRANCHES=()
 $USE_CLUSTER && [[ ${#CLUSTERS[@]} -eq 0 ]] && CLUSTERS=(current)
 $USE_CLUSTER || CLUSTERS=()
+
+# --fixes/--repos/--against produce text reports that the JSON output does not
+# carry. Doing the work and then dropping it would be a silent lie (and, for
+# --against, ~600MB of pulls) — refuse the combination up front instead.
+if $JSON && { $USE_FIXES || $USE_REPOS || [[ -n "$AGAINST_REF" ]]; }; then
+    echo "note: --fixes/--repos/--against are not represented in --json output; skipping them for this run" >&2
+    USE_FIXES=false; USE_REPOS=false; AGAINST_REF=""
+fi
 
 # --- resolution helpers -------------------------------------------------------
 
@@ -195,6 +218,51 @@ inspect_ref() {
 
 short() { local d="${1#sha256:}"; echo "${d:0:8}"; }
 
+# Shorten a comma-separated digest list (variant images share one repo name).
+short_list() {
+    local rest="$1" out="" x
+    while [[ -n "$rest" ]]; do
+        x="${rest%%,*}"
+        [[ "$rest" == *,* ]] && rest="${rest#*,}" || rest=""
+        out="${out:+$out,}$(short "$x")"
+    done
+    echo "$out"
+}
+
+# Downstream branch (tag family) for a resolved row. Tag refs are the string
+# rule (rhoai-3.5-nightly -> rhoai-3.5, rhoai-3.6-ea.1-nightly -> rhoai-3.6-ea.1);
+# digest-pinned refs carry NO tag — the last colon there is inside the sha256,
+# so fall back to the image's version label (3.5.0 -> rhoai-3.5).
+branch_for_row() {
+    local ref="$1" ver="${2:-}" tag=""
+    case "$ref" in
+        *@sha256:*) tag="" ;;
+        *:*)        tag="${ref##*:}" ;;
+    esac
+    if [[ "$tag" == rhoai-* ]]; then
+        echo "${tag%-nightly}"
+        return 0
+    fi
+    ver="${ver#v}"   # the FBC version label is "v3.5.0"
+    if [[ "$ver" =~ ^([0-9]+\.[0-9]+) ]]; then
+        echo "rhoai-${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# ISO8601 (any offset) -> epoch seconds. Needed because git %cI carries the
+# committer's LOCAL offset while image build-date labels are Z-suffixed UTC —
+# comparing those lexicographically misorders anything near the boundary.
+# GNU date first, then BSD (macOS) which needs the offset colon stripped.
+iso_epoch() {
+    local s="$1" t
+    date -u -d "$s" +%s 2>/dev/null && return 0
+    t="${s/Z/+0000}"
+    t="$(printf '%s' "$t" | sed -E 's/([+-][0-9]{2}):([0-9]{2})$/\1\2/')"
+    date -j -f '%Y-%m-%dT%H:%M:%S%z' "$t" +%s 2>/dev/null
+}
+
 # 1 + 3: catalogsource pin on a git branch.
 resolve_branch() {
     local br="$1" ref rest
@@ -224,30 +292,41 @@ branch_channel() {
 # 2: a live cluster. The catalog POD's imageID is the running build; .spec.image
 # is only what GitOps asked for.
 resolve_cluster() {
-    local ctx="$1" ctxargs=() label spec pod_img csv sub
+    local ctx="$1" ctxargs=() label spec pod_img csv sub chan
     if [[ "$ctx" == "current" ]]; then
         ctx="$(oc config current-context 2>/dev/null)"
         [[ -n "$ctx" ]] || { add_unresolved "cluster:current" "-" "no current oc context"; return 1; }
     fi
     ctxargs=(--context="$ctx")
 
-    # One call proves reachability AND yields a clean short name: context names
-    # mangle dots to dashes, but the server URL keeps them, so api.<name>.<...>
-    # gives the cluster name directly. Without a --request-timeout an
-    # unreachable API hangs for minutes instead of failing.
+    # whoami --show-server yields a clean short name: context names mangle dots
+    # to dashes, but the server URL keeps them, so api.<name>.<...> gives the
+    # cluster name directly. NOTE it only reads the kubeconfig — it proves
+    # nothing about the API. Without a --request-timeout an unreachable API
+    # hangs for minutes instead of failing.
     local server
     server="$(oc "${ctxargs[@]}" $OC_TIMEOUT whoami --show-server 2>/dev/null)"
     if [[ -z "$server" ]]; then
         label="cluster:$(printf '%s' "$ctx" | sed -E 's#^default/api-##; s#:6443/.*$##' | cut -c1-20)"
-        add_unresolved "$label" "-" "unreachable (context exists, API did not answer)"
+        add_unresolved "$label" "-" "context not found in kubeconfig"
         return 1
     fi
     label="cluster:$(printf '%s' "$server" | sed -E 's#^https?://api[.-]##; s#[:.].*$##' | cut -c1-20)"
+    # An AUTHENTICATED probe, or an expired token reads as "no CatalogSource
+    # (RHOAI not installed?)" — a mislabeled finding, seen live with an expired
+    # oauth token on bu-nightly-2.
+    if ! oc "${ctxargs[@]}" $OC_TIMEOUT whoami >/dev/null 2>&1; then
+        add_unresolved "$label" "-" "unreachable or credentials expired (oc whoami failed — try oc login)"
+        return 1
+    fi
 
     # Two different context names can point at one cluster ("current" plus its
-    # own name is the common case). Resolve it once.
+    # own name is the common case). Resolve it once. This function runs inside
+    # a command substitution: stdout IS the return value, so any notice must go
+    # to stderr or it vanishes into the discarded capture.
     if [[ -f "$WORK/ctx.$label" ]]; then
-        say "  $label already resolved via another context — skipping duplicate"
+        say "  $label already resolved via another context — skipping duplicate" >&2
+        add_unresolved "$label" "-" "context '$ctx' is the same cluster — already resolved above"
         return 1
     fi
     spec="$(oc "${ctxargs[@]}" $OC_TIMEOUT get catalogsource "$CATALOG_NAME" -n "$CATALOG_NS" \
@@ -263,10 +342,15 @@ resolve_cluster() {
             -o jsonpath='{.status.installedCSV}' 2>/dev/null)"
     sub="$(oc "${ctxargs[@]}" $OC_TIMEOUT get subscription rhods-operator -n "$OPERATOR_NS" \
             -o jsonpath='{.status.state}' 2>/dev/null)"
+    # The cluster's OWN channel, for the component diff — it can differ from
+    # what main currently patches (beta vs stable-3.x flipped during EA).
+    chan="$(oc "${ctxargs[@]}" $OC_TIMEOUT get subscription rhods-operator -n "$OPERATOR_NS" \
+            -o jsonpath='{.spec.channel}' 2>/dev/null)"
     echo "$ctx"   > "$WORK/ctx.$label"
     echo "$csv"   > "$WORK/csv.$label"
     echo "$sub"   > "$WORK/sub.$label"
     echo "$spec"  > "$WORK/spec.$label"
+    echo "$chan"  > "$WORK/chan.$label"
 
     if [[ -n "$pod_img" ]] && rest="$(inspect_ref "$pod_img")"; then
         IFS=$'\t' read -r dg bd ver rel <<< "$rest"
@@ -353,6 +437,14 @@ fi
 
 # --- component layer ----------------------------------------------------------
 
+# Resolve the channel once, from main's patch — never hard-coded (it flipped to
+# beta during the 3.4 EA period). Per-cluster diffs still prefer the cluster's
+# own Subscription channel captured in resolve_cluster.
+if [[ -z "$CHANNEL" ]]; then
+    CHANNEL="$(branch_channel main)"
+    [[ -n "$CHANNEL" ]] || CHANNEL="stable-3.x"
+fi
+
 COMPONENT_DRIFT=false
 COMPONENT_REPORT="$WORK/components.txt"
 : > "$COMPONENT_REPORT"
@@ -360,13 +452,15 @@ COMPONENT_REPORT="$WORK/components.txt"
 norm_images() { grep -oE '[a-z0-9.:/-]+@sha256:[0-9a-f]{64}' | sed 's/@/ /' | sort -u; }
 
 component_diff() {
-    local label="$1" ctx csv
+    local label="$1" ctx csv ch
     ctx="$(cat "$WORK/ctx.$label" 2>/dev/null)"
     csv="$(cat "$WORK/csv.$label" 2>/dev/null)"
+    ch="$(cat "$WORK/chan.$label" 2>/dev/null)"
+    [[ -n "$ch" ]] || ch="$CHANNEL"
     [[ -n "$ctx" && -n "$csv" ]] || return 1
 
     oc --context="$ctx" --request-timeout=30s get packagemanifest -l "catalog=$CATALOG_NAME" -n "$CATALOG_NS" -o json 2>/dev/null \
-      | jq -r --arg ch "$CHANNEL" '.items[]|select(.metadata.name=="rhods-operator").status.channels[]
+      | jq -r --arg ch "$ch" '.items[]|select(.metadata.name=="rhods-operator").status.channels[]
                |select(.name==$ch)|.currentCSVDesc.relatedImages[]' 2>/dev/null \
       | norm_images > "$WORK/offered.$label"
 
@@ -379,8 +473,17 @@ component_diff() {
     local n_off n_dep drift=0
     n_off=$(wc -l < "$WORK/offered.$label" | tr -d ' ')
     n_dep=$(wc -l < "$WORK/deployed.$label" | tr -d ' ')
+    # One repo can legitimately carry several digests (variant images). A plain
+    # join on such duplicate keys emits the cross product and manufactures
+    # DRIFT rows on an in-sync cluster — so collapse each side to one
+    # "repo digest,digest" line first and compare the digest SETS. Input is
+    # already sorted -u, which keeps the collapsed lists deterministic.
+    awk '{a[$1]=(a[$1]==""?$2:a[$1]","$2)} END{for(k in a) print k, a[k]}' \
+        "$WORK/offered.$label" | sort > "$WORK/offered.$label.set"
+    awk '{a[$1]=(a[$1]==""?$2:a[$1]","$2)} END{for(k in a) print k, a[k]}' \
+        "$WORK/deployed.$label" | sort > "$WORK/deployed.$label.set"
     {
-        echo "  $label  (catalog offers $n_off images, CSV deploys $n_dep)"
+        echo "  $label  (catalog offers $n_off images, CSV deploys $n_dep, channel $ch)"
         # Joining on the repo name is required: the two lists are not the same
         # universe (the env list holds version strings and duplicates; the
         # packagemanifest holds the bundle and operator images the env list has
@@ -389,9 +492,9 @@ component_diff() {
             if [[ "$off" != "$dep" ]]; then
                 drift=1
                 printf '    DRIFT %s\n      offers   %s\n      deploys  %s\n' \
-                    "$repo" "$(short "$off")" "$(short "$dep")"
+                    "$repo" "$(short_list "$off")" "$(short_list "$dep")"
             fi
-        done < <(join "$WORK/offered.$label" "$WORK/deployed.$label")
+        done < <(join "$WORK/offered.$label.set" "$WORK/deployed.$label.set")
         [[ $drift -eq 0 ]] && echo "    no component drift — cluster is current with its own catalog"
     } >> "$COMPONENT_REPORT"
     [[ $drift -eq 1 ]] && COMPONENT_DRIFT=true
@@ -476,13 +579,13 @@ discover_clones() {
     done
 }
 
-clone_for() { grep -m1 "^${RHDS_ORG}/${1}=" "$WORK/clones.idx" 2>/dev/null | cut -d= -f2-; }
+clone_for() { grep -m1 "^${1}/${2}=" "$WORK/clones.idx" 2>/dev/null | cut -d= -f2-; }
 
 detect_capabilities() {
     discover_clones > "$WORK/clones.idx" 2>/dev/null || : > "$WORK/clones.idx"
     local r
     for r in "${RHDS_REPOS[@]}"; do
-        [[ -n "$(clone_for "$r")" ]] && CLONES_FOUND=$((CLONES_FOUND + 1))
+        [[ -n "$(clone_for "$RHDS_ORG" "$r")" ]] && CLONES_FOUND=$((CLONES_FOUND + 1))
     done
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
         SRC_FALLBACK=gh
@@ -497,17 +600,17 @@ detect_capabilities() {
     else JIRA_MODE=none; fi
 }
 
-# repo branch -> TSV: sha <TAB> ISO-date <TAB> subject
+# org repo branch -> TSV: sha <TAB> ISO-date <TAB> subject
 fetch_commits() {
-    local repo="$1" br="$2" d since url
-    d="$(clone_for "$repo")"
+    local org="$1" repo="$2" br="$3" d since url
+    d="$(clone_for "$org" "$repo")"
     if [[ -n "$d" ]]; then
         git -C "$d" fetch --quiet origin "$br" 2>/dev/null || true
         git -C "$d" log "origin/$br" --format='%H%x09%cI%x09%s' 2>/dev/null
         return
     fi
     since="$(iso_days_ago "$SINCE_DAYS")"
-    url="repos/${RHDS_ORG}/${repo}/commits?sha=${br}&since=${since}&per_page=100"
+    url="repos/${org}/${repo}/commits?sha=${br}&since=${since}&per_page=100"
     case "$SRC_FALLBACK" in
         gh)   gh api --paginate "$url" \
                 --jq '.[] | [.sha, .commit.committer.date, (.commit.message|split("\n")[0])] | @tsv' 2>/dev/null ;;
@@ -534,12 +637,22 @@ jira_status() {
 }
 
 run_fix_hunt() {
-    local tag branch boundary repo key line sha when subj state hits d src
-    tag="$(cut -f2 "$WORK/actionable.tsv" | head -1 | sed 's#.*:##')"
-    # Tag family -> downstream branch is a pure string rule, no lookup table:
-    # rhoai-3.5-nightly -> rhoai-3.5, rhoai-3.6-ea.1-nightly -> rhoai-3.6-ea.1
-    branch="${tag%-nightly}"
+    local branch="" boundary boundary_epoch when_epoch repo key line sha when subj state hits d src
+    local row_ref row_ver
+    # Downstream branch from the first actionable row that yields one — a
+    # digest-pinned row has no tag (the naive "strip to the last colon" would
+    # hand back 64 hex chars as a branch name); branch_for_row falls back to
+    # the version label for those.
+    while IFS=$'\t' read -r _ row_ref _ _ row_ver _; do
+        branch="$(branch_for_row "$row_ref" "$row_ver")" && [[ -n "$branch" ]] && break
+    done < "$WORK/actionable.tsv"
+    if [[ -z "$branch" ]]; then
+        echo "  cannot derive a downstream branch: every actionable ref is digest-pinned with no usable version label" >> "$FIXES_REPORT"
+        return
+    fi
     boundary="${NEWEST_DATE:-}"
+    boundary_epoch=""
+    [[ -n "$boundary" ]] && boundary_epoch="$(iso_epoch "$boundary")"
 
     grep -rhoE "(RHOAIENG|RHAIENG|CONNLINK|OCPBUGS)-[0-9]+" "$REPO_ROOT/docs" 2>/dev/null \
         | sort -u > "$WORK/keys.txt"
@@ -552,9 +665,9 @@ run_fix_hunt() {
 
     : > "$WORK/hitkeys.txt"
     for repo in "${RHDS_REPOS[@]}"; do
-        d="$(clone_for "$repo")"
+        d="$(clone_for "$RHDS_ORG" "$repo")"
         [[ -n "$d" ]] && src="clone" || src="$SRC_FALLBACK"
-        if ! fetch_commits "$repo" "$branch" > "$WORK/commits.$repo" 2>/dev/null; then
+        if ! fetch_commits "$RHDS_ORG" "$repo" "$branch" > "$WORK/commits.$repo" 2>/dev/null; then
             printf '  %-30s unavailable (%s)\n' "$repo" "$src" >> "$FIXES_REPORT"
             continue
         fi
@@ -563,14 +676,26 @@ run_fix_hunt() {
             continue
         fi
         while IFS= read -r key; do
-            hits="$(grep -i -- "$key" "$WORK/commits.$repo" 2>/dev/null)" || continue
+            # Trailing non-digit boundary: a bare substring would let
+            # RHOAIENG-123 claim commits citing RHOAIENG-1234.
+            hits="$(grep -iE -- "${key}([^0-9]|\$)" "$WORK/commits.$repo" 2>/dev/null)" || continue
             [[ -n "$hits" ]] || continue
             echo "$key" >> "$WORK/hitkeys.txt"
             while IFS=$'\t' read -r sha when subj; do
-                if [[ -n "$boundary" && "$when" < "$boundary" ]]; then
+                # Compare as epochs: %cI carries the committer's local offset,
+                # the boundary label is UTC — lexicographic order lies near the
+                # boundary for any non-UTC timezone.
+                when_epoch="$(iso_epoch "$when")"
+                if [[ -n "$boundary_epoch" && -n "$when_epoch" ]]; then
+                    if (( when_epoch < boundary_epoch )); then
+                        state="in-build "
+                    else
+                        state="PENDING  "   # merged, but built after the running image
+                    fi
+                elif [[ -n "$boundary" && "$when" < "$boundary" ]]; then
                     state="in-build "
                 else
-                    state="PENDING  "   # merged, but built after the running image
+                    state="PENDING  "
                 fi
                 printf '  %-26s %-15s %s %s  %.60s\n' \
                     "$repo" "$key" "$state" "${when%T*}" "$subj" >> "$FIXES_REPORT"
@@ -684,15 +809,21 @@ extract_catalog_pairs() {
 }
 
 # Branch commits in (since, until] — clone if present, else gh, else anon API.
+# An empty until means "to now".
 commits_between() {
-    local repo="$1" br="$2" since="$3" until="$4" d url
-    d="$(clone_for "$repo")"
+    local org="$1" repo="$2" br="$3" since="$4" until="${5:-}" d url
+    d="$(clone_for "$org" "$repo")"
     if [[ -n "$d" ]]; then
         git -C "$d" fetch --quiet origin "$br" 2>/dev/null || true
-        git -C "$d" log "origin/$br" --since="$since" --until="$until" --format='  %cI  %s' 2>/dev/null
+        if [[ -n "$until" ]]; then
+            git -C "$d" log "origin/$br" --since="$since" --until="$until" --format='  %cI  %s' 2>/dev/null
+        else
+            git -C "$d" log "origin/$br" --since="$since" --format='  %cI  %s' 2>/dev/null
+        fi
         return
     fi
-    url="repos/${RHDS_ORG}/${repo}/commits?sha=${br}&since=${since}&until=${until}&per_page=100"
+    url="repos/${org}/${repo}/commits?sha=${br}&since=${since}&per_page=100"
+    [[ -n "$until" ]] && url="${url}&until=${until}"
     case "$SRC_FALLBACK" in
         gh)   gh api --paginate "$url" \
                 --jq '.[] | "  " + .commit.committer.date + "  " + (.commit.message|split("\n")[0])' 2>/dev/null ;;
@@ -703,7 +834,7 @@ commits_between() {
 }
 
 run_against() {
-    local base_row base_ref base_dig base_date base_tag branch
+    local base_row base_ref base_dig base_date base_ver branch
     local ag_ref ag_meta ag_dig ag_date head_a head_b moved=0 gone=0 added=0
 
     # Baseline = branch:main when present, else the first actionable row.
@@ -712,9 +843,7 @@ run_against() {
     base_ref="$(printf '%s' "$base_row" | cut -f2)"
     base_dig="$(printf '%s' "$base_row" | cut -f3)"
     base_date="$(printf '%s' "$base_row" | cut -f4)"
-    # cut the ref field FIRST — a greedy sed over the whole TSV row would chop
-    # at the last colon inside the sha256 digest, not the tag separator.
-    base_tag="$(printf '%s' "$base_row" | cut -f2 | sed 's/.*://')"
+    base_ver="$(printf '%s' "$base_row" | cut -f5)"
 
     ag_ref="$(full_ref "$AGAINST_REF")"
     if ! ag_meta="$(inspect_ref "$AGAINST_REF")"; then
@@ -759,10 +888,11 @@ run_against() {
     } >> "$AGAINST_REPORT"
 
     # Source-level delta for the ledger-relevant repos that moved, bounded by
-    # the two build dates. Branch derives from the baseline tag family.
-    branch="${base_tag%-nightly}"
+    # the two build dates. Branch derives from the baseline tag family, with a
+    # version-label fallback for digest-pinned baselines (no tag to strip).
+    branch="$(branch_for_row "$base_ref" "$base_ver")" || branch=""
     sort -u "$moved_repos" -o "$moved_repos"
-    if [[ -s "$moved_repos" ]]; then
+    if [[ -s "$moved_repos" && -n "$branch" ]]; then
         local since until repo
         if [[ "$base_date" < "$ag_date" ]]; then since="$base_date"; until="$ag_date"
         else since="$ag_date"; until="$base_date"; fi
@@ -772,9 +902,11 @@ run_against() {
             echo "  for the moved components that map to a source repo:"
             while read -r repo; do
                 echo "    ${RHDS_ORG}/${repo}:"
-                commits_between "$repo" "$branch" "$since" "$until" | sed 's/^/    /' | head -25
+                commits_between "$RHDS_ORG" "$repo" "$branch" "$since" "$until" | sed 's/^/    /' | head -25
             done < "$moved_repos"
         } >> "$AGAINST_REPORT"
+    elif [[ -s "$moved_repos" ]]; then
+        echo "  (cannot derive a source branch from this baseline — commit window skipped)" >> "$AGAINST_REPORT"
     fi
 }
 
@@ -900,24 +1032,33 @@ if [[ -n "$AGAINST_REF" ]]; then
 fi
 
 if $USE_REPOS; then
+    [[ "${CAPS_DETECTED:-false}" == true ]] || { detect_capabilities; CAPS_DETECTED=true; }
     echo
-    echo "Upstream repos (commits after $OLDEST_DATE, unmerged into the local clones):"
-    GH_ROOT="${GH_ROOT:-$HOME/git/github}"
-    since="${OLDEST_DATE%%T*}"
-    found=false
-    for org in opendatahub-io red-hat-data-services; do
-        [[ -d "$GH_ROOT/$org" ]] || continue
-        for d in "$GH_ROOT/$org"/*/; do
-            [[ -d "$d/.git" ]] || continue
-            out="$(git -C "$d" log --oneline --no-decorate "HEAD..@{u}" --since="$since" 2>/dev/null)"
-            if [[ -n "$out" ]]; then
-                found=true
-                printf '  %s/%s\n' "$org" "$(basename "$d")"
-                echo "$out" | sed 's/^/      /'
+    echo "Upstream repos (${UPSTREAM_ORG} main-branch commits since the oldest build):"
+    if [[ -z "$OLDEST_DATE" || "$OLDEST_DATE" == "?" ]]; then
+        echo "  no build date resolved — cannot window the upstream search"
+    else
+        # Same fallback chain as --fixes: clones located by origin URL, else gh,
+        # else the anonymous API — and the sources are always stated, so "no
+        # commits" is never ambiguous with "could not look".
+        case "$SRC_FALLBACK" in
+            gh)   echo "  sources: clones by origin URL, else gh (authenticated)" ;;
+            anon) echo "  sources: clones by origin URL, else anonymous GitHub API" ;;
+            *)    echo "  sources: clones by origin URL only (no gh, no curl)" ;;
+        esac
+        for repo in "${UPSTREAM_REPOS[@]}"; do
+            d="$(clone_for "$UPSTREAM_ORG" "$repo")"
+            [[ -n "$d" ]] && src="clone" || src="$SRC_FALLBACK"
+            out="$(commits_between "$UPSTREAM_ORG" "$repo" main "$OLDEST_DATE" "")"
+            if [[ -z "$out" ]]; then
+                printf '  %-40s no commits since the build (%s)\n' "${UPSTREAM_ORG}/${repo}" "$src"
+                continue
             fi
+            printf '  %s/%s (%s):\n' "$UPSTREAM_ORG" "$repo" "$src"
+            printf '%s\n' "$out" | head -25 | sed 's/^/    /'
         done
-    done
-    $found || echo "  none (or clones are already up to date — run each org's pull-all.sh -n)"
+        echo "  (upstream main = what is coming; a fix only reaches a nightly once it is on the ${RHDS_ORG} side)"
+    fi
 fi
 
 echo

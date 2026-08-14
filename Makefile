@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -47,6 +47,11 @@ help:
 	@echo ""
 	@echo "Diagnostics & Validation:"
 	@echo "  make diagnose       - Full cluster diagnosis (connectivity, config, RHOAI, MaaS)"
+	@echo "  make compare        - Which build is where: git pins vs clusters vs quay (exit 2 = drift)"
+	@echo "                        ARGS=\"--no-cluster\" offline, \"--repos\" adds upstream commits,"
+	@echo "                        \"--fixes\" hunts ledger Jira keys on the build branch,"
+	@echo "                        \"--against :rhoai-3.5\" diffs another catalog build vs ours,"
+	@echo "                        \"--image :rhoai-3.6-ea.1-nightly\" adds an explicit reference point"
 	@echo "  make preflight      - Quick readiness check (pass/warn/fail)"
 	@echo "  make validate-config - Validate .env against cluster capabilities"
 	@echo "  make status         - Show ArgoCD application status"
@@ -79,6 +84,8 @@ help:
 	@echo "Cleanup:"
 	@echo "  make clean        - Full cleanup (runs undeploy + removes leftover operators)"
 	@echo "  make undeploy     - Remove ArgoCD apps only (keeps GitOps operator)"
+	@echo "  make cleanup-projects - Audit stale dashboard projects (audit only by default)"
+	@echo "                        ARGS=\"--delete-empty 30 --delete-stopped 45 --dry-run\" to delete"
 	@echo ""
 	@echo "Scaling:"
 	@echo "  make scale NAME=<machineset> REPLICAS=<N|+N|-N>"
@@ -144,6 +151,16 @@ status:
 # Comprehensive cluster diagnosis (exit 2 = warnings only, still OK)
 diagnose:
 	@scripts/diagnose.sh || [ $$? -eq 2 ]
+
+# Compare RHOAI builds across git pins, clusters and quay (exit 2 = drift found)
+# Pass options through with ARGS, e.g. make compare ARGS="--no-cluster --repos"
+compare:
+	@scripts/compare-builds.sh $(ARGS)
+
+# Audit stale RHOAI dashboard projects; deletes ONLY with an explicit --delete-* flag
+# make cleanup-projects ARGS="--delete-empty 30 --delete-stopped 45 --dry-run"
+cleanup-projects:
+	@scripts/cleanup-stale-projects.sh $(ARGS)
 
 # Quick cluster readiness check (exit 2 = warnings only, still OK)
 preflight:

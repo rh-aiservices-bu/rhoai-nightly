@@ -1,0 +1,1095 @@
+#!/usr/bin/env bash
+#
+# compare-builds.sh - Answer "which RHOAI build is where, and what changed"
+#
+# On-demand only. Keeps NO state between runs: every invocation resolves its
+# reference points fresh and compares them against each other. There is nothing
+# to schedule and nothing to diff against a previous run.
+#
+# A "reference point" is anything that resolves to a catalog image digest. Each
+# is optional and independently skippable; a run with two of them is valid. A
+# point that cannot be resolved (branch missing, cluster unreachable, tag gone)
+# is REPORTED as unresolved, never silently dropped -- "the cluster is gone" is
+# itself a finding.
+#
+#   1. --branch NAME   catalogsource pin on a git branch (default: main, clusters)
+#   2. --cluster CTX   a live cluster: the catalog POD's imageID, not .spec.image.
+#                      Under a floating tag those two disagree and the pod wins.
+#   3. --image REF     a tag or digest you name explicitly
+#   4. --stream        newest build in main's version family. Both the -nightly
+#                      and the released rhoai-<ver> track are probed: they move
+#                      independently and the released track has led before.
+#
+# With a cluster available it also compares the COMPONENT layer -- what the
+# catalog offers (packagemanifest relatedImages) against what is deployed (the
+# installed CSV's RELATED_IMAGE env). Drift there means the cluster runs an
+# older nightly than its own catalog serves, which is the static-CSV-name issue
+# (docs/issues/nightly-csv-name-static.md) and what `make restart-catalog` fixes.
+#
+# Usage:
+#   scripts/compare-builds.sh                        # main + clusters + current cluster + stream
+#   scripts/compare-builds.sh --no-cluster           # offline: git pins + quay only
+#   scripts/compare-builds.sh --cluster CTX          # a specific oc context (repeatable)
+#   scripts/compare-builds.sh --image :rhoai-3.6-ea.1-nightly
+#   scripts/compare-builds.sh --repos                # also report upstream commits since the build
+#   scripts/compare-builds.sh --fixes                # which ledger issues have fixes on the build branch
+#   scripts/compare-builds.sh --against :rhoai-3.5   # what another catalog build contains that ours doesn't
+#   scripts/compare-builds.sh --list-tags            # authoritative milestone discovery (SLOW, ~216k tags)
+#   scripts/compare-builds.sh --json                 # machine-readable
+#
+# Options:
+#   --branch NAME     add a git branch pin           --no-branches
+#   --cluster CTX     add a cluster ("current" ok)   --no-cluster
+#   --image REF       add an explicit image ref      (a bare ":tag" means the FBC repo)
+#   --stream/--no-stream
+#   --components/--no-components   component-layer diff (default: on when a cluster resolves)
+#   --repos           list upstream (opendatahub-io) main-branch commits since the
+#                     build — what is coming, not yet downstream. Uses the same
+#                     clone/gh/anonymous fallback chain as --fixes.
+#   --fixes           search the downstream release branch for commits citing the
+#                     Jira keys in docs/, split into already-in-this-build vs pending
+#   --since DAYS      API history window for --fixes (default 90; clones use full history)
+#   --against REF     diff the baseline build's catalog against another catalog image:
+#                     per-component digest changes (via skopeo copy — no cluster, no opm;
+#                     pulls ~300MB per side, deleted after read; requires yq) plus the
+#                     source-branch commits between the two build dates for moved
+#                     components that map to a red-hat-data-services repo
+#   --list-tags       discover milestone tags from the registry instead of probing
+#   --json            emit JSON instead of the table
+#   -q, --quiet       suppress progress chatter
+#
+# --fixes/--repos portability: nothing about this machine is assumed. Local clones are
+# located by their ORIGIN REMOTE URL (override the search roots with
+# RHOAI_SRC_ROOTS, colon-separated) and are only an optimisation -- with none
+# present it falls back to `gh` if authenticated, else the anonymous GitHub API
+# (these repos are public; 60 requests/hour, one per repo). Jira has NO anonymous
+# read, so it needs JIRA_TOKEN, or JIRA_EMAIL + JIRA_API_TOKEN, and is skipped
+# with an explicit notice otherwise. Every run prints which capabilities it had,
+# so "no hits" is never ambiguous between "nothing landed" and "could not look".
+#
+# Exit codes:
+#   0 = every resolved reference point agrees (same digest)
+#   1 = usage error, or nothing could be resolved at all
+#   2 = drift: resolved points disagree, or the cluster lags its own catalog
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+FBC_REPO="quay.io/rhoai/rhoai-fbc-fragment"
+CATALOG_NAME="rhoai-catalog-nightly"
+CATALOG_NS="openshift-marketplace"
+OPERATOR_NS="redhat-ods-operator"
+CHANNEL="${COMPARE_CHANNEL:-}"   # empty = derive from main's patch-channel.yaml (it has flipped before: beta during EA)
+CATALOG_PATH="components/operators/rhoai-operator/base/catalogsource.yaml"
+CHANNEL_PATH="components/operators/rhoai-operator/base/patch-channel.yaml"
+OC_TIMEOUT="--request-timeout=20s"
+
+BRANCHES=()
+CLUSTERS=()
+IMAGES=()
+USE_BRANCHES=true
+USE_CLUSTER=true
+USE_STREAM=true
+USE_COMPONENTS=""      # empty = auto (on when a cluster resolves)
+USE_REPOS=false
+USE_FIXES=false
+AGAINST_REF=""
+SINCE_DAYS=90
+LIST_TAGS=false
+JSON=false
+QUIET=false
+
+# Downstream repos that build RHOAI components. Fixes must land HERE (not just
+# in opendatahub-io) to reach a nightly. Each carries branches named exactly
+# after the release: rhoai-3.5, rhoai-3.5-ea.2, rhoai-3.6-ea.1 ...
+RHDS_ORG="red-hat-data-services"
+RHDS_REPOS=(
+    rhods-operator
+    models-as-a-service
+    odh-dashboard
+    ai-gateway-payload-processing
+    ai-gateway-operator
+    ogx-k8s-operator
+    odh-model-controller
+)
+
+# Upstream development happens in opendatahub-io on main. --repos reports what
+# has landed there since the build — what is coming, not yet downstream.
+UPSTREAM_ORG="opendatahub-io"
+UPSTREAM_REPOS=(
+    opendatahub-operator
+    models-as-a-service
+    odh-dashboard
+    ai-gateway-payload-processing
+    ai-gateway-operator
+    ogx-k8s-operator
+    odh-model-controller
+)
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/compare-builds.XXXXXX")" || { echo "cannot create temp dir" >&2; exit 1; }
+trap 'rm -rf "$WORK"' EXIT INT TERM
+
+say() { $QUIET || log_info "$*"; }
+note() { $QUIET || log_step "$*"; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --branch)    [[ $# -ge 2 ]] || { log_error "--branch needs a name"; exit 1; }; BRANCHES+=("$2"); shift 2 ;;
+        --cluster)   [[ $# -ge 2 ]] || { log_error "--cluster needs a context"; exit 1; }; CLUSTERS+=("$2"); shift 2 ;;
+        --image)     [[ $# -ge 2 ]] || { log_error "--image needs a reference"; exit 1; }; IMAGES+=("$2"); shift 2 ;;
+        --no-branches)   USE_BRANCHES=false; shift ;;
+        --no-cluster)    USE_CLUSTER=false; shift ;;
+        --stream)        USE_STREAM=true; shift ;;
+        --no-stream)     USE_STREAM=false; shift ;;
+        --components)    USE_COMPONENTS=true; shift ;;
+        --no-components) USE_COMPONENTS=false; shift ;;
+        --repos)         USE_REPOS=true; shift ;;
+        --fixes)         USE_FIXES=true; shift ;;
+        --against)       [[ $# -ge 2 ]] || { log_error "--against needs an image reference"; exit 1; }
+                         AGAINST_REF="$2"; shift 2 ;;
+        --since)         [[ $# -ge 2 ]] || { log_error "--since needs a number of days"; exit 1; }
+                         SINCE_DAYS="$2"; shift 2 ;;
+        --list-tags)     LIST_TAGS=true; shift ;;
+        --json)          JSON=true; QUIET=true; shift ;;
+        -q|--quiet)      QUIET=true; shift ;;
+        -h|--help)   sed -n '3,73p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) log_error "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+for tool in skopeo jq git; do
+    command -v "$tool" >/dev/null 2>&1 || { log_error "$tool is required but not installed"; exit 1; }
+done
+
+# Default reference points when none were named explicitly.
+$USE_BRANCHES && [[ ${#BRANCHES[@]} -eq 0 ]] && BRANCHES=(main clusters)
+$USE_BRANCHES || BRANCHES=()
+$USE_CLUSTER && [[ ${#CLUSTERS[@]} -eq 0 ]] && CLUSTERS=(current)
+$USE_CLUSTER || CLUSTERS=()
+
+# --fixes/--repos/--against produce text reports that the JSON output does not
+# carry. Doing the work and then dropping it would be a silent lie (and, for
+# --against, ~600MB of pulls) — refuse the combination up front instead.
+if $JSON && { $USE_FIXES || $USE_REPOS || [[ -n "$AGAINST_REF" ]]; }; then
+    echo "note: --fixes/--repos/--against are not represented in --json output; skipping them for this run" >&2
+    USE_FIXES=false; USE_REPOS=false; AGAINST_REF=""
+fi
+
+# --- resolution helpers -------------------------------------------------------
+
+# Rows accumulate as TSV: point <TAB> ref <TAB> digest <TAB> build-date <TAB> version <TAB> release
+ROWS="$WORK/rows.tsv"
+: > "$ROWS"
+UNRESOLVED="$WORK/unresolved.tsv"
+: > "$UNRESOLVED"
+
+add_row()        { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >> "$ROWS"; }
+add_unresolved() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$UNRESOLVED"; }
+
+# Normalise "":tag"", "tag", "repo:tag", or "repo@sha256:..." to a full pull spec.
+full_ref() {
+    local r="$1"
+    case "$r" in
+        *"@sha256:"*|*"/"*) echo "$r" ;;
+        :*)                 echo "${FBC_REPO}${r}" ;;
+        *)                  echo "${FBC_REPO}:${r}" ;;
+    esac
+}
+
+# skopeo inspect, memoised per reference. Emits "digest<TAB>build-date<TAB>version<TAB>release".
+# --override-os/--override-arch are mandatory on Apple Silicon: without them
+# skopeo refuses with "no image found in image index for architecture arm64".
+inspect_ref() {
+    local ref cache
+    ref="$(full_ref "$1")"
+    cache="$WORK/insp.$(printf '%s' "$ref" | tr -c 'A-Za-z0-9' '_')"
+    if [[ ! -f "$cache" ]]; then
+        skopeo inspect --no-tags --override-os linux --override-arch amd64 \
+            "docker://$ref" 2>"$cache.err" \
+            | jq -r '[.Digest, .Labels["build-date"], .Labels.version, .Labels.release]
+                     | map(. // "?") | @tsv' > "$cache" 2>/dev/null
+    fi
+    [[ -s "$cache" ]] || return 1
+    cat "$cache"
+}
+
+short() { local d="${1#sha256:}"; echo "${d:0:8}"; }
+
+# Shorten a comma-separated digest list (variant images share one repo name).
+short_list() {
+    local rest="$1" out="" x
+    while [[ -n "$rest" ]]; do
+        x="${rest%%,*}"
+        [[ "$rest" == *,* ]] && rest="${rest#*,}" || rest=""
+        out="${out:+$out,}$(short "$x")"
+    done
+    echo "$out"
+}
+
+# Downstream branch (tag family) for a resolved row. Tag refs are the string
+# rule (rhoai-3.5-nightly -> rhoai-3.5, rhoai-3.6-ea.1-nightly -> rhoai-3.6-ea.1);
+# digest-pinned refs carry NO tag — the last colon there is inside the sha256,
+# so fall back to the image's version label (3.5.0 -> rhoai-3.5).
+branch_for_row() {
+    local ref="$1" ver="${2:-}" tag=""
+    case "$ref" in
+        *@sha256:*) tag="" ;;
+        *:*)        tag="${ref##*:}" ;;
+    esac
+    if [[ "$tag" == rhoai-* ]]; then
+        echo "${tag%-nightly}"
+        return 0
+    fi
+    ver="${ver#v}"   # the FBC version label is "v3.5.0"
+    if [[ "$ver" =~ ^([0-9]+\.[0-9]+) ]]; then
+        echo "rhoai-${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# ISO8601 (any offset) -> epoch seconds. Needed because git %cI carries the
+# committer's LOCAL offset while image build-date labels are Z-suffixed UTC —
+# comparing those lexicographically misorders anything near the boundary.
+# GNU date first, then BSD (macOS) which needs the offset colon stripped.
+iso_epoch() {
+    local s="$1" t
+    date -u -d "$s" +%s 2>/dev/null && return 0
+    t="${s/Z/+0000}"
+    t="$(printf '%s' "$t" | sed -E 's/([+-][0-9]{2}):([0-9]{2})$/\1\2/')"
+    date -j -f '%Y-%m-%dT%H:%M:%S%z' "$t" +%s 2>/dev/null
+}
+
+# 1 + 3: catalogsource pin on a git branch.
+resolve_branch() {
+    local br="$1" ref rest
+    # Braces before the colon are load-bearing under zsh, where "$br:c" would
+    # parse as the :c modifier. Harmless in bash; kept so the line is portable.
+    ref="$(git -C "$REPO_ROOT" show "origin/${br}:${CATALOG_PATH}" 2>/dev/null \
+           | sed -nE 's/^[[:space:]]*image:[[:space:]]*//p')"
+    if [[ -z "$ref" ]]; then
+        # fall back to a local branch when there is no remote-tracking copy
+        ref="$(git -C "$REPO_ROOT" show "${br}:${CATALOG_PATH}" 2>/dev/null \
+               | sed -nE 's/^[[:space:]]*image:[[:space:]]*//p')"
+    fi
+    [[ -n "$ref" ]] || { add_unresolved "branch:$br" "-" "branch or catalogsource not found"; return 1; }
+    if ! rest="$(inspect_ref "$ref")"; then
+        add_unresolved "branch:$br" "$ref" "tag not resolvable on the registry"; return 1
+    fi
+    IFS=$'\t' read -r dg bd ver rel <<< "$rest"
+    add_row "branch:$br" "$ref" "$dg" "$bd" "$ver" "$rel"
+    echo "$ref"
+}
+
+branch_channel() {
+    git -C "$REPO_ROOT" show "origin/${1}:${CHANNEL_PATH}" 2>/dev/null \
+        | grep -A1 '/spec/channel' | sed -nE 's/^[[:space:]]*value:[[:space:]]*//p'
+}
+
+# 2: a live cluster. The catalog POD's imageID is the running build; .spec.image
+# is only what GitOps asked for.
+resolve_cluster() {
+    local ctx="$1" ctxargs=() label spec pod_img csv sub chan
+    if [[ "$ctx" == "current" ]]; then
+        ctx="$(oc config current-context 2>/dev/null)"
+        [[ -n "$ctx" ]] || { add_unresolved "cluster:current" "-" "no current oc context"; return 1; }
+    fi
+    ctxargs=(--context="$ctx")
+
+    # whoami --show-server yields a clean short name: context names mangle dots
+    # to dashes, but the server URL keeps them, so api.<name>.<...> gives the
+    # cluster name directly. NOTE it only reads the kubeconfig — it proves
+    # nothing about the API. Without a --request-timeout an unreachable API
+    # hangs for minutes instead of failing.
+    local server
+    server="$(oc "${ctxargs[@]}" $OC_TIMEOUT whoami --show-server 2>/dev/null)"
+    if [[ -z "$server" ]]; then
+        label="cluster:$(printf '%s' "$ctx" | sed -E 's#^default/api-##; s#:6443/.*$##' | cut -c1-20)"
+        add_unresolved "$label" "-" "context not found in kubeconfig"
+        return 1
+    fi
+    label="cluster:$(printf '%s' "$server" | sed -E 's#^https?://api[.-]##; s#[:.].*$##' | cut -c1-20)"
+    # An AUTHENTICATED probe, or an expired token reads as "no CatalogSource
+    # (RHOAI not installed?)" — a mislabeled finding, seen live with an expired
+    # oauth token on bu-nightly-2.
+    if ! oc "${ctxargs[@]}" $OC_TIMEOUT whoami >/dev/null 2>&1; then
+        add_unresolved "$label" "-" "unreachable or credentials expired (oc whoami failed — try oc login)"
+        return 1
+    fi
+
+    # Two different context names can point at one cluster ("current" plus its
+    # own name is the common case). Resolve it once. This function runs inside
+    # a command substitution: stdout IS the return value, so any notice must go
+    # to stderr or it vanishes into the discarded capture.
+    if [[ -f "$WORK/ctx.$label" ]]; then
+        say "  $label already resolved via another context — skipping duplicate" >&2
+        add_unresolved "$label" "-" "context '$ctx' is the same cluster — already resolved above"
+        return 1
+    fi
+    spec="$(oc "${ctxargs[@]}" $OC_TIMEOUT get catalogsource "$CATALOG_NAME" -n "$CATALOG_NS" \
+            -o jsonpath='{.spec.image}' 2>/dev/null)"
+    pod_img="$(oc "${ctxargs[@]}" $OC_TIMEOUT get pod -n "$CATALOG_NS" -l "olm.catalogSource=$CATALOG_NAME" \
+            -o jsonpath='{range .items[*]}{.status.containerStatuses[0].imageID}{"\n"}{end}' 2>/dev/null \
+            | grep -v '^$' | sort -u | head -1)"
+    if [[ -z "$pod_img" && -z "$spec" ]]; then
+        add_unresolved "$label" "-" "no $CATALOG_NAME CatalogSource (RHOAI not installed?)"
+        return 1
+    fi
+    csv="$(oc "${ctxargs[@]}" $OC_TIMEOUT get subscription rhods-operator -n "$OPERATOR_NS" \
+            -o jsonpath='{.status.installedCSV}' 2>/dev/null)"
+    sub="$(oc "${ctxargs[@]}" $OC_TIMEOUT get subscription rhods-operator -n "$OPERATOR_NS" \
+            -o jsonpath='{.status.state}' 2>/dev/null)"
+    # The cluster's OWN channel, for the component diff — it can differ from
+    # what main currently patches (beta vs stable-3.x flipped during EA).
+    chan="$(oc "${ctxargs[@]}" $OC_TIMEOUT get subscription rhods-operator -n "$OPERATOR_NS" \
+            -o jsonpath='{.spec.channel}' 2>/dev/null)"
+    echo "$ctx"   > "$WORK/ctx.$label"
+    echo "$csv"   > "$WORK/csv.$label"
+    echo "$sub"   > "$WORK/sub.$label"
+    echo "$spec"  > "$WORK/spec.$label"
+    echo "$chan"  > "$WORK/chan.$label"
+
+    if [[ -n "$pod_img" ]] && rest="$(inspect_ref "$pod_img")"; then
+        IFS=$'\t' read -r dg bd ver rel <<< "$rest"
+        add_row "$label" "${spec:-$pod_img}" "$dg" "$bd" "$ver" "$rel"
+    elif [[ -n "$pod_img" ]]; then
+        # digest is authoritative even when the registry lookup fails
+        add_row "$label" "${spec:-?}" "${pod_img##*@}" "?" "?" "?"
+    else
+        add_unresolved "$label" "$spec" "catalog pod not running; only .spec.image known"
+        return 1
+    fi
+    echo "$label"
+}
+
+# 4: newest build in a version family. Probing a short candidate list beats
+# `skopeo list-tags`, which returns ~216k tags and takes minutes.
+resolve_stream() {
+    local ver="$1" candidates=() t rest
+    candidates=("rhoai-${ver}" "rhoai-${ver}-nightly")
+    if $LIST_TAGS; then
+        note "listing registry tags (slow)..."
+        skopeo list-tags --override-os linux --override-arch amd64 "docker://$FBC_REPO" 2>/dev/null \
+            | jq -r '.Tags[]' > "$WORK/tags.txt"
+        while IFS= read -r t; do candidates+=("$t"); done < <(
+            grep -E "^rhoai-${ver//./\\.}(-ea\.[0-9]+)?(-nightly)?$" "$WORK/tags.txt" | sort -u)
+    else
+        for n in 1 2 3 4; do
+            candidates+=("rhoai-${ver}-ea.${n}" "rhoai-${ver}-ea.${n}-nightly")
+        done
+    fi
+    # dedupe, preserving order
+    local seen=() c
+    for c in "${candidates[@]}"; do
+        [[ " ${seen[*]-} " == *" $c "* ]] && continue
+        seen+=("$c")
+        if rest="$(inspect_ref ":$c")"; then
+            IFS=$'\t' read -r dg bd ver2 rel <<< "$rest"
+            add_row "stream:$c" "${FBC_REPO}:$c" "$dg" "$bd" "$ver2" "$rel"
+        fi
+    done
+}
+
+# --- resolve ------------------------------------------------------------------
+
+MAIN_REF=""
+for br in ${BRANCHES[@]+"${BRANCHES[@]}"}; do
+    note "resolving branch pin: $br"
+    out="$(resolve_branch "$br")" && [[ "$br" == "main" ]] && MAIN_REF="$out"
+done
+
+CLUSTER_LABELS=()
+for ctx in ${CLUSTERS[@]+"${CLUSTERS[@]}"}; do
+    note "resolving cluster: $ctx"
+    if lbl="$(resolve_cluster "$ctx")"; then CLUSTER_LABELS+=("$lbl"); fi
+done
+
+for img in ${IMAGES[@]+"${IMAGES[@]}"}; do
+    note "resolving image: $img"
+    if rest="$(inspect_ref "$img")"; then
+        IFS=$'\t' read -r dg bd ver rel <<< "$rest"
+        add_row "image" "$(full_ref "$img")" "$dg" "$bd" "$ver" "$rel"
+    else
+        add_unresolved "image" "$(full_ref "$img")" "not resolvable on the registry"
+    fi
+done
+
+if $USE_STREAM; then
+    # Version family comes from main's pin when available, else any resolved row.
+    src="${MAIN_REF:-$(cut -f2 "$ROWS" 2>/dev/null | head -1)}"
+    VER="$(echo "$src" | sed -nE 's/.*:rhoai-([0-9]+\.[0-9]+).*/\1/p')"
+    if [[ -n "$VER" ]]; then
+        note "probing the rhoai-$VER family"
+        resolve_stream "$VER"
+    else
+        add_unresolved "stream" "-" "could not derive a version family (no rhoai-X.Y pin resolved)"
+    fi
+fi
+
+if [[ ! -s "$ROWS" ]]; then
+    log_error "No reference point could be resolved."
+    [[ -s "$UNRESOLVED" ]] && while IFS=$'\t' read -r p r w; do log_error "  $p ($r): $w"; done < "$UNRESOLVED"
+    exit 1
+fi
+
+# --- component layer ----------------------------------------------------------
+
+# Resolve the channel once, from main's patch — never hard-coded (it flipped to
+# beta during the 3.4 EA period). Per-cluster diffs still prefer the cluster's
+# own Subscription channel captured in resolve_cluster.
+if [[ -z "$CHANNEL" ]]; then
+    CHANNEL="$(branch_channel main)"
+    [[ -n "$CHANNEL" ]] || CHANNEL="stable-3.x"
+fi
+
+COMPONENT_DRIFT=false
+COMPONENT_REPORT="$WORK/components.txt"
+: > "$COMPONENT_REPORT"
+
+norm_images() { grep -oE '[a-z0-9.:/-]+@sha256:[0-9a-f]{64}' | sed 's/@/ /' | sort -u; }
+
+component_diff() {
+    local label="$1" ctx csv ch
+    ctx="$(cat "$WORK/ctx.$label" 2>/dev/null)"
+    csv="$(cat "$WORK/csv.$label" 2>/dev/null)"
+    ch="$(cat "$WORK/chan.$label" 2>/dev/null)"
+    [[ -n "$ch" ]] || ch="$CHANNEL"
+    [[ -n "$ctx" && -n "$csv" ]] || return 1
+
+    oc --context="$ctx" --request-timeout=30s get packagemanifest -l "catalog=$CATALOG_NAME" -n "$CATALOG_NS" -o json 2>/dev/null \
+      | jq -r --arg ch "$ch" '.items[]|select(.metadata.name=="rhods-operator").status.channels[]
+               |select(.name==$ch)|.currentCSVDesc.relatedImages[]' 2>/dev/null \
+      | norm_images > "$WORK/offered.$label"
+
+    oc --context="$ctx" --request-timeout=30s get csv "$csv" -n "$OPERATOR_NS" \
+        -o jsonpath='{range .spec.install.spec.deployments[0].spec.template.spec.containers[0].env[*]}{.value}{"\n"}{end}' 2>/dev/null \
+      | norm_images > "$WORK/deployed.$label"
+
+    [[ -s "$WORK/offered.$label" && -s "$WORK/deployed.$label" ]] || return 1
+
+    local n_off n_dep drift=0
+    n_off=$(wc -l < "$WORK/offered.$label" | tr -d ' ')
+    n_dep=$(wc -l < "$WORK/deployed.$label" | tr -d ' ')
+    # One repo can legitimately carry several digests (variant images). A plain
+    # join on such duplicate keys emits the cross product and manufactures
+    # DRIFT rows on an in-sync cluster — so collapse each side to one
+    # "repo digest,digest" line first and compare the digest SETS. Input is
+    # already sorted -u, which keeps the collapsed lists deterministic.
+    awk '{a[$1]=(a[$1]==""?$2:a[$1]","$2)} END{for(k in a) print k, a[k]}' \
+        "$WORK/offered.$label" | sort > "$WORK/offered.$label.set"
+    awk '{a[$1]=(a[$1]==""?$2:a[$1]","$2)} END{for(k in a) print k, a[k]}' \
+        "$WORK/deployed.$label" | sort > "$WORK/deployed.$label.set"
+    {
+        echo "  $label  (catalog offers $n_off images, CSV deploys $n_dep, channel $ch)"
+        # Joining on the repo name is required: the two lists are not the same
+        # universe (the env list holds version strings and duplicates; the
+        # packagemanifest holds the bundle and operator images the env list has
+        # no reason to carry). Diffing them raw manufactures ~30 false rows.
+        while read -r repo off dep; do
+            if [[ "$off" != "$dep" ]]; then
+                drift=1
+                printf '    DRIFT %s\n      offers   %s\n      deploys  %s\n' \
+                    "$repo" "$(short_list "$off")" "$(short_list "$dep")"
+            fi
+        done < <(join "$WORK/offered.$label.set" "$WORK/deployed.$label.set")
+        [[ $drift -eq 0 ]] && echo "    no component drift — cluster is current with its own catalog"
+    } >> "$COMPONENT_REPORT"
+    [[ $drift -eq 1 ]] && COMPONENT_DRIFT=true
+    return 0
+}
+
+if [[ -z "$USE_COMPONENTS" ]]; then
+    [[ ${#CLUSTER_LABELS[@]} -gt 0 ]] && USE_COMPONENTS=true || USE_COMPONENTS=false
+fi
+if [[ "$USE_COMPONENTS" == true && ${#CLUSTER_LABELS[@]} -gt 0 ]]; then
+    for lbl in "${CLUSTER_LABELS[@]}"; do
+        note "component diff: $lbl"
+        component_diff "$lbl" || echo "  $lbl  component diff unavailable" >> "$COMPONENT_REPORT"
+    done
+elif [[ "$USE_COMPONENTS" == true ]]; then
+    echo "  skipped — component digests require a reachable cluster (no opm/crane locally)" >> "$COMPONENT_REPORT"
+fi
+
+# --- verdict ------------------------------------------------------------------
+
+# Only branch/cluster/image points are ACTIONABLE -- they say where a build is
+# actually pinned or running, so a disagreement among them is real drift. The
+# stream rows are deliberately historical (ea.1, ea.2 ...) and always differ;
+# counting them as drift would make every run report a problem.
+grep -v $'^stream:' "$ROWS" > "$WORK/actionable.tsv" || true
+grep    $'^stream:' "$ROWS" > "$WORK/streamrows.tsv" || true
+
+DISTINCT=$(cut -f3 "$WORK/actionable.tsv" 2>/dev/null | sort -u | grep -c . || echo 0)
+NEWEST_DATE=$(cut -f4 "$WORK/actionable.tsv" 2>/dev/null | grep -v '^?$' | sort | tail -1)
+OLDEST_DATE=$(cut -f4 "$WORK/actionable.tsv" 2>/dev/null | grep -v '^?$' | sort | head -1)
+
+# Newest build anywhere in the family, and whether our pins already have it.
+STREAM_BEST=$(sort -t$'\t' -k4,4 "$WORK/streamrows.tsv" 2>/dev/null | tail -1)
+STREAM_NEWER=false
+if [[ -n "$STREAM_BEST" && -n "$NEWEST_DATE" ]]; then
+    sb_date=$(printf '%s' "$STREAM_BEST" | cut -f4)
+    [[ "$sb_date" > "$NEWEST_DATE" ]] && STREAM_NEWER=true
+fi
+
+RC=0
+[[ "$DISTINCT" -gt 1 ]] && RC=2
+$COMPONENT_DRIFT && RC=2
+
+# --- fix hunt -----------------------------------------------------------------
+#
+# "Has this ledger issue been fixed?" answered from the downstream branch that
+# actually builds the nightly. Three independent capabilities, each detected and
+# each degrading on its own; a missing one is REPORTED, never silently skipped,
+# so "no hits" is never ambiguous between "nothing landed" and "could not look".
+
+FIXES_REPORT="$WORK/fixes.txt"
+: > "$FIXES_REPORT"
+SRC_FALLBACK=""     # gh | anon | none  (used for repos with no local clone)
+CLONES_FOUND=0
+JIRA_MODE=none      # token | basic | none
+
+# BSD date (macOS) and GNU date disagree on relative dates; try both.
+iso_days_ago() {
+    date -u -v-"$1"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -d "$1 days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
+}
+
+# Portability: clones are located by their ORIGIN REMOTE URL, never by path, so
+# no directory layout is assumed. RHOAI_SRC_ROOTS (colon-separated) overrides
+# the guesses; finding nothing is fine, the API path covers everything.
+discover_clones() {
+    local roots=() r d url slug
+    if [[ -n "${RHOAI_SRC_ROOTS:-}" ]]; then
+        IFS=':' read -r -a roots <<< "$RHOAI_SRC_ROOTS"
+    else
+        roots=("$HOME/git" "$HOME/src" "$HOME/code" "$HOME/Projects" \
+               "$HOME/workspace" "$HOME/dev" "$(dirname "$REPO_ROOT")")
+    fi
+    for r in "${roots[@]}"; do
+        [[ -d "$r" ]] || continue
+        while IFS= read -r d; do
+            url="$(git -C "$d" remote get-url origin 2>/dev/null)" || continue
+            slug="$(printf '%s' "$url" | sed -E 's#\.git$##; s#^.*[:/]([^/]+/[^/]+)$#\1#')"
+            [[ -n "$slug" ]] && printf '%s=%s\n' "$slug" "$d"
+        done < <(find "$r" -maxdepth 4 -name .git -exec dirname {} \; 2>/dev/null)
+        # maxdepth 4, not 3: a root like ~/git holds <host>/<org>/<repo>/.git
+    done
+}
+
+clone_for() { grep -m1 "^${1}/${2}=" "$WORK/clones.idx" 2>/dev/null | cut -d= -f2-; }
+
+detect_capabilities() {
+    discover_clones > "$WORK/clones.idx" 2>/dev/null || : > "$WORK/clones.idx"
+    local r
+    for r in "${RHDS_REPOS[@]}"; do
+        [[ -n "$(clone_for "$RHDS_ORG" "$r")" ]] && CLONES_FOUND=$((CLONES_FOUND + 1))
+    done
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        SRC_FALLBACK=gh
+    elif command -v curl >/dev/null 2>&1; then
+        SRC_FALLBACK=anon
+    else
+        SRC_FALLBACK=none
+    fi
+    # No anonymous Jira read exists for this instance: it is credentials or nothing.
+    if   [[ -n "${JIRA_TOKEN:-}" ]]; then JIRA_MODE=token
+    elif [[ -n "${JIRA_EMAIL:-}" && -n "${JIRA_API_TOKEN:-}" ]]; then JIRA_MODE=basic
+    else JIRA_MODE=none; fi
+}
+
+# org repo branch -> TSV: sha <TAB> ISO-date <TAB> subject
+fetch_commits() {
+    local org="$1" repo="$2" br="$3" d since url
+    d="$(clone_for "$org" "$repo")"
+    if [[ -n "$d" ]]; then
+        git -C "$d" fetch --quiet origin "$br" 2>/dev/null || true
+        git -C "$d" log "origin/$br" --format='%H%x09%cI%x09%s' 2>/dev/null
+        return
+    fi
+    since="$(iso_days_ago "$SINCE_DAYS")"
+    url="repos/${org}/${repo}/commits?sha=${br}&since=${since}&per_page=100"
+    case "$SRC_FALLBACK" in
+        gh)   gh api --paginate "$url" \
+                --jq '.[] | [.sha, .commit.committer.date, (.commit.message|split("\n")[0])] | @tsv' 2>/dev/null ;;
+        anon) curl -s --max-time 45 "https://api.github.com/$url" \
+                | jq -r 'if type=="array" then .[] | [.sha, .commit.committer.date, (.commit.message|split("\n")[0])] | @tsv else empty end' 2>/dev/null ;;
+        *)    return 1 ;;
+    esac
+}
+
+jira_status() {
+    local key="$1" base="${JIRA_URL:-https://issues.redhat.com}" resp
+    case "$JIRA_MODE" in
+        token) resp="$(curl -s --max-time 25 -H "Authorization: Bearer ${JIRA_TOKEN}" \
+                  "$base/rest/api/2/issue/$key?fields=status,resolution,fixVersions" 2>/dev/null)" ;;
+        basic) resp="$(curl -s --max-time 25 -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+                  "$base/rest/api/2/issue/$key?fields=status,resolution,fixVersions" 2>/dev/null)" ;;
+        *) return 1 ;;
+    esac
+    printf '%s' "$resp" | jq -r 'if .fields then
+        [(.fields.status.name // "?"),
+         (.fields.resolution.name // "Unresolved"),
+         ((.fields.fixVersions // []) | map(.name) | join(",") | if . == "" then "-" else . end)]
+        | join(" | ") else empty end' 2>/dev/null
+}
+
+run_fix_hunt() {
+    local branch="" boundary boundary_epoch when_epoch repo key line sha when subj state hits d src
+    local row_ref row_ver
+    # Downstream branch from the first actionable row that yields one — a
+    # digest-pinned row has no tag (the naive "strip to the last colon" would
+    # hand back 64 hex chars as a branch name); branch_for_row falls back to
+    # the version label for those.
+    while IFS=$'\t' read -r _ row_ref _ _ row_ver _; do
+        branch="$(branch_for_row "$row_ref" "$row_ver")" && [[ -n "$branch" ]] && break
+    done < "$WORK/actionable.tsv"
+    if [[ -z "$branch" ]]; then
+        echo "  cannot derive a downstream branch: every actionable ref is digest-pinned with no usable version label" >> "$FIXES_REPORT"
+        return
+    fi
+    boundary="${NEWEST_DATE:-}"
+    boundary_epoch=""
+    [[ -n "$boundary" ]] && boundary_epoch="$(iso_epoch "$boundary")"
+
+    grep -rhoE "(RHOAIENG|RHAIENG|CONNLINK|OCPBUGS)-[0-9]+" "$REPO_ROOT/docs" 2>/dev/null \
+        | sort -u > "$WORK/keys.txt"
+
+    {
+        printf 'Ledger keys: %s   downstream branch: %s   build boundary: %s\n' \
+            "$(grep -c . "$WORK/keys.txt")" "$branch" "${boundary:-unknown}"
+        echo
+    } >> "$FIXES_REPORT"
+
+    : > "$WORK/hitkeys.txt"
+    for repo in "${RHDS_REPOS[@]}"; do
+        d="$(clone_for "$RHDS_ORG" "$repo")"
+        [[ -n "$d" ]] && src="clone" || src="$SRC_FALLBACK"
+        if ! fetch_commits "$RHDS_ORG" "$repo" "$branch" > "$WORK/commits.$repo" 2>/dev/null; then
+            printf '  %-30s unavailable (%s)\n' "$repo" "$src" >> "$FIXES_REPORT"
+            continue
+        fi
+        if [[ ! -s "$WORK/commits.$repo" ]]; then
+            printf '  %-30s no commits on %s (%s)\n' "$repo" "$branch" "$src" >> "$FIXES_REPORT"
+            continue
+        fi
+        while IFS= read -r key; do
+            # Trailing non-digit boundary: a bare substring would let
+            # RHOAIENG-123 claim commits citing RHOAIENG-1234.
+            hits="$(grep -iE -- "${key}([^0-9]|\$)" "$WORK/commits.$repo" 2>/dev/null)" || continue
+            [[ -n "$hits" ]] || continue
+            echo "$key" >> "$WORK/hitkeys.txt"
+            while IFS=$'\t' read -r sha when subj; do
+                # Compare as epochs: %cI carries the committer's local offset,
+                # the boundary label is UTC — lexicographic order lies near the
+                # boundary for any non-UTC timezone.
+                when_epoch="$(iso_epoch "$when")"
+                if [[ -n "$boundary_epoch" && -n "$when_epoch" ]]; then
+                    if (( when_epoch < boundary_epoch )); then
+                        state="in-build "
+                    else
+                        state="PENDING  "   # merged, but built after the running image
+                    fi
+                elif [[ -n "$boundary" && "$when" < "$boundary" ]]; then
+                    state="in-build "
+                else
+                    state="PENDING  "
+                fi
+                printf '  %-26s %-15s %s %s  %.60s\n' \
+                    "$repo" "$key" "$state" "${when%T*}" "$subj" >> "$FIXES_REPORT"
+            done <<< "$hits"
+        done < "$WORK/keys.txt"
+    done
+
+    local nohit
+    nohit="$(comm -23 "$WORK/keys.txt" <(sort -u "$WORK/hitkeys.txt" 2>/dev/null) | tr '\n' ' ')"
+    if [[ -n "${nohit// /}" ]]; then
+        # Scope the claim to what was actually searched. Repos read through the
+        # API only see the --since window, so "no commit cites this" would be a
+        # lie about anything older.
+        local scope
+        if [[ $CLONES_FOUND -eq ${#RHDS_REPOS[@]} ]]; then
+            scope="in the full history of $branch"
+        elif [[ $CLONES_FOUND -eq 0 ]]; then
+            scope="on $branch in the last ${SINCE_DAYS}d (API window — older fixes not searched)"
+        else
+            scope="on $branch (full history for $CLONES_FOUND cloned repo(s), last ${SINCE_DAYS}d for the rest)"
+        fi
+        {
+            echo
+            echo "  No commit $scope cites these keys:"
+            printf '    %s\n' "$nohit" | fold -s -w 72 | sed '2,$s/^/    /'
+            echo "    (CONNLINK/OCPBUGS are Kuadrant/OpenShift — never in these repos.)"
+        } >> "$FIXES_REPORT"
+    fi
+
+    if [[ "$JIRA_MODE" != none ]]; then
+        {
+            echo
+            echo "  Jira status for keys with commits:"
+            while IFS= read -r key; do
+                printf '    %-15s %s\n' "$key" "$(jira_status "$key" || echo 'lookup failed')"
+            done < <(sort -u "$WORK/hitkeys.txt" 2>/dev/null)
+        } >> "$FIXES_REPORT"
+    fi
+}
+
+if $USE_FIXES; then
+    note "hunting for landed fixes"
+    detect_capabilities
+    CAPS_DETECTED=true
+    run_fix_hunt
+fi
+
+# --- against: what does another catalog build contain that ours doesn't? ------
+#
+# Compares the head bundle's relatedImages of the baseline build (branch:main's
+# image, else the first actionable point) against an arbitrary catalog image,
+# with NO cluster and NO opm: skopeo-copy both FBC images and read
+# configs/*/catalog.yaml out of the layer tarballs. Then, for the moved
+# components that map to a red-hat-data-services source repo, list the branch
+# commits between the two build dates — the source-level "what's in theirs".
+
+AGAINST_REPORT="$WORK/against.txt"
+: > "$AGAINST_REPORT"
+
+# component image basename -> RHDS source repo (only the ones worth a commit log)
+repo_for_component() {
+    case "$1" in
+        odh-dashboard-rhel9|odh-dashboard-operator-rhel9) echo odh-dashboard ;;
+        odh-maas-api-rhel9|odh-maas-controller-rhel9|odh-mod-arch-maas-rhel9) echo models-as-a-service ;;
+        odh-rhel9-operator|odh-operator-bundle) echo rhods-operator ;;
+        odh-ai-gateway-operator-rhel9) echo ai-gateway-operator ;;
+        odh-ai-gateway-payload-processing-rhel9) echo ai-gateway-payload-processing ;;
+        odh-ogx-core-rhel9|odh-ogx-k8s-operator-rhel9|odh-ogx-module-operator-rhel9) echo ogx-k8s-operator ;;
+        odh-model-controller-rhel9) echo odh-model-controller ;;
+        *) return 1 ;;
+    esac
+}
+
+# Pull one catalog image and emit its head bundle's images as "repo digest"
+# pairs. Prints the head bundle name on stdout. The ~300MB pull is deleted as
+# soon as the yaml is out.
+extract_catalog_pairs() {
+    local ref="$1" out="$2" dir blob f path cy headname
+    dir="$(mktemp -d "$WORK/fbc.XXXXXX")"
+    skopeo copy --override-os linux --override-arch amd64 -q "docker://$ref" "dir:$dir" 2>/dev/null || return 1
+    for f in "$dir"/*; do
+        [[ -f "$f" ]] || continue
+        # No -m1/-q here: an early-closing grep SIGPIPEs tar, and under
+        # pipefail that fails the substitution and silently skips every blob.
+        path="$(tar -tzf "$f" 2>/dev/null | grep '^configs/.*/catalog\.yaml$' || true)"
+        path="${path%%$'\n'*}"
+        [[ -n "$path" ]] && { blob="$f"; break; }
+    done
+    [[ -n "${blob:-}" ]] || { rm -rf "$dir"; return 1; }
+    cy="$WORK/catalog.$$.yaml"
+    tar -xzf "$blob" -O "$path" > "$cy" 2>/dev/null || { rm -rf "$dir"; return 1; }
+    rm -rf "$dir"
+    # The head bundle comes from the CHANNEL's replaces-graph (the entry no
+    # other entry replaces) — never from version-sorting the bundle names:
+    # these catalogs also carry a frozen 3.5.0-ea.2 bundle that sort -V ranks
+    # ABOVE 3.5.0, which made both sides "identical" during development.
+    headname="$(yq ea "select(.schema==\"olm.channel\" and .name==\"$CHANNEL\")" -o=json "$cy" 2>/dev/null \
+        | jq -rs '[.[].entries]|flatten | (map(.name)) - (map(.replaces)|map(select(.!=null))) | .[0] // empty' 2>/dev/null)"
+    if [[ -z "$headname" ]]; then
+        # channel absent (foreign catalog): fall back to highest bundle name,
+        # filtering yq's '---' separators and pre-release suffixes.
+        headname="$(yq ea 'select(.schema=="olm.bundle") | .name' "$cy" 2>/dev/null \
+            | grep -vE '^(---|null)$' | grep -vE -- '-ea\.|-rc\.' | sort -uV | tail -1)"
+    fi
+    [[ -n "$headname" ]] || return 1
+    yq ea "select(.schema==\"olm.bundle\" and .name==\"$headname\") | .relatedImages[].image" "$cy" 2>/dev/null \
+        | grep -oE '[a-z0-9.:/_-]+@sha256:[0-9a-f]{64}' | sed 's/@/ /' | sort -u > "$out"
+    rm -f "$cy"
+    [[ -s "$out" ]] || return 1
+    echo "$headname"
+}
+
+# Branch commits in (since, until] — clone if present, else gh, else anon API.
+# An empty until means "to now".
+commits_between() {
+    local org="$1" repo="$2" br="$3" since="$4" until="${5:-}" d url
+    d="$(clone_for "$org" "$repo")"
+    if [[ -n "$d" ]]; then
+        git -C "$d" fetch --quiet origin "$br" 2>/dev/null || true
+        if [[ -n "$until" ]]; then
+            git -C "$d" log "origin/$br" --since="$since" --until="$until" --format='  %cI  %s' 2>/dev/null
+        else
+            git -C "$d" log "origin/$br" --since="$since" --format='  %cI  %s' 2>/dev/null
+        fi
+        return
+    fi
+    url="repos/${org}/${repo}/commits?sha=${br}&since=${since}&per_page=100"
+    [[ -n "$until" ]] && url="${url}&until=${until}"
+    case "$SRC_FALLBACK" in
+        gh)   gh api --paginate "$url" \
+                --jq '.[] | "  " + .commit.committer.date + "  " + (.commit.message|split("\n")[0])' 2>/dev/null ;;
+        anon) curl -s --max-time 45 "https://api.github.com/$url" \
+                | jq -r 'if type=="array" then .[] | "  " + .commit.committer.date + "  " + (.commit.message|split("\n")[0]) else empty end' 2>/dev/null ;;
+        *)    echo "  (no github access — commit log unavailable)" ;;
+    esac
+}
+
+run_against() {
+    local base_row base_ref base_dig base_date base_ver branch
+    local ag_ref ag_meta ag_dig ag_date head_a head_b moved=0 gone=0 added=0
+
+    # Baseline = branch:main when present, else the first actionable row.
+    base_row="$(grep -m1 $'^branch:main\t' "$WORK/actionable.tsv" 2>/dev/null || head -1 "$WORK/actionable.tsv")"
+    [[ -n "$base_row" ]] || { echo "  no actionable baseline resolved — nothing to compare against" >> "$AGAINST_REPORT"; return; }
+    base_ref="$(printf '%s' "$base_row" | cut -f2)"
+    base_dig="$(printf '%s' "$base_row" | cut -f3)"
+    base_date="$(printf '%s' "$base_row" | cut -f4)"
+    base_ver="$(printf '%s' "$base_row" | cut -f5)"
+
+    ag_ref="$(full_ref "$AGAINST_REF")"
+    if ! ag_meta="$(inspect_ref "$AGAINST_REF")"; then
+        echo "  $ag_ref: not resolvable on the registry" >> "$AGAINST_REPORT"; return
+    fi
+    IFS=$'\t' read -r ag_dig ag_date _ _ <<< "$ag_meta"
+
+    {
+        printf '  baseline %-44s %s  built %s\n' "$(echo "$base_ref" | sed "s#^${FBC_REPO}##")" "$(short "$base_dig")" "$base_date"
+        printf '  against  %-44s %s  built %s\n' "$(echo "$ag_ref" | sed "s#^${FBC_REPO}##")" "$(short "$ag_dig")" "$ag_date"
+    } >> "$AGAINST_REPORT"
+
+    if [[ "$base_dig" == "$ag_dig" ]]; then
+        echo "  identical build — no component or commit delta" >> "$AGAINST_REPORT"; return
+    fi
+
+    note "pulling both catalog images (~300MB each, deleted after read)"
+    head_a="$(extract_catalog_pairs "${FBC_REPO}@${base_dig}" "$WORK/against-a.pairs")" \
+        || { echo "  could not read baseline catalog content" >> "$AGAINST_REPORT"; return; }
+    head_b="$(extract_catalog_pairs "$ag_ref" "$WORK/against-b.pairs")" \
+        || { echo "  could not read against catalog content" >> "$AGAINST_REPORT"; return; }
+    [[ "$head_a" != "$head_b" ]] && \
+        echo "  NOTE: different head bundles — baseline $head_a vs against $head_b" >> "$AGAINST_REPORT"
+
+    local moved_repos="$WORK/against-repos.txt"
+    : > "$moved_repos"
+    {
+        echo
+        echo "  components whose digest differs (baseline -> against):"
+        while read -r repo da db; do
+            if [[ "$da" != "$db" ]]; then
+                moved=$((moved + 1))
+                printf '    %-58s %s -> %s\n' "${repo##*/}" "$(short "$da")" "$(short "$db")"
+                repo_for_component "${repo##*/}" >> "$moved_repos" || true
+            fi
+        done < <(join "$WORK/against-a.pairs" "$WORK/against-b.pairs")
+        comm -23 <(cut -d' ' -f1 "$WORK/against-a.pairs") <(cut -d' ' -f1 "$WORK/against-b.pairs") \
+            | while read -r r; do gone=$((gone+1)); printf '    only in baseline: %s\n' "${r##*/}"; done
+        comm -13 <(cut -d' ' -f1 "$WORK/against-a.pairs") <(cut -d' ' -f1 "$WORK/against-b.pairs") \
+            | while read -r r; do added=$((added+1)); printf '    only in against:  %s\n' "${r##*/}"; done
+        echo "    ($moved moved of $(grep -c . "$WORK/against-a.pairs") baseline components)"
+    } >> "$AGAINST_REPORT"
+
+    # Source-level delta for the ledger-relevant repos that moved, bounded by
+    # the two build dates. Branch derives from the baseline tag family, with a
+    # version-label fallback for digest-pinned baselines (no tag to strip).
+    branch="$(branch_for_row "$base_ref" "$base_ver")" || branch=""
+    sort -u "$moved_repos" -o "$moved_repos"
+    if [[ -s "$moved_repos" && -n "$branch" ]]; then
+        local since until repo
+        if [[ "$base_date" < "$ag_date" ]]; then since="$base_date"; until="$ag_date"
+        else since="$ag_date"; until="$base_date"; fi
+        {
+            echo
+            echo "  commits on $branch between the two builds ($since .. $until),"
+            echo "  for the moved components that map to a source repo:"
+            while read -r repo; do
+                echo "    ${RHDS_ORG}/${repo}:"
+                commits_between "$RHDS_ORG" "$repo" "$branch" "$since" "$until" | sed 's/^/    /' | head -25
+            done < "$moved_repos"
+        } >> "$AGAINST_REPORT"
+    elif [[ -s "$moved_repos" ]]; then
+        echo "  (cannot derive a source branch from this baseline — commit window skipped)" >> "$AGAINST_REPORT"
+    fi
+}
+
+if [[ -n "$AGAINST_REF" ]]; then
+    if ! command -v yq >/dev/null 2>&1; then
+        echo "  --against requires yq (brew install yq)" >> "$AGAINST_REPORT"
+    else
+        note "comparing against $AGAINST_REF"
+        [[ "${CAPS_DETECTED:-false}" == true ]] || detect_capabilities
+        run_against
+    fi
+fi
+
+if $JSON; then
+    {
+        echo '{'
+        echo '  "points": ['
+        first=1
+        while IFS=$'\t' read -r p r d b v rel; do
+            [[ $first -eq 1 ]] || echo ','
+            first=0
+            printf '    {"point":%s,"ref":%s,"digest":%s,"buildDate":%s,"version":%s,"release":%s}' \
+                "$(jq -Rn --arg x "$p" '$x')" "$(jq -Rn --arg x "$r" '$x')" \
+                "$(jq -Rn --arg x "$d" '$x')" "$(jq -Rn --arg x "$b" '$x')" \
+                "$(jq -Rn --arg x "$v" '$x')" "$(jq -Rn --arg x "$rel" '$x')"
+        done < "$ROWS"
+        echo; echo '  ],'
+        echo '  "unresolved": ['
+        first=1
+        while IFS=$'\t' read -r p r w; do
+            [[ $first -eq 1 ]] || echo ','
+            first=0
+            printf '    {"point":%s,"ref":%s,"why":%s}' \
+                "$(jq -Rn --arg x "$p" '$x')" "$(jq -Rn --arg x "$r" '$x')" "$(jq -Rn --arg x "$w" '$x')"
+        done < "$UNRESOLVED"
+        echo; echo '  ],'
+        printf '  "distinctDigests": %s,\n' "$DISTINCT"
+        printf '  "componentDrift": %s,\n' "$($COMPONENT_DRIFT && echo true || echo false)"
+        printf '  "exitCode": %s\n' "$RC"
+        echo '}'
+    }
+    exit $RC
+fi
+
+echo
+echo "════════════════════════════════════════════════════════════════════════════"
+echo " RHOAI build comparison"
+echo "════════════════════════════════════════════════════════════════════════════"
+echo
+print_rows() {
+    while IFS=$'\t' read -r p r d b v rel; do
+        printf '%-30s %-28s %-10s %-21s %s\n' \
+            "$p" "$(echo "$r" | sed "s#^${FBC_REPO}##; s/^://")" "$(short "$d")" "$b" "$v"
+    done < <(sort -t$'\t' -k4,4 "$1")
+}
+
+printf '%-30s %-28s %-10s %-21s %s\n' "REFERENCE POINT" "TAG / REF" "DIGEST" "BUILT" "VERSION"
+printf '%-30s %-28s %-10s %-21s %s\n' "------------------------------" "----------------------------" "----------" "---------------------" "-------"
+print_rows "$WORK/actionable.tsv"
+if [[ -s "$WORK/streamrows.tsv" ]]; then
+    echo "-- available in the family (context, not drift) ----------------------------"
+    print_rows "$WORK/streamrows.tsv"
+fi
+
+if [[ -s "$UNRESOLVED" ]]; then
+    echo
+    log_warn "Unresolved reference points (reported, not skipped):"
+    while IFS=$'\t' read -r p r w; do printf '    %-28s %s\n' "$p" "$w"; done < "$UNRESOLVED"
+fi
+
+if [[ ${#BRANCHES[@]} -gt 1 ]]; then
+    echo
+    echo "Subscription channel per branch:"
+    for br in "${BRANCHES[@]}"; do
+        printf '    %-12s %s\n' "$br" "$(branch_channel "$br" || echo '?')"
+    done
+fi
+
+for lbl in ${CLUSTER_LABELS[@]+"${CLUSTER_LABELS[@]}"}; do
+    echo
+    printf 'Cluster %s: CSV %s (%s)\n' "$lbl" \
+        "$(cat "$WORK/csv.$lbl" 2>/dev/null)" "$(cat "$WORK/sub.$lbl" 2>/dev/null)"
+done
+
+if [[ -s "$COMPONENT_REPORT" ]]; then
+    echo
+    echo "Component layer:"
+    cat "$COMPONENT_REPORT"
+fi
+
+if $USE_FIXES; then
+    echo
+    echo "Landed fixes (downstream branch that builds this nightly):"
+    # State the capabilities used, so a "no hits" result is never ambiguous
+    # between "nothing landed" and "we could not look".
+    LOCAL_NOTE="clones=${CLONES_FOUND}/${#RHDS_REPOS[@]} found"
+    [[ $CLONES_FOUND -eq 0 ]] && LOCAL_NOTE="$LOCAL_NOTE (set RHOAI_SRC_ROOTS for full history)"
+    case "$SRC_FALLBACK" in
+        gh)   API_NOTE="github=gh authenticated" ;;
+        anon) API_NOTE="github=anonymous (${SINCE_DAYS}d window only)" ;;
+        *)    API_NOTE="github=UNAVAILABLE" ;;
+    esac
+    case "$JIRA_MODE" in
+        none) JIRA_NOTE="jira=unavailable (set JIRA_TOKEN, or JIRA_EMAIL+JIRA_API_TOKEN)" ;;
+        *)    JIRA_NOTE="jira=${JIRA_MODE}" ;;
+    esac
+    printf '  sources: %s  %s\n           %s\n\n' "$LOCAL_NOTE" "$API_NOTE" "$JIRA_NOTE"
+    cat "$FIXES_REPORT"
+    echo
+    echo "  A cited key is evidence a fix exists, never that the bug is gone: a fix"
+    echo "  that does not name its key is invisible here. Only that entry's Detection"
+    echo "  command on a cluster running this build settles it."
+fi
+
+if [[ -n "$AGAINST_REF" ]]; then
+    echo
+    echo "Against $AGAINST_REF:"
+    cat "$AGAINST_REPORT"
+    echo
+    echo "  A moved digest or a listed commit is a reason to check, never evidence of"
+    echo "  a fix. If the against build is the released rhoai-<ver> track, adopting it"
+    echo "  is a TRACK CHANGE, not a refresh — decide deliberately."
+fi
+
+if $USE_REPOS; then
+    [[ "${CAPS_DETECTED:-false}" == true ]] || { detect_capabilities; CAPS_DETECTED=true; }
+    echo
+    echo "Upstream repos (${UPSTREAM_ORG} main-branch commits since the oldest build):"
+    if [[ -z "$OLDEST_DATE" || "$OLDEST_DATE" == "?" ]]; then
+        echo "  no build date resolved — cannot window the upstream search"
+    else
+        # Same fallback chain as --fixes: clones located by origin URL, else gh,
+        # else the anonymous API — and the sources are always stated, so "no
+        # commits" is never ambiguous with "could not look".
+        case "$SRC_FALLBACK" in
+            gh)   echo "  sources: clones by origin URL, else gh (authenticated)" ;;
+            anon) echo "  sources: clones by origin URL, else anonymous GitHub API" ;;
+            *)    echo "  sources: clones by origin URL only (no gh, no curl)" ;;
+        esac
+        for repo in "${UPSTREAM_REPOS[@]}"; do
+            d="$(clone_for "$UPSTREAM_ORG" "$repo")"
+            [[ -n "$d" ]] && src="clone" || src="$SRC_FALLBACK"
+            out="$(commits_between "$UPSTREAM_ORG" "$repo" main "$OLDEST_DATE" "")"
+            if [[ -z "$out" ]]; then
+                printf '  %-40s no commits since the build (%s)\n' "${UPSTREAM_ORG}/${repo}" "$src"
+                continue
+            fi
+            printf '  %s/%s (%s):\n' "$UPSTREAM_ORG" "$repo" "$src"
+            printf '%s\n' "$out" | head -25 | sed 's/^/    /'
+        done
+        echo "  (upstream main = what is coming; a fix only reaches a nightly once it is on the ${RHDS_ORG} side)"
+    fi
+fi
+
+echo
+case $RC in
+    0) log_info "All $(grep -c . "$WORK/actionable.tsv") actionable reference points agree on one build." ;;
+    2) log_warn "Drift: $DISTINCT distinct builds across the actionable reference points."
+       [[ -n "$NEWEST_DATE" && -n "$OLDEST_DATE" && "$NEWEST_DATE" != "$OLDEST_DATE" ]] && \
+           echo "         oldest $OLDEST_DATE   newest $NEWEST_DATE"
+       $COMPONENT_DRIFT && echo "         a cluster lags its own catalog — see docs/issues/nightly-csv-name-static.md"
+       ;;
+esac
+
+if $STREAM_NEWER && [[ -n "$STREAM_BEST" ]]; then
+    sb_tag=$(printf '%s' "$STREAM_BEST" | cut -f1 | sed 's/^stream://')
+    sb_dig=$(printf '%s' "$STREAM_BEST" | cut -f3)
+    sb_dat=$(printf '%s' "$STREAM_BEST" | cut -f4)
+    echo
+    log_warn "A newer build exists in this family than anything pinned or running:"
+    printf '         %s  %s  %s\n' "$sb_tag" "$(short "$sb_dig")" "$sb_dat"
+    case "$sb_tag" in
+        *-nightly) ;;
+        *) echo "         NOTE: that is the released z-stream track, a different track"
+           echo "               from -nightly. Moving to it is a track change, not just"
+           echo "               a fresher build." ;;
+    esac
+fi
+echo
+echo "This script reports only. Acting on drift is a separate decision:"
+echo "  same version, newer build   -> scripts/restart-catalog.sh on the target cluster"
+echo "  a real version bump         -> the upgrade-rhoai-nightly workflow"
+echo "  a moved component digest    -> re-run that ledger entry's Detection command"
+echo "                                 (docs/workarounds.md, docs/issues/) before"
+echo "                                 concluding anything is fixed."
+exit $RC

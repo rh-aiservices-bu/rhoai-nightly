@@ -5,8 +5,12 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly
-  displayName: RHOAI 3.5 Nightly
+  # Audit pin (test branch only — main stays on the floating tag).
+  # rhoai-3.5-nightly as of 2026-08-14T03:44:05Z. Pinned so every ledger
+  # verdict from this run names one build: the tag rebuilds while an install
+  # is in flight, and a mid-run move would mix components across builds.
+  image: quay.io/rhoai/rhoai-fbc-fragment@sha256:bda8c7893403bdd800b1fd1a55d381002b80c0475e3826081f591b60fbe96c1f
+  displayName: RHOAI 3.5 Nightly (2026-08-14 bda8c789)
   publisher: RHOAI Dev
   updateStrategy:
     registryPoll:

@@ -26,6 +26,8 @@ Type these as slash commands in Claude Code.
 | `/diagnose-rhoai` | Full cluster health check — runs diagnosis, preflight, and config validation as appropriate. |
 | `/uninstall-rhoai` | Remove RHOAI — runs `undeploy` + `clean` with assessment and progress reporting. |
 | `/upgrade-rhoai-nightly` | Upgrade the nightly build (catalog image + channel) with the safe upgrade procedure. |
+| `/compare-rhoai-builds` | Report which RHOAI build is where — git pins vs clusters vs quay; optional ledger fix hunt. Read-only. |
+| `/cleanup-stale-projects` | Audit (and optionally delete) stale dashboard projects. Audit-only by default. |
 
 ## Full install
 

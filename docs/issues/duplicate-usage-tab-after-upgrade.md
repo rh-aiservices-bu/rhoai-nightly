@@ -264,6 +264,12 @@ oc get persesdashboards.perses.dev,persesdatasources.perses.dev -A -o json | jq 
 Clean result: no duplicate names, and every object owned. On a fresh 3.5
 install both commands return nothing.
 
+**Re-checked 2026-08-14** (cluster-bq4x2, fresh install, nightly `bda8c789`):
+absent again — no duplicate `PersesDashboard` names and no unowned Perses
+objects, consistent with the upgrade-only scope argued above. Still needs the
+**two RHOAIENG filings**; searched 2026-08-14, nothing upstream covers
+duplicate dashboard names or cross-namespace Perses collisions.
+
 ## Is this self-inflicted by this repo's upgrade procedure? No.
 
 Asked and checked, because it is the first question a triager will raise:

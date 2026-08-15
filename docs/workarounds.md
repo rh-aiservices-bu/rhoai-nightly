@@ -47,10 +47,37 @@ removed as soon as a nightly ships the fix.
 > The observability settle-gate now requires the SM CSV only when a
 > servicemeshoperator3 Subscription exists, and gates on istiod health
 > otherwise.
+>
+> **Fresh-install audit: 2026-08-14** — full install on cluster-bq4x2 (OCP
+> 4.20.32, **multi-AZ**: nodes in us-east-2a + us-east-2c) from the
+> `rhoai-3.5-nightly` built 2026-08-14 03:44Z, digest-pinned for the run
+> (catalog `bda8c789`, operator image `3dbb64be`, maas-api `c73403cb`,
+> maas-controller `80c4e932`, dashboard `6fcb7882`, payload-processing
+> `e2007ddc`). **Every tracked component moved** since the 2026-08-05 build,
+> so no entry was given a "nothing moved" pass. Scope: base + MaaS + GPU model
+> (gpt-oss-20b on an L40S) + observability + evalhub.
+>
+> **Result: nothing qualified for removal — every workaround re-verified as
+> still load-bearing.** The `--fixes` hunt over the `rhoai-3.5` branch found no
+> commit citing any of RHOAIENG-80354 (A13), -80043 (A1), -68589/-79227/-79551
+> (A2) or -67925 (E1), and each entry's own Detection command then confirmed
+> the bug live on the cluster. Two notes for future audits: the nightly tag was
+> frozen 2026-08-05 → 2026-08-14 and has resumed rebuilding; and on OCP 4.20
+> `make icsp` completes in ~90s with **no node reboot** (registries.conf is
+> applied via a crio reload), not the 10–15 min this repo's docs predicted —
+> corrected across CLAUDE.md, docs/install-make.md and the install-rhoai skill
+> in the same pass.
 
 ---
 
 ## A. Workarounds carried in this repo
+
+> Numbering is historical and gappy by design: **A3–A4, A7–A10, A12 and C1 were
+> retired** as their upstream fixes shipped (A8's removal is written up below;
+> the rest are in git history). A missing letter means "removed", never
+> "misplaced" — don't renumber, since the letters are cited from issue files,
+> scripts and commit messages.
+
 
 ### A1. Dashboard gateway — strip leaked Kuadrant wasm
 
@@ -66,8 +93,17 @@ removed as soon as a nightly ships the fix.
   change** — resolved with zero fix evidence, and the leak mechanism is still
   live on today's nightly (below), so the Jira state does NOT make this entry
   removable. The generic Kuadrant-side bug (its EnvoyFilters ship `targetRefs`
-  only, which Istio ignores without `ENABLE_ENHANCED_RESOURCE_SCOPING`) has
-  **no CONNLINK Jira at all** — filing gap, see issues/README.md queue.
+  only, which Istio ignores without `ENABLE_ENHANCED_RESOURCE_SCOPING`) is now
+  tracked upstream — **the filing gap is closed**:
+  [CONNLINK-1510](https://redhat.atlassian.net/browse/CONNLINK-1510) "EnvoyFilters
+  incorrectly affect all Gateways in namespace" (New, **fixVersion RHCL 1.4.3**,
+  due 2026-09-03; found 2026-08-14 during the bq4x2 audit). It root-causes the
+  leak to [istio/istio#56417](https://github.com/istio/istio/issues/56417) —
+  Istio 1.26.x does not enforce `targetRef` on EnvoyFilter — and its stated fix is
+  exactly what this entry predicted: *"while we still support istio v1.26.x we
+  should use `workloadSelector` instead of `targetRef`"*. Raised from
+  [RHOAIENG-81865](https://redhat.atlassian.net/browse/RHOAIENG-81865).
+  **This gives A1 a concrete remove-when for the first time: RHCL 1.4.3.**
 - **Verified needed 2026-07-31** (tm9xb, SM 3.4.0): stripped it → OOM ×6 within
   minutes of Kuadrant programming its EnvoyFilters.
 - **Re-confirmed 2026-08-04** on FBC `f4183f7e`: models-as-a-service#1313 gave
@@ -75,6 +111,12 @@ removed as soon as a nightly ships the fix.
   now fixed), but the OOM leg is Kuadrant-owned and untouched —
   `kuadrant-maas-default-gateway`, `kuadrant-auth-*` and
   `kuadrant-ratelimiting-*` still carry `targetRefs` only, so they still leak.
+- **Re-confirmed 2026-08-14** (fresh install, bq4x2, nightly `bda8c789`): still
+  exactly four selector-less filters — the same three `kuadrant-*` plus
+  `maas-default-gateway-authn-ssl`. Effectiveness verified, not just presence:
+  the strip filter sits at priority=100 and `data-science-gateway` istio-proxy
+  ran **0 restarts at 82Mi** (vs the MaaS gateway's 1226Mi with the wasm
+  attached) through a full `maas-verify`. No OOMKill anywhere on the cluster.
 - **Re-confirmed 2026-08-05** (fresh install, g767p, nightly with #1313 in the
   build): the three `kuadrant-*` filters are still selector-less, and so is a
   fourth — `maas-default-gateway-authn-ssl`, owned by **odh-model-controller**
@@ -87,7 +129,11 @@ removed as soon as a nightly ships the fix.
   ```
   Any `kuadrant-*` name in that output means the leak is live and A1 is needed.
 - **Remove when:** a bare install keeps the dashboard gateway at 1/1 with
-  Kuadrant policies enforced on the MaaS gateway.
+  Kuadrant policies enforced on the MaaS gateway. As of 2026-08-14 there is
+  finally an upstream target to watch: **RHCL 1.4.3** (CONNLINK-1510). Check the
+  detection command once that lands — but settle it on the cluster, not on the
+  release note, since the fourth leaker (`maas-default-gateway-authn-ssl`) is
+  odh-model-controller's and CONNLINK-1510 will not cover it.
 
 ### A2. MaaS gateway — raise istio-proxy memory to 2Gi
 
@@ -100,11 +146,21 @@ removed as soon as a nightly ships the fix.
   Closed/Done; [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227)
   Resolved (no fix evidence);
   [RHOAIENG-79551](https://redhat.atlassian.net/browse/RHOAIENG-79551)
-  In Progress — note 79551 is about the **data-science-gateway** 1Gi default
-  (candidate fix opendatahub-operator#3904, unmerged as of 2026-08-05), not
-  this gateway; no upstream change to istio-proxy memory defaults exists yet
-  for either gateway.
+  **Closed/Duplicate as of 2026-08-14** (was In Progress) — 79551 was about the
+  **data-science-gateway** 1Gi default, not this gateway, and closing it as a
+  duplicate removes the last open Jira that could have carried a default-memory
+  change. No upstream change to istio-proxy memory defaults exists for either
+  gateway. Newly relevant:
+  [CONNLINK-1567](https://redhat.atlassian.net/browse/CONNLINK-1567) (New, filed
+  2026-08-14) reports an infinite Kuadrant EnvoyFilter reconciliation loop
+  OOMKilling on the same `maas-default-gateway` code path — a plausible
+  contributor to the steady-state footprint, worth re-measuring if it lands.
 - **Verified needed 2026-07-31** (tm9xb): stripped it → OOM ×5 at 1Gi.
+- **Re-measured 2026-08-14** (fresh bq4x2): istio-proxy at **1170Mi while
+  idle** — already over the 1Gi default before any load — rising to a steady
+  **1214–1226Mi** sampled across a full `maas-verify`. The idle figure is the
+  sharper argument: this gateway cannot start under the default limit, so the
+  patch is not merely headroom for peak traffic.
 - **Re-measured 2026-08-05** (fresh g767p): istio-proxy at **1217Mi** during a
   plain `maas-verify` run — above the 1Gi default it would revert to.
 - **Remove when:** a bare install survives Kuadrant enforcement under
@@ -152,6 +208,15 @@ removed as soon as a nightly ships the fix.
   `dig +short maas.<domain>` IPs than AZs containing Ready nodes
   (`oc get nodes -L topology.kubernetes.io/zone`) means an empty AZ is enrolled
   and the annotation is actively load-bearing.
+- **Precondition ABSENT 2026-08-14** (fresh bq4x2, **multi-AZ**: nodes in
+  us-east-2a + us-east-2c): 2 ELB IPs vs 2 node-bearing AZs — equal, so no
+  empty AZ is enrolled here and the annotation is not load-bearing *on this
+  cluster*. All 6 per-IP probes (2 IPs × 3 rounds) returned 200. **Kept
+  regardless**: the remove-when is an upstream change (OpenShift provisioning
+  the gateway LB cross-zone or as an NLB by default), which has not happened.
+  This run is a worked example of why that wording was corrected — the old
+  per-cluster phrasing would have gone green here and retired a workaround that
+  was demonstrably load-bearing on g767p nine days earlier.
 - **Precondition PRESENT 2026-08-05** (fresh g767p): 2 ELB IPs vs 1 AZ with
   nodes (all MachineSets in us-east-2a) — the empty-AZ enrollment is real on
   this cluster, and with the annotation applied both IPs answer 200. First
@@ -174,12 +239,29 @@ removed as soon as a nightly ships the fix.
   PersesDashboards) is never rendered. Details:
   [issues/observability-dashboard-unreachable.md](issues/observability-dashboard-unreachable.md)
 - **Jira:** [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354)
-  (In Progress; fix PR
-  [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923))
+  (In Progress, no fixVersion; **actively worked — updated 2026-08-14**). Tracked
+  work: GH issue
+  [opendatahub-operator#3910](https://github.com/opendatahub-io/opendatahub-operator/issues/3910),
+  fix PR
+  [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923)
+  (operator projection), plus
+  [odh-dashboard#9078](https://github.com/opendatahub-io/odh-dashboard/pull/9078)
+  (dashboard test) and
+  [opendatahub-operator#3909](https://github.com/opendatahub-io/opendatahub-operator/pull/3909)
+  (monitoring preconditions). The Jira carries the same `oc patch` we apply.
 - **Why carried:** the Observability dashboards are themselves a feature under
   test; without the patch they are untestable. Applied bu-nightly-2 2026-08-05;
   verified `ObservabilityAvailable=True reason=Deployed`, pods rolled,
   `/perses/api` answering.
+- **Re-proven on fresh install 2026-08-14** (bq4x2, nightly `bda8c789`,
+  operator `3dbb64be`): all four probes negative — managedFields projection
+  empty, `spec.observability` absent, `ObservabilityAvailable=False
+  reason=Disabled`, in-pod curl to Perses exits 28, no NetworkPolicy. Run
+  **after** the observability cascade was live (DSCI already carried
+  `monitoring.metrics.storage`), which is the sharpest form of this test: #3923
+  projects DSCI config into the Dashboard CR, so a build carrying it would have
+  populated the field at that point. Post-patch the bundle rendered in ~15s
+  (NetworkPolicy created, `ObservabilityAvailable=True`, in-pod Perses 200).
 - **Re-proven on fresh install 2026-08-05** (g767p): operator does not set the
   field (pre-patch: `ObservabilityAvailable=False reason=Disabled`, no
   `dashboard-perses-access` NetworkPolicy, in-pod curl to Perses times out);
@@ -252,10 +334,15 @@ demonstrably exists. Confirmed instances: TrustyAI ("InferenceServices CRD does
 not exist" — CRD present) and Kuadrant ("Gateway API provider is not installed"
 — istiod Running; consequence: zero AuthConfigs, `POST /v1/api-keys` → 500
 AUTH_FAILURE). Reproduced on every fresh cluster to date (r8mf7, fzgjg, tm9xb,
-g767p 2026-08-05 — Kuadrant CR's own message says "please restart Kuadrant
-Operator pod once dependency has been installed").
+g767p 2026-08-05, bq4x2 2026-08-14 — Kuadrant CR's own message says "please
+restart Kuadrant Operator pod once dependency has been installed"). On bq4x2
+`install-maas.sh` hit and auto-remedied it inline ("Kuadrant operator cached a
+missing Gateway API provider — restarting it"; AuthPolicy `maas-gateway-auth`
+Accepted=True immediately after), leaving the operator pod 5 minutes younger
+than its authorino/limitador siblings — a cheap post-hoc tell that E1 fired.
 Jira: [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925)
-(still Backlog as of 2026-08-05).
+— **moved Backlog → Review as of 2026-08-14**, so a fix is in flight. No
+fixVersion yet; keep the auto-remedy until a nightly stops reproducing it.
 
 **Gotcha:** the MaaS gateway AuthPolicy's *name* is not stable across builds
 (`maas-gateway-auth` vs `gateway-default-auth`, and it can flap back after an
@@ -282,7 +369,10 @@ just slow — watch `oc get pods -n llm -w` to 2/2. Candidate fix: raise the GPU
 timeout in `scripts/setup-maas-model.sh` to ~1500s. (2026-08-05 g767p: script
 exited 0 at ~17 min with the pod still 1/2 — vLLM finished loading ~4 min
 later; the hazard is now "script declares done before the model serves" rather
-than a hard timeout.)
+than a hard timeout.) **Reproduced identically 2026-08-14** (bq4x2, L40S):
+exit 0 at ~17 min with the pod at 1/2 and the MaaSModelRef reporting
+`Unhealthy`; serving ~4 min later. Two runs on different clusters now agree on
+the shape, which strengthens the case for the ~1500s fix.
 
 ---
 

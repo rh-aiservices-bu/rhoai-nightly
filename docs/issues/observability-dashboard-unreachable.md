@@ -15,6 +15,21 @@ detection probes fail exactly as documented; the A13 patch flips
 `ObservabilityAvailable=True reason=Deployed`, creates
 `dashboard-perses-access`, and the in-pod curl returns 200 within ~2 min.
 
+**Re-proven 2026-08-14** (cluster-bq4x2, nightly `bda8c789`, dashboard
+`6fcb7882`) in the **sharpest** form: the observability cascade was already
+live and DSCI carried `monitoring.metrics.storage` — i.e. exactly the input
+#3923 projects into `Dashboard.Spec.Observability` — and all four probes were
+still negative (managedFields projection empty, `spec.observability` absent,
+`ObservabilityAvailable=False reason=Disabled`, in-pod curl to Perses exit 28,
+no `dashboard-perses-access` NetworkPolicy). Applying the A13 patch rendered
+the bundle in **~15s** (NetworkPolicy created, `ObservabilityAvailable=True`,
+in-pod Perses 200). RHOAIENG-80354 still **In Progress**, no fixVersion, but
+updated 2026-08-14; the tracked work now also spans GH issue
+[opendatahub-operator#3910](https://github.com/opendatahub-io/opendatahub-operator/issues/3910),
+[PR #3909](https://github.com/opendatahub-io/opendatahub-operator/pull/3909),
+and [odh-dashboard#9078](https://github.com/opendatahub-io/odh-dashboard/pull/9078)
+alongside #3923.
+
 ## Symptom
 
 RHOAI console → **Observe & monitor → Dashboard** renders:

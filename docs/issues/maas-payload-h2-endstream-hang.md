@@ -31,6 +31,17 @@ nothing tracks this specifically. Closest existing:
 models"; same stream-never-completes symptom family but its fix was a config
 default, not #419). When filing, link 79535 as related.
 
+**No regression 2026-08-14** (bq4x2, nightly `bda8c789`) on a *new*
+payload-processing image — `e2007ddc…`, up from the `84cee292…` recorded above
+as the fix baseline. Measured through the real gpt-oss-20b model: HTTP/2
+completed in **0.72s** and **0.15s** (the bug signature is `t` == the full
+`--max-time`). **Jira re-search 2026-08-14:** still no issue exists. Closest
+remain RHOAIENG-79535 (Closed/Done, different fix) and
+[RHOAIENG-80096](https://issues.redhat.com/browse/RHOAIENG-80096)/
+[RHOAIENG-80951](https://issues.redhat.com/browse/RHOAIENG-80951) — a Kuadrant
+CEL-abort class that produces a similar never-terminated body; worth linking as
+related, but not the same cause.
+
 ## Summary
 
 On every RHOAI 3.5.0-ea.2 build, any request to a MaaS LLM route through

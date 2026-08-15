@@ -19,6 +19,16 @@ cherry-pick exists. Prepared Jira comment at the end of this file.
 > fake-token defect is definitionally still present on 3.5; no cluster-side
 > re-test needed (would require an interactive dashboard login on this
 > throwaway cluster).
+>
+> **Re-checked 2026-08-14** (bq4x2, nightly `bda8c789`, dashboard `6fcb7882`) —
+> still present on 3.5, again by build inspection: commit `280db9dc5`
+> (PR #8364, RHOAIENG-38993) **is** on red-hat-data-services/odh-dashboard
+> `main` but is **NOT an ancestor of the `rhoai-3.5` branch** (verified with
+> `git merge-base --is-ancestor`), and the `VLLM_API_TOKEN` machinery is still
+> present in
+> `packages/gen-ai/bff/internal/integrations/kubernetes/llamastack_config.go`
+> on `rhoai-3.5`. RHOAIENG-38993 remains Resolved/Done with fixVersion
+> "3.6 EA1" only; RHOAIENG-79529 still New.
 
 ## Current state (live-verified 2026-08-04, tm9xb, released-track 3.5 FBC `f4183f7e`)
 

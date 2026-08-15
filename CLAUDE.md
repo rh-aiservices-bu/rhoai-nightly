@@ -45,6 +45,10 @@ rhoai-nightly/
 │   ├── preflight-check.sh              # Quick cluster readiness check
 │   ├── validate-config.sh              # Validate .env against cluster capabilities
 │   ├── scale-machineset.sh              # Scale MachineSets
+│   ├── setup-secrets.sh                 # Pull-secret entry point (make secrets); execs add-pull-secret.sh in manual mode
+│   ├── sync-apps.sh                     # Enable auto-sync app-by-app (make sync)
+│   ├── undeploy.sh / clean.sh           # Teardown
+│   ├── lib/                             # Shared helpers (cluster-health.sh, ...)
 │   └── configure-repo.sh                # Update repo URLs for forks
 │
 ├── bootstrap/                            # Bootstrap resources (applied by scripts)
@@ -79,6 +83,9 @@ rhoai-nightly/
 │   │   ├── jobset-operator/             # JobSet for distributed workloads
 │   │   ├── leader-worker-set/           # Leader-Worker pattern
 │   │   ├── connectivity-link/           # Connectivity Link
+│   │   ├── cert-manager/                # cert-manager operator
+│   │   ├── external-secrets-operator/   # External Secrets operator
+│   │   ├── opentelemetry-operator/      # Red Hat build of OpenTelemetry
 │   │   └── cluster-observability-operator/ # COO (Perses CRDs for Observability dashboard)
 │   │
 │   └── instances/                       # Operator instances/configs
@@ -91,6 +98,8 @@ rhoai-nightly/
 │       ├── connectivity-link-instance/  # Connectivity Link config
 │       ├── maas-instance/               # MaaS Helm chart (PostgreSQL+PVC, Gateway)
 │       ├── maas-observability/          # MaaS observability (TelemetryPolicy + Istio Telemetry)
+│       ├── evalhub/                     # EvalHub + MLflow + DSPA (make evalhub)
+│       ├── external-secrets-instance/   # External Secrets instance config
 │       └── maas-models/                # MaaS model manifests (kustomize)
 │           ├── simulator/              # CPU-only mock model
 │           ├── gpt-oss-20b/            # OpenAI gpt-oss-20b (GPU, vLLM CUDA)
@@ -119,8 +128,13 @@ make secrets         # Add quay.io/rhoai credentials (pull-secret)
                      # VERIFY: oc get secret/pull-secret -n openshift-config
 
 make icsp            # Create ImageContentSourcePolicy
-                     # WAITS: ~10-15 min for all nodes to restart
-                     # VERIFY: oc get nodes (all Ready)
+                     # WAITS: ~90s on OCP 4.20 — registries.conf is applied via a
+                     #        crio reload with NO node reboot. Older z-streams (or
+                     #        any run where `oc get mcp` shows Updating=True) still
+                     #        take 10-15 min for a rolling restart.
+                     # VERIFY: oc get nodes (all Ready); confirm the mirror landed with
+                     #        oc debug node/<n> -- chroot /host grep -A3 rhoai \
+                     #          /etc/containers/registries.conf
 
 make gpu             # Create GPU MachineSet (g6e.2xlarge, autoscale 1-3)
                      # WAITS: Until GPU node is Ready
@@ -164,10 +178,12 @@ make all             # Runs: setup + bootstrap + sync + maas
 
 ```bash
 make secrets         # Add quay.io/rhoai credentials to global pull secret
-make icsp            # Create ImageContentSourcePolicy (triggers node restart)
+make icsp            # Create ImageContentSourcePolicy (no node reboot on OCP 4.20)
 make gpu             # Create GPU MachineSet (waits for node Ready)
 make cpu             # Create CPU worker MachineSet (waits for node Ready)
-make setup           # Run all pre-GitOps setup (secrets, icsp, gpu, cpu)
+make uwm             # Enable User Workload Monitoring
+make infra           # icsp + cpu + gpu + uwm
+make setup           # Run all pre-GitOps setup (infra + secrets)
 ```
 
 ### GitOps Bootstrap
@@ -229,7 +245,7 @@ make maas-verify     # Full end-to-end verification (deploys temp model, tests, 
 make maas-uninstall  # Remove MaaS platform (deletes ArgoCD app + secrets + Authorino SSL)
 make observability   # Settle-gate → flip instance-rhoai to overlays/maas-observability
                      #   → wait for Perses/Tempo/OTel. Heavy on the control plane; refuses
-                     #   if any master is >=75% memory (see Remediation #4).
+                     #   if any master is >=80% memory (SETTLE_GATE_MASTER_MEM_MAX).
 make observability-uninstall # Reverse-flip instance-rhoai to overlays/maas; monitoring cascade tears down
 ```
 
@@ -271,11 +287,13 @@ To change the RHOAI version, edit `components/operators/rhoai-operator/base/cata
 ```yaml
 # catalogsource.yaml - change the image tag
 spec:
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly
-  displayName: RHOAI 3.4 ea.2 Nightly
+  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly
+  displayName: RHOAI 3.5 Nightly
 ```
 
-The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently `beta` for EA builds).
+The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently **`stable-3.x`**; `beta` is the EA channel and today still serves 3.5.0-ea.2 — see `docs/issues/maas-payload-h2-endstream-hang.md`).
+
+**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.5-nightly` tag so a fresh install always gets the newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to exactly one build (e.g. a ledger audit); revert it before merging.
 
 ```bash
 # After editing, commit and push
@@ -289,8 +307,8 @@ make restart-catalog  # Force catalog pod to pull new image
 ```
 
 **Catalog image examples:**
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.1-nightly`
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.4-ea.2-nightly`
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly` (the nightly track)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5` (the released z-stream — a *different track*, moving to it is a track change)
 
 ## Configuration (.env file)
 
@@ -303,15 +321,15 @@ QUAY_TOKEN=your-token
 
 # Optional: GPU MachineSet configuration
 GPU_INSTANCE_TYPE=g6e.2xlarge    # GPU instance type
-GPU_REPLICAS=1                   # Initial replicas
-GPU_ACCESS_TYPE=SHARED           # SHARED or PRIVATE
+GPU_REPLICAS=1                   # NOTE: ignored — the script sets replicas from GPU_MIN
+GPU_ACCESS_TYPE=SHARED           # NOTE: read and logged but not applied to the MachineSet
 GPU_MIN=1                        # Minimum replicas (autoscaling)
 GPU_MAX=3                        # Maximum replicas (autoscaling)
 GPU_AZ=                          # Auto-detected if empty
 
 # Optional: CPU Worker MachineSet configuration
 CPU_INSTANCE_TYPE=m6a.4xlarge   # CPU instance type
-CPU_REPLICAS=1                   # Initial replicas
+CPU_REPLICAS=1                   # NOTE: ignored — the script sets replicas from CPU_MIN
 CPU_VOLUME_SIZE=120              # Root volume size (GB)
 CPU_MIN=1                        # Minimum replicas (autoscaling)
 CPU_MAX=3                        # Maximum replicas (autoscaling)
@@ -496,7 +514,7 @@ Operators and instances have dependencies that must be respected:
 **Specific Dependencies:**
 - `nvidia-instance` requires `nfd-instance` (NFD must label GPU nodes first)
 - `rhoai-instance` requires `rhoai-operator` to be ready
-- Service Mesh instances require Service Mesh operator
+- Service Mesh is **not** GitOps-managed here: the ingress operator owns istio for Gateway API, and on OCP 4.20.32+ no `servicemeshoperator3` OLM operator exists at all (`managed-by=sail-library`). See `docs/workarounds.md` §B and §C2
 - `nfs-instance` requires `nfs-provisioner` operator (no other dependencies)
 
 The ApplicationSets handle this by deploying all operators first, then all instances.
@@ -544,7 +562,8 @@ install-maas.sh:
 **Note**: `install-maas.sh` used to call `install-observability.sh` as a final
 phase. That coupling is now removed — observability is run separately with
 `make observability` because its monitoring cascade is heavy on the control
-plane and needs its own settle-gate. See the Remediation #4 section below.
+plane and needs its own settle-gate. See the MaaS Observability section below
+and `docs/workarounds.md` §B (settle-gate row).
 
 ### MaaS Uninstall Flow
 
@@ -572,7 +591,7 @@ Models are defined as kustomize manifests in `components/instances/maas-models/`
 - `llm/` — LLMInferenceService (the workload)
 - `maas/` — MaaSModelRef + MaaSAuthPolicy + MaaSSubscription (free + premium tiers)
 
-`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for default model selection (default: `gpt-oss-20b`).
+`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for model selection (default: **`auto`** — the script inspects GPU VRAM and picks simulator / granite-tiny-gpu / gpt-oss-20b).
 
 ### MaaS Verification
 
@@ -620,7 +639,7 @@ oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec
 
 Observability lights up the RHOAI 3.x Observability dashboard (request rate, success rate, GPU/CPU/memory, per-subscription usage) for MaaS. It layers OpenShift user-workload monitoring + MaaS-specific TelemetryPolicy/ServiceMonitors + the Kuadrant observability toggle.
 
-**Installed separately from MaaS.** `install-maas.sh` used to call `install-observability.sh` as a final phase, but that coupling was removed. The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack, NodeMetrics) puts substantial memory pressure on the control plane — it now has its own entrypoint with a settle-gate that refuses to fire if masters are >=75% memory or the cluster isn't otherwise healthy. Run `make observability` when the cluster is ready.
+**Installed separately from MaaS.** `install-maas.sh` used to call `install-observability.sh` as a final phase, but that coupling was removed. The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack, NodeMetrics) puts substantial memory pressure on the control plane — it now has its own entrypoint with a settle-gate that refuses to fire if masters are >=80% memory (override with `SETTLE_GATE_MASTER_MEM_MAX`) or the cluster isn't otherwise healthy. Run `make observability` when the cluster is ready.
 
 **Dashboard visibility:** `components/instances/rhoai-instance/base/odh-dashboard-config.yaml` sets `spec.dashboardConfig.observabilityDashboard: true` so the **Observability** nav item appears in the RHOAI console. This requires cluster-admin (or equivalent dashboard admin) permissions to see — non-admin users will NOT see the nav item even when the flag is true.
 
@@ -628,7 +647,7 @@ Observability lights up the RHOAI 3.x Observability dashboard (request rate, suc
 
 The only thing we need to provide is the **Cluster Observability Operator (COO)** so the `Perses`, `PersesDatasource`, and `PersesDashboard` CRDs are registered on the cluster:
 
-- `components/operators/cluster-observability-operator/` — COO Subscription (channel `stable`, AllNamespaces into `openshift-operators`).
+- `components/operators/cluster-observability-operator/` — COO Subscription (channel `stable`, AllNamespaces, installed into namespace **`openshift-cluster-observability-operator`** — this exact namespace is required; rhods-operator's `perses-operator-access` NetworkPolicy only admits it, and installing COO into `openshift-operators` breaks the Perses path with "bad request: metadata.project doesn't exist". See the note in that subscription.yaml).
 
 Once COO is installed, the RHOAI operator does everything else. No custom Perses resources are managed in this repo — creating our own would conflict with (and be continuously overwritten by) the operator, and our v1alpha1 CR would clash with the operator's v1alpha2 preference. If the Observability tab is blank, check that COO is subscribed and the `perses.perses.dev` CRD exists; the operator reconciles the rest.
 
@@ -669,7 +688,8 @@ install-observability.sh:
   7. Phase B:  Verify Kuadrant CR has spec.observability.enable=true (GitOps-managed)
   8. Phase C:  Apply limitador-servicemonitor IF no existing monitor covers it
   9. Phase D:  Apply authorino-server-metrics-servicemonitor IF no existing monitor covers /server-metrics
-  10. Phase E: Apply istio-gateway-service + servicemonitor IF maas-default-gateway deployment present
+  10. Phase V:  Verify the cascade pods reach Running (120s timeout)
+  11. Phase E: Apply istio-gateway-service + servicemonitor IF maas-default-gateway deployment present
   11. Phase F: Apply kserve-llm-models-servicemonitor IF llm namespace exists
 ```
 
@@ -710,7 +730,7 @@ oc get application.argoproj.io/instance-maas-observability -n openshift-gitops
 
 # End-to-end: fire inference, wait ~2 min, open RHOAI console -> Observability dashboard
 # Or run:
-make diagnose  # section 9 = Observability
+make diagnose  # section 11 = Observability (9 = RHOAI, 10 = MaaS, 12 = Network)
 ```
 
 ## Eval Hub
@@ -823,17 +843,17 @@ All scripts follow these patterns:
 Expected wait times for each script:
 
 - `secrets`: Immediate in Manual mode; ~30s-1min in External Secrets mode (waits for operator + sync)
-- `icsp`: 10-15 minutes (waits for all nodes to restart)
+- `icsp`: ~90 seconds on OCP 4.20 (registries.conf applied via crio reload, no node reboot). Older z-streams: 10-15 minutes for a rolling restart
 - `gpu`: 5-10 minutes (waits for GPU node Ready)
 - `cpu`: 5-10 minutes (waits for CPU worker node Ready)
 - `gitops`: 2-3 minutes (waits for GitOps operator + ArgoCD)
 - `deploy`: Immediate (creates apps, sync happens async)
-- `maas`: 3-5 minutes (creates secrets, ArgoCD app, waits for Gateway + maas-api, then runs observability install)
+- `maas`: 3-5 minutes (creates secrets, ArgoCD app, waits for Gateway + maas-api). Does NOT install observability — run `make observability` separately. Allow another 2-5 min for the gateway ELB's DNS record to propagate before external calls succeed
 - `observability`: ~3-5 minutes (settle-gate check, overlay flip, wait for Perses/Tempo/OTel to reconcile, then Kuadrant patch + conditional ServiceMonitors). Run separately from `make maas`.
 - `evalhub`: ~3-5 minutes (lightweight settle-gate, creates instance-evalhub Application, waits for EvalHub Ready + MLflow + DSPA + evalhub-tenant). Orthogonal to MaaS / observability.
 - `evalhub-uninstall`: ~30 seconds (deletes instance-evalhub Application; resources-finalizer cascade-prunes EvalHub/MLflow/DSPA + evalhub-tenant ns).
 - `maas-model` (simulator): ~30 seconds (CPU, no image pull needed after first time)
-- `maas-model` (GPU models): 5-15 minutes (image pull ~8GB + vLLM model loading)
+- `maas-model` (GPU models): ~18-20 minutes. NOTE: the script exits 0 at ~17 min while the pod is still 1/2 and MaaSModelRef reports Unhealthy — vLLM finishes ~4 min later. Poll `oc get pods -n llm` to 2/2 before verifying (workarounds.md §E2)
 - `maas-verify`: ~3 minutes (deploys temp model, runs tests, cleans up)
 - `maas-uninstall`: ~30 seconds (deletes ArgoCD app + secrets)
 
@@ -937,7 +957,7 @@ The `.gitignore` file is configured to prevent common secret files from being co
 
 **Problem**: ICSP script hangs waiting for nodes
 - **Cause**: Nodes are restarting to apply ICSP
-- **Solution**: Wait 10-15 minutes. Check `oc get mcp` for status
+- **Solution**: On OCP 4.20 this finishes in ~90s with no reboot; if `oc get mcp` shows `Updating=True` (older z-streams) wait 10-15 minutes
 - **Debug**: `oc get nodes -w` to watch nodes restart
 
 **Problem**: GPU node not appearing
@@ -1059,7 +1079,7 @@ oc get mcp  # MachineConfigPool status
 | `scripts/compare-builds.sh` | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift) |
 | `scripts/cleanup-stale-projects.sh` | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`) |
 | `scripts/enable-uwm.sh` | Enable UWM (idempotent merge; --check / --dry-run modes) |
-| `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app, Authorino, default observability) |
+| `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app, Authorino). Does NOT install observability |
 | `scripts/install-observability.sh` | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors) |
 | `scripts/uninstall-maas.sh` | MaaS uninstall (cascade delete + cleanup) |
 

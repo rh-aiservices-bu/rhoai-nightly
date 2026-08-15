@@ -13,6 +13,16 @@ Found 2026-08-05 on cluster-tm9xb (RHOAI 3.5.0) when the
 > addresses it either. This repo's carried mitigation is
 > `scripts/restart-catalog.sh`'s image-aware guard (workarounds.md A6):
 > CSV names equal + bundle images differ → clean reinstall.
+>
+> **Baseline recorded 2026-08-14** (cluster-bq4x2, nightly `bda8c789`) — a
+> *baseline*, not a re-verification: the deadlock is only observable after a
+> catalog bump. Subscription `AtLatestKnown`, installed CSV
+> `rhods-operator.3.5.0`, installed operator image == offered image
+> (`3dbb64be…`) — i.e. the healthy no-pending-upgrade state. Mechanism
+> unchanged (the CSV name is still static across nightlies). **Still unfiled**;
+> searched again 2026-08-14, no build/release-eng tracker found
+> (RHOAIENG-80314 and RHOAIENG-75776 are adjacent FBC/versioning issues, but
+> neither covers CSV-name reuse).
 
 ## Detection
 

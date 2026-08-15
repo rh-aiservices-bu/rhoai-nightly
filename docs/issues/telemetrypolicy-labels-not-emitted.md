@@ -22,6 +22,29 @@
 > request-only actions — but its fix (wasm-shim#378, v0.14.0) shipped **in RHCL
 > 1.4.1**, and this bug reproduces on 1.4.2, so it is not covered by 1132.
 > CONNLINK-1300 remains the unresolvable-source complement (see below).
+>
+> Re-confirmed again 2026-08-14 (fresh install, cluster-bq4x2, nightly
+> `bda8c789`, still RHCL 1.4.2): TelemetryPolicy Accepted=True/Enforced=True and
+> `model`/`subscription`/`user` present in the wasm EnvoyFilter config, yet
+> `kuadrant_allowed` carries only infra labels (`__name__`, `container`,
+> `instance`, `job`, `namespace`, `pod`, `pod_name`, `prometheus`). Still
+> unfiled.
+>
+> **Check these first before filing (2026-08-14).** Two resolved issues produce
+> the *same* missing-label symptom from an **unresolvable CEL key** rather than
+> a generation-side bug:
+> [RHOAIENG-81078](https://issues.redhat.com/browse/RHOAIENG-81078) (Resolved —
+> TelemetryPolicy's group label uses `auth.identity.group` while AuthPolicy sets
+> `groups`) and
+> [RHOAIENG-80951](https://issues.redhat.com/browse/RHOAIENG-80951) (Closed —
+> TelemetryPolicy references `subscription_info.costCenter`/`organizationId`
+> that subscriptions never set). Our three sources
+> (`responseBodyJSON("/model")`, `auth.identity.selected_subscription`,
+> `auth.identity.userid`) must be checked for the same class of key mismatch
+> before this is filed as an emission bug. Also link
+> [CONNLINK-1567](https://issues.redhat.com/browse/CONNLINK-1567) (New, filed
+> 2026-08-14 — infinite Kuadrant EnvoyFilter reconcile loop OOMKilling on the
+> same `maas-default-gateway` path) as **adjacent, not a duplicate**.
 
 ## Summary
 

@@ -15,7 +15,7 @@ Install Models as a Service on an OpenShift cluster with RHOAI. Handles the full
 4. Verify the installation (`make maas-verify`)
 5. Optionally install observability as a separate, settle-gated step (`make observability`)
 
-**`make maas` no longer installs observability.** The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack) is heavy on the control plane and is gated behind `make observability`, which refuses to run on a stressed cluster. This decoupling is intentional and shipped in the feature/maas-improvements branch — see `docs/workarounds.md` (settle-gate row in section B) for the OOM it prevents.
+**`make maas` no longer installs observability.** The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack) is heavy on the control plane and is gated behind `make observability`, which refuses to run on a stressed cluster. This decoupling is intentional and shipped on `main`; see `docs/workarounds.md` §B (settle-gate row) — see `docs/workarounds.md` (settle-gate row in section B) for the OOM it prevents.
 
 ## Arguments
 
@@ -126,6 +126,8 @@ oc get application.argoproj.io/instance-maas -n openshift-gitops
 oc get pods -n redhat-ods-applications | grep -E 'postgres|maas'
 oc get pvc postgres-data -n redhat-ods-applications
 oc get gateway maas-default-gateway -n openshift-ingress
+oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="AIGatewayReady")]}'
+# 3.5 renamed ModelsAsServiceReady -> AIGatewayReady; check the legacy name as a fallback:
 oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="ModelsAsServiceReady")]}'
 ```
 
@@ -135,7 +137,7 @@ Verify after completion:
 - `maas-api` and `maas-controller` deployments Ready
 - `postgres` Deployment Ready, backed by 20Gi PVC `postgres-data`
 - Gateway Programmed=True
-- ModelsAsServiceReady=True
+- AIGatewayReady=True (called ModelsAsServiceReady before 3.5)
 - `instance-rhoai` ArgoCD Application source path is `components/instances/rhoai-instance/overlays/maas` (the default — no observability cascade)
 
 ### Phase 2: Deploy Models
@@ -162,7 +164,7 @@ oc get llminferenceservice -n llm
 oc get maasmodelref -n llm -o custom-columns='NAME:.metadata.name,PHASE:.status.phase'
 ```
 
-GPU models take 5-15 min (image pull ~8GB + vLLM model load). Non-GPU simulator is ~30 sec.
+GPU models take ~18-20 min (image pull ~8GB + vLLM model load). Non-GPU simulator is ~30 sec. NOTE: `make maas-model` exits 0 at ~17 min while the pod is still 1/2 and MaaSModelRef reports Unhealthy — exit 0 does NOT mean serving. Poll `oc get pods -n llm` to 2/2 before running any verification (workarounds.md §E2).
 
 Verify after completion:
 - LLMInferenceService Ready=True
@@ -199,7 +201,7 @@ make observability 2>&1 | tee $LOGDIR/phase4-observability.log
 1. Preflight (CRDs present)
 2. Verify UWM is enabled (fails fast with "run make uwm" if not)
 3. Scrub `openshift.io/cluster-monitoring` label from MaaS namespaces (avoids duplicate scrapes)
-4. **Settle-gate**: refuses if any of — required CSVs not Succeeded, DSC/DSCI not Ready, non-terminal pods in core namespaces, etcd Degraded, masters ≥75% memory.
+4. **Settle-gate**: refuses if any of — required CSVs not Succeeded, DSC/DSCI not Ready, non-terminal pods in core namespaces, etcd Degraded, masters ≥80% memory (threshold SETTLE_GATE_MASTER_MEM_MAX, default 80).
 5. **Overlay flip**: patches `instance-rhoai` Application source from `overlays/maas` to `overlays/maas-observability`. Waits up to 10 min for ArgoCD to reconcile DSCI metrics and the RHOAI operator to create the Perses CR.
 6. Kuadrant CR verification, conditional Limitador/Authorino ServiceMonitors, Istio Gateway metrics monitor, KServe LLM models monitor.
 
@@ -211,7 +213,7 @@ oc get application.argoproj.io/instance-rhoai -n openshift-gitops -o jsonpath='{
 oc get dscinitialization default-dsci -o jsonpath='{.spec.monitoring.metrics}'  # should populate
 oc get pods -n redhat-ods-monitoring
 oc get perses -n redhat-ods-monitoring
-oc adm top nodes -l node-role.kubernetes.io/master  # must stay <75%
+oc adm top nodes -l node-role.kubernetes.io/master  # gate refuses at >=80%
 ```
 
 Verify after completion:

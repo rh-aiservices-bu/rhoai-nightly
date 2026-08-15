@@ -12,6 +12,15 @@
 > configmaps delete. [RHAIENG-6384](https://redhat.atlassian.net/browse/RHAIENG-6384)
 > (New, no progress, triage-bot comment only) covers only the low-severity
 > accumulation half — the upgrade breakage remains unfiled.
+>
+> **Status check 2026-08-14** (bq4x2, nightly `bda8c789`): **RBAC half
+> re-verified** — `ClusterRole/ogx-k8s-operator-manager-role` grants configmaps
+> exactly `create,get,list,patch,update,watch`, still **no `delete`**, so the
+> gap ships in the 2026-08-14 nightly. **Symptom half: held, not re-verified** —
+> it is not observable on a fresh install (needs an in-place ogx upgrade with
+> pre-existing playgrounds). **Jira hunt 2026-08-14:** still unfiled — no issue
+> found for the RBAC gap or the post-upgrade `OGXServer` Failed state
+> (RHAIENG-6384 still New, covers only ConfigMap accumulation).
 
 ## Detection
 

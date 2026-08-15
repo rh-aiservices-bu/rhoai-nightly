@@ -23,6 +23,17 @@
 > `jobset-controller-manager-metrics-monitor` (openshift-jobset-operator), and
 > one in openshift-gitops-operator. Same operator-SDK scaffolding bug across
 > products; cite in the filing as evidence the pattern is systemic.
+>
+> **Re-confirmed 2026-08-14** on a fresh 3.5-nightly install (bq4x2, nightly
+> `bda8c789`): both monitors still rejected, and a cluster-wide sweep found the
+> same rejection in the same **five** namespaces (redhat-ods-applications ×2,
+> `opentelemetry-operator-metrics-monitor` in openshift-operators,
+> openshift-jobset-operator, openshift-gitops-operator) — scope unchanged.
+> **Jira hunt 2026-08-14:** still unfiled. Only new related item is
+> [RHOAIENG-82836](https://issues.redhat.com/browse/RHOAIENG-82836) (New,
+> "[Spike] Replace bearerTokenFile with projected SA token in RHOAI operator
+> PodMonitors") — forward-looking hardening, link as *related*, **not**
+> coverage of this bug. OCPBUGS-88022 still New; OCPBUGS-97868 now Verified.
 
 
 - **Symptom:** none user-visible — `make diagnose` is green and the Observability

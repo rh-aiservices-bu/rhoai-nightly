@@ -28,6 +28,20 @@ controlled propagation experiment. Supersedes the RHCL 1.4.1-era
 > 1300 with the propagation asymmetry + stream-hang evidence, and get either a
 > scope extension or a linked bug. Related same-class finding from Kuadrant's
 > security audit: CONNLINK-1443 (fail-open on pipeline build error).
+>
+> **Re-proven 2026-08-14** (fresh install, cluster-bq4x2, nightly `bda8c789`,
+> RHCL 1.4.2) with sharper timings: addition propagated in **3s**; the removal
+> was **still unpropagated at 159s** (previous record said >120s) while the
+> policy reported Accepted=True/Enforced=True and its *spec* no longer contained
+> the label. The delete + ArgoCD-recreate remedy cleared it in **~10s**, and
+> inference was healthy afterwards (200 in 0.53s).
+>
+> **Jira hunt 2026-08-14:** still no issue anywhere describes the
+> add-works/remove-doesn't asymmetry — **file fresh**. CONNLINK-1300 is now
+> **Refinement**, fixVersion **1.4.3** (due 2026-09-03), updated 2026-08-13.
+> Nearest neighbours [CONNLINK-1567](https://issues.redhat.com/browse/CONNLINK-1567)
+> and [CONNLINK-1510](https://issues.redhat.com/browse/CONNLINK-1510) are
+> different mechanisms.
 
 ## Summary
 

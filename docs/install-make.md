@@ -49,8 +49,10 @@ without ArgoCD reverting them):
 make all sync-disable
 ```
 
-Expect the full run to take **30–60+ minutes**, dominated by `icsp` node restarts
-(~10–15 min) and GPU/CPU node provisioning (~5–10 min each).
+Expect the full run to take **30–60+ minutes**, dominated by GPU/CPU node
+provisioning (~5–10 min each) and the ArgoCD sync (~15–30 min). `icsp` itself is
+only ~90s on OCP 4.20 (registries.conf via crio reload, no node reboot); on
+older z-streams it triggers a rolling restart and takes ~10–15 min.
 
 ## Option B — Step by step (install part or all)
 
@@ -60,7 +62,7 @@ Run phases individually and verify between each. This is the best way to install
 ### Phase 1 — Infrastructure
 
 ```bash
-make icsp     # registry mirror; triggers a rolling node restart (~10–15 min)
+make icsp     # registry mirror; ~90s on OCP 4.20 (no reboot). Older z-streams: ~10–15 min rolling restart
               # VERIFY: oc get mcp   (all UPDATED=True)   oc get nodes (all Ready)
 
 make cpu      # CPU worker MachineSet (m6a.4xlarge); waits for node Ready
@@ -155,7 +157,7 @@ make refresh-apps    # refresh from git AND sync (one-time; keeps current sync s
 
 | Symptom | Try |
 |---------|-----|
-| ICSP step "hangs" | Nodes are restarting. Watch `oc get mcp` / `oc get nodes -w` (~10–15 min). |
+| ICSP step "hangs" | On OCP 4.20 it should finish in ~90s with no reboot; if `oc get mcp` shows Updating=True, nodes are restarting. Watch `oc get mcp` / `oc get nodes -w` (~10–15 min). |
 | GPU node never appears | The AZ may lack `g6e` capacity. Set `GPU_AZ` in `.env` or try another region. |
 | Apps not syncing | Wrong repo/branch on the ApplicationSet — see [Configuration → Repository & branch](configuration.md#repository-and-branch-selection). |
 | RHOAI operator stuck "Installing" | `make restart-catalog` to force a catalog image pull. |

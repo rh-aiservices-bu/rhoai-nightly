@@ -98,7 +98,7 @@ make observability             # settle-gate -> flip instance-rhoai overlay
 make observability-uninstall   # reverse-flip; monitoring cascade tears down
 ```
 
-The **settle-gate** refuses to run if any master is ≥75% memory, the DSC/DSCI aren't
+The **settle-gate** refuses to run if any master is ≥80% memory (override: SETTLE_GATE_MASTER_MEM_MAX), the DSC/DSCI aren't
 `Ready`, there are non-terminal pods in core namespaces, or etcd is `Degraded`. This
 prevents the cascade from tipping a stressed control plane into OOM.
 
@@ -112,6 +112,16 @@ success rate, GPU/CPU/memory, per-subscription usage). The nav item is set by
 `components/instances/rhoai-instance/base/odh-dashboard-config.yaml`
 (`observabilityDashboard: true`) and is visible only to dashboard admins
 (cluster-admin); non-admins won't see it.
+
+> **One manual step is still required per cluster.** Perses pods Running is not
+> enough: the operator does not set `Dashboard.spec.observability`, so the
+> dashboard never registers the `/perses` proxy and the tab shows
+> `Unexpected token '<'`. Apply workaround
+> [A13](workarounds.md#a13-observability-dashboard--set-dashboardspecobservability-manually-temporary)
+> after `make observability`, then confirm `ObservabilityAvailable=True`.
+> Tracked upstream as RHOAIENG-80354; nothing in this repo applies it because it
+> is temporary. Re-check whether it is still needed before applying — the
+> detection command is in the A13 entry.
 
 ## Uninstall
 
@@ -137,7 +147,8 @@ scripts/uninstall-maas.sh --dry-run   # preview uninstall
 # Platform
 oc get application.argoproj.io/instance-maas -n openshift-gitops
 oc get gateway maas-default-gateway -n openshift-ingress
-oc get deployment maas-api maas-controller -n redhat-ods-applications
+oc get deployment maas-api -n redhat-ai-gateway-infra        # 3.5+ location
+oc get deployment maas-controller -n redhat-ods-applications
 
 # Models
 oc get llminferenceservice -n llm

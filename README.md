@@ -115,6 +115,8 @@ make preflight        # quick readiness check
 make validate-config  # check .env vs cluster
 make status           # ArgoCD status
 make diagnose         # full diagnosis
+make compare          # which RHOAI build is where (git pins vs clusters vs quay)
+make cleanup-projects # audit stale dashboard projects (audit-only by default)
 
 # Uninstall (see docs/uninstall.md)
 make undeploy         # remove ArgoCD apps

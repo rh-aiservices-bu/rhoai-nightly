@@ -12,8 +12,17 @@ cross-zone enabled (or as an NLB) **by default**, not merely when a given
 cluster's IPs all answer (see A11 for why the topology-based check is a trap).
 **Re-verified 2026-08-05** (cluster-g767p, OCP 4.20.32, single-AZ us-east-2a,
 istiod now run by the ingress operator's embedded sail library): the ELB still
-enrolls 2 AZs with nodes in only 1 — the precondition is live and the
-annotation is load-bearing on this cluster.
+enrolls 2 AZs with nodes in only 1 — the precondition was live and the
+annotation load-bearing **on g767p specifically**.
+**Re-checked 2026-08-14** (cluster-bq4x2, OCP 4.20.32, **multi-AZ**
+us-east-2a+2c, nightly `bda8c789`): precondition **ABSENT** — 2 ELB IPs vs 2
+AZs containing Ready nodes (equal ⇒ no empty AZ enrolled), and all 6 per-IP
+probes (2 IPs × 3 rounds) returned 200 with the cross-zone annotation applied.
+This does **not** contradict g767p; it is the topology-dependence the "Remove
+when" section warns about, so the workaround is **KEPT** — the remove-when is
+an upstream default change, not this measurement. OCPBUGS re-searched
+2026-08-14: still nothing upstream (nearest hit, HCMFINOPS-271, is an NLB cost
+task — not a match).
 
 ## Symptom
 

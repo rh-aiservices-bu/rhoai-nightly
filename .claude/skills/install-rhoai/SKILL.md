@@ -146,7 +146,7 @@ If preflight exits 2 (WARN), continue but note the warnings in `$LOGDIR/phase1-p
 
 **Skip if**: `oc get imagecontentsourcepolicy` shows an ICSP exists AND all nodes are Ready.
 
-Run `make icsp 2>&1 | tee $LOGDIR/phase2-icsp.log` in background. Monitor with `oc get mcp` and `oc get nodes`. Expect 10-15 min for node reboots.
+Run `make icsp 2>&1 | tee $LOGDIR/phase2-icsp.log` in background. Monitor with `oc get mcp` and `oc get nodes`. On OCP 4.20 this finishes in ~90s with NO node reboot (registries.conf via crio reload) — do not wait 10-15 min for reboots that will not happen. Only if `oc get mcp` shows Updating=True (older z-streams) expect a 10-15 min rolling restart. Verify the mirror landed on a node: `oc debug node/<n> -- chroot /host grep -A3 rhoai /etc/containers/registries.conf`.
 
 Verify: `oc get nodes` — all Ready.
 
@@ -219,7 +219,7 @@ oc get csv -A --no-headers | grep -v Succeeded
 
 Report progress as apps transition Unknown → Progressing → Healthy.
 
-Known gotcha (reference `docs/workarounds.md` §A6): if the `:rhoai-3.4-nightly` catalog image is broken upstream, the rhods-operator will CrashLoopBackOff. The branch currently pins to `:rhoai-3.4` as a workaround. If you still see CrashLoops, run `scripts/restart-catalog.sh` (which bounces pods AND deletes the Subscription so OLM re-resolves).
+Known gotcha (reference `docs/workarounds.md` §A6 and `docs/issues/nightly-csv-name-static.md`): nightlies reuse the SAME CSV name (`rhods-operator.3.5.0`) across builds, so after a catalog image change OLM never re-resolves — the Subscription sits at `AtLatestKnown` while the catalog serves a newer bundle. The symptom is a stale operator, NOT a CrashLoop. `scripts/restart-catalog.sh` is the remedy: its image-aware guard does the clean Subscription+CSV reinstall.
 
 Verify: all apps Synced + Healthy; `oc get csv -A | grep -v Succeeded` empty or only transient.
 
@@ -231,7 +231,7 @@ Verify: all apps Synced + Healthy; `oc get csv -A | grep -v Succeeded` empty or 
 
 Run: `make maas 2>&1 | tee $LOGDIR/phase10-maas.log`. Expect 3-5 min.
 
-Verify: `oc get gateway maas-default-gateway -n openshift-ingress` Programmed=True, `oc get deployment maas-api -n redhat-ods-applications` Ready.
+Verify: `oc get gateway maas-default-gateway -n openshift-ingress` Programmed=True, `oc get deployment maas-api -n redhat-ai-gateway-infra` Ready (RHOAI 3.5+ location; it was `redhat-ods-applications` pre-3.5. maas-controller stays in `redhat-ods-applications`).
 
 Then deploy a model:
 
@@ -263,11 +263,29 @@ The settle-gate will **refuse** if any of the following are true:
 - DSC or DSCI Ready != True
 - Any pod in redhat-ods-applications / kuadrant-system / openshift-monitoring is non-terminal
 - etcd ClusterOperator is Degraded
-- Any master is at ≥75% memory (via `oc adm top nodes`)
+- Any master is at ≥80% memory (via `oc adm top nodes`; override with SETTLE_GATE_MASTER_MEM_MAX)
 
 If the gate refuses, don't override — fix the underlying condition and retry. The gate exists specifically to prevent the 2026-04-20 cluster-hm2fl OOM pattern.
 
-Verify after flip: Perses, TempoStack, OpenTelemetryCollector DaemonSet, MonitoringStack pods Running in `redhat-ods-monitoring`. Masters stay < 75%.
+Verify after flip: Perses, TempoStack, OpenTelemetryCollector DaemonSet, MonitoringStack pods Running in `redhat-ods-monitoring`. Masters stay < 80%.
+
+**Then apply workaround A13 — required on every new cluster, or the Observability tab stays dead.** Perses pods Running is NOT sufficient: the operator does not set `Dashboard.spec.observability`, so the dashboard never registers the `/perses` proxy and the UI shows "Unexpected token '<'". Nothing in this repo applies it (deliberate: it is Temporary, tracked by RHOAIENG-80354 / opendatahub-operator#3923).
+
+First confirm it is still needed — non-empty output means the operator now owns the field and A13 can be skipped (and `docs/workarounds.md` A13 should be retired):
+
+```bash
+oc get dashboard default-dashboard -o json --show-managed-fields | jq -r \
+  '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | (.fieldsV1["f:spec"]["f:observability"])? // empty'
+```
+
+If empty, apply:
+
+```bash
+oc patch dashboard default-dashboard --type merge -p \
+  '{"spec":{"observability":{"enabled":true,"persesService":{"name":"data-science-perses","namespace":"redhat-ods-monitoring","port":8080}}}}'
+```
+
+Verify the operator renders the bundle (~15s): `ObservabilityAvailable=True`, a `dashboard-perses-access` NetworkPolicy appears, and an in-pod curl from `rhods-dashboard` to `http://data-science-perses.redhat-ods-monitoring.svc.cluster.local:8080/api/v1/dashboards` returns 200 (it times out with exit 28 beforehand).
 
 Rerun `make maas-verify` — should still exit 0 with observability active.
 
@@ -285,8 +303,8 @@ Expected end-state:
 - DSC Ready=True, DSCI Ready=True
 - rhods-operator 3 pods Running
 - If Phase 10 ran: maas-api + gateway + model Ready
-- If Phase 11 ran: Perses CR present with Service on :8080 in redhat-ods-monitoring
-- Masters steady-state < 75% memory (< 60% on a cluster larger than m6a.2xlarge)
+- If Phase 11 ran: Perses CR present with Service on :8080 in redhat-ods-monitoring, AND the A13 patch applied with `ObservabilityAvailable=True` (Perses Running alone does not mean the dashboard works)
+- Masters steady-state < 80% memory (< 60% on a cluster larger than m6a.2xlarge). Reference: a full base+MaaS+observability+evalhub install on 32GiB m6a.2xlarge masters peaked at 65%
 
 If any check fails, run the Problem Tracking loop — update `docs/issues/`/`docs/workarounds.md` with symptom + root cause + repo-side fix, not just a cluster-side patch.
 

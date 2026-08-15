@@ -19,6 +19,10 @@ Working rules:
 
 ## Current issues
 
+> `(D2b)` / `(D2c)` below are historical IDs from a retired triage scheme kept
+> only because they appear in older notes and commit messages; there is no
+> section D in [../workarounds.md](../workarounds.md).
+
 | File | Jira | Status |
 |---|---|---|
 | [gateway-elb-crosszone-blackhole.md](gateway-elb-crosszone-blackhole.md) | **NOT FILED** — draft ready, target **OCPBUGS** (OpenShift ingress/Gateway API); re-searched 2026-08-05, still nothing upstream | Open; workaround A11 — **precondition live on g767p 2026-08-05** (2 ELB IPs vs 1 node-AZ); **absent on multi-AZ bq4x2 2026-08-14** (2 IPs vs 2 node-AZs, 6/6 probes 200) — kept, since the remove-when is an upstream default change, not a per-cluster measurement |
@@ -36,21 +40,21 @@ Working rules:
 
 | Workaround | Jira | Status |
 |---|---|---|
-| A1 dashboard-gateway wasm leak | [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043) **Resolved/Done 2026-08-05** (401 leg = MaaS #1313, in the nightly since ~2026-08-04); [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227) Resolved with no fix evidence; [RHOAIENG-77007](https://redhat.atlassian.net/browse/RHOAIENG-77007), [RHOAIENG-78869](https://redhat.atlassian.net/browse/RHOAIENG-78869) (3.6 GA) | **Leak still live 2026-08-14** despite the Resolved Jiras: Kuadrant's 3 EnvoyFilters + odh-model-controller's `maas-default-gateway-authn-ssl` remain selector-less. The Kuadrant-side mechanism has NO CONNLINK bug — filing gap |
-| A2 gateway istio-proxy OOM | [RHOAIENG-68589](https://redhat.atlassian.net/browse/RHOAIENG-68589) Closed; [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227) Resolved (no fix); [RHOAIENG-79551](https://redhat.atlassian.net/browse/RHOAIENG-79551) In Progress (data-science-gateway scope; candidate fix #3904 unmerged) | Open — re-measured bq4x2 2026-08-14: **1170Mi idle** (already over the 1Gi default before any load) rising to 1214–1226Mi under maas-verify |
-| A11 gateway ELB cross-zone | **NOT FILED** — draft in [gateway-elb-crosszone-blackhole.md](gateway-elb-crosszone-blackhole.md), target OCPBUGS | Kept — precondition PRESENT on g767p 2026-08-05 (empty AZ enrolled); load-bearing there |
-| A13 Dashboard.spec.observability manual patch (temporary) | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress; PR #3923 still open | Temporary — re-proven needed on fresh g767p 2026-08-05; must be applied per cluster (detection in workarounds.md A13, needs `--show-managed-fields`) |
-| E1 stale dependency probe (Kuadrant) | [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925) Backlog | Open — hit on r8mf7, fzgjg, tm9xb, g767p (2026-08-05); auto-remedied by install-maas.sh (now resolves the AuthPolicy by targetRef — the name flaps between builds) |
-| TelemetryPolicy NoSuchKey kills rate limiting | [CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300) Refinement | RHCL 1.4.3 (due 2026-09-03); 3 customer cases attached 2026-08-04 |
+| A1 dashboard-gateway wasm leak | [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043) **Resolved/Done 2026-08-05** (401 leg = MaaS #1313, in the nightly since ~2026-08-04); [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227) Resolved with no fix evidence; [RHOAIENG-77007](https://redhat.atlassian.net/browse/RHOAIENG-77007), [RHOAIENG-78869](https://redhat.atlassian.net/browse/RHOAIENG-78869) (3.6 GA) | **Leak still live 2026-08-14** despite the Resolved Jiras: Kuadrant's 3 EnvoyFilters + odh-model-controller's `maas-default-gateway-authn-ssl` remain selector-less. **Filing gap CLOSED 2026-08-14**: [CONNLINK-1510](https://redhat.atlassian.net/browse/CONNLINK-1510) (New, fixVersion **RHCL 1.4.3** due 09-03) tracks the Kuadrant-side mechanism — root cause [istio/istio#56417](https://github.com/istio/istio/issues/56417), fix is `workloadSelector` instead of `targetRef`, exactly as this ledger predicted |
+| A2 gateway istio-proxy OOM | [RHOAIENG-68589](https://redhat.atlassian.net/browse/RHOAIENG-68589) Closed; [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227) Resolved (no fix); [RHOAIENG-79551](https://redhat.atlassian.net/browse/RHOAIENG-79551) **Closed/Duplicate 2026-08-14** (data-science-gateway scope) — no open Jira now carries a default-memory change; related [CONNLINK-1567](https://redhat.atlassian.net/browse/CONNLINK-1567) New (EnvoyFilter reconcile loop OOMKill, same gateway) | Open — re-measured bq4x2 2026-08-14: **1170Mi idle** (already over the 1Gi default before any load) rising to 1214–1226Mi under maas-verify |
+| A11 gateway ELB cross-zone | **NOT FILED** — draft in [gateway-elb-crosszone-blackhole.md](gateway-elb-crosszone-blackhole.md), target OCPBUGS; re-searched 2026-08-14, still nothing upstream (nearest HCMFINOPS-271 is an NLB cost task, not a match) | Kept — precondition PRESENT on g767p 2026-08-05 (empty AZ enrolled), ABSENT on multi-AZ bq4x2 2026-08-14; removal gate is an upstream default change, not this measurement |
+| A13 Dashboard.spec.observability manual patch (temporary) | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress, updated 2026-08-14; PRs opendatahub-operator#3923 + #3909, odh-dashboard#9078, GH issue #3910 — none merged | Temporary — re-proven needed on fresh bq4x2 2026-08-14 with the cascade already live; must be applied per cluster (detection in workarounds.md A13, needs `--show-managed-fields`) |
+| E1 stale dependency probe (Kuadrant) | [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925) **Review** (moved from Backlog by 2026-08-14), no fixVersion | Open — hit on r8mf7, fzgjg, tm9xb, g767p (2026-08-05), bq4x2 (2026-08-14); auto-remedied by install-maas.sh (now resolves the AuthPolicy by targetRef — the name flaps between builds) |
+| TelemetryPolicy NoSuchKey kills rate limiting | [CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300) Refinement, updated 2026-08-13 | RHCL 1.4.3 (due 2026-09-03); 3 customer cases attached 2026-08-04 |
 
 **Filing queue** (drafts ready in the files above; statuses re-checked
-2026-08-05): gateway-elb-crosszone (OCPBUGS), D2b bearerTokenFile (RHOAIENG —
+2026-08-14): gateway-elb-crosszone (OCPBUGS), D2b bearerTokenFile (RHOAIENG —
 cite #3812 + OCPBUGS-88022), TelemetryPolicy-labels (CONNLINK),
 TelemetryPolicy-removals (**as comment/linked bug on CONNLINK-1300**),
 ogx-upgrade (RHAIENG — link RHAIENG-6384), ea.2 H2 hang (RHOAIENG — link
-RHOAIENG-79535), nightly-csv-name-static (build/release eng), Kuadrant
-EnvoyFilter-without-workloadSelector leak (CONNLINK — the generic mechanism
-behind A1; only the MaaS-side symptom was ever filed), duplicate-usage-tab
+RHOAIENG-79535), nightly-csv-name-static (build/release eng), ~~Kuadrant
+EnvoyFilter-without-workloadSelector leak (CONNLINK)~~ — **filed by others as
+CONNLINK-1510, removed from this queue 2026-08-14**, duplicate-usage-tab
 (**two** RHOAIENG filings — maas-controller Perses orphan, and the dashboard
 tab-keying bug; added 2026-08-07) — plus the prepared RHOAIENG-79529 comment in
 the D2c file.

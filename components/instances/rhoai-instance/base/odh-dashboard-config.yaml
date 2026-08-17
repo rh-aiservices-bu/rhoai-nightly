@@ -10,14 +10,67 @@ metadata:
   namespace: redhat-ods-applications
 spec:
   dashboardConfig:
+    agentConfigManagement: true
+    agentOps: true
+    agentsCatalog: true
+    aiAssetCustomEndpoints: true
+    automl: true
+    autorag: true
+    connectionTest: true
+    deploymentWizardYAMLViewer: true
+    enablement: true
+    externalModels: true
+    externalVectorStores: true
+    featureStoreAdmin: true
+    genAiStudio: true
+    genAiTracing: true
+    globalProjectPrompts: true
+    gpuaas: true
+    guardrails: true
+    llmGatewayField: true
+    llmdTemplates: true
+    mcpCatalog: true
+    mcpRegistry: true
+    modelAsService: true
+    observabilityDashboard: true
+    projectRBAC: true
+    promptManagement: true
+    roleManagement: true
+    toolCalling: true
+    trainingJobs: true
+    vLLMDeploymentOnMaaS: true
+    disableAdminConnectionTypes: false
+    disableBYONImageStream: false
+    disableClusterManager: false
+    disableCustomServingRuntimes: false
+    disableDistributedWorkloads: false
+    disableFeatureStore: false
+    disableHome: false
+    disableISVBadges: false
+    disableInfo: false
+    disableKServe: false
+    disableKServeAuth: false
     disableKServeMetrics: false
+    disableKServeRaw: false
+    disableKueue: false
+    disableLLMd: false
     disableLMEval: false
     disableModelCatalog: false
     disableModelRegistry: false
+    disableModelRegistrySecureDB: false
+    disableModelServing: false
+    disableNIMModelServing: false
+    disablePerformanceMetrics: false
+    disablePipelines: false
+    disableProjectScoped: false
+    disableProjectSharing: false
+    disableProjects: false
+    disableServingRuntimeParams: false
+    disableStorageClasses: false
+    disableSupport: false
     disableTracking: false
-    genAiStudio: true
-    modelAsService: true
-    observabilityDashboard: true
+    disableTrustyBiasMetrics: false
+    disableUserManagement: false
   hardwareProfileOrder: []
   notebookController:
     enabled: true

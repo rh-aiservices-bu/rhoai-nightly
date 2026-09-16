@@ -14,10 +14,14 @@ spec:
       managementState: Managed
     feastoperator:
       managementState: Managed
+    aigateway:
+      managementState: Removed
+      modelsAsAService:
+        managementState: Removed
+    mcplifecycleoperator:
+      managementState: Managed
     kserve:
       managementState: Managed
-      modelsAsService:
-        managementState: Removed
       nim:
         managementState: Managed
       rawDeploymentServiceConfig: Headed

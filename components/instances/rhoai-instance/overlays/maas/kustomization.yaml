@@ -16,5 +16,5 @@ patches:
       name: default-dsc
     patch: |-
       - op: replace
-        path: /spec/components/kserve/modelsAsService/managementState
+        path: /spec/components/aigateway/modelsAsAService/managementState
         value: Managed

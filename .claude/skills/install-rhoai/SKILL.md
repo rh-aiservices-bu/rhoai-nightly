@@ -1,13 +1,13 @@
 ---
 name: install-rhoai
-description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, UWM, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases. Optionally installs MaaS + observability with GPU-aware model selection.
-argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--skip-maas] [--with-observability] [--force]"
+description: Install RHOAI nightly on a connected OpenShift cluster. Runs the full make all workflow (ICSP, CPU/GPU nodes, UWM, pull-secret, GitOps, deploy, sync) with intelligent skip detection for already-completed phases. Then installs MaaS (GPU-aware model selection) and observability by default; opt out with --skip-maas / --skip-observability.
+argument-hint: "[--branch <branch>] [--skip-gpu] [--skip-cpu] [--skip-maas] [--skip-observability] [--force]"
 allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(LOGDIR=*), Bash(GITOPS_BRANCH=*), Bash(GITOPS_REPO_URL=*), Bash(PREFLIGHT_SKIP_SIZING=*), Bash(PREFLIGHT_SIM_INSTANCE_TYPE=*), Bash(MAAS_MODELS=*), Bash(for *), Bash(date *), Bash(cp *), Bash(git *), Bash(sed *), Bash(tee *), Bash(jq *), Bash(scripts/*), AskUserQuestion, Edit, Skill(install-maas)
 ---
 
 # Install RHOAI on Connected Cluster
 
-Run the full RHOAI nightly installation on a connected OpenShift cluster. Equivalent to `make all` (infra + secrets + gitops + deploy + sync) but with skip detection for already-completed phases, structured logging, and problem tracking. After RHOAI, optionally installs MaaS (platform-only) and observability (gated by a settle-gate, installed separately from MaaS).
+Run the full RHOAI nightly installation on a connected OpenShift cluster. Equivalent to `make all` (infra + secrets + gitops + deploy + sync + maas) but with skip detection for already-completed phases, structured logging, and problem tracking. After RHOAI, installs MaaS and then observability (settle-gated, a separate step after MaaS) by default; opt out with `--skip-maas` / `--skip-observability`.
 
 ## Arguments
 
@@ -15,8 +15,8 @@ Parse `$ARGUMENTS` for optional flags:
 - `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). If not specified, auto-detect (see Branch Detection).
 - `--skip-gpu` — skip GPU MachineSet creation (`make gpu`). Leaves `make maas-model` autodetect to pick `simulator`.
 - `--skip-cpu` — skip CPU MachineSet creation (`make cpu`).
-- `--skip-maas` — skip MaaS installation prompt at the end.
-- `--with-observability` — after MaaS platform + models + verify succeed, also run `make observability` (settle-gated). Default: off. Observability is opt-in because the monitoring cascade is heavy on the control plane.
+- `--skip-maas` — skip Phase 10 (`make maas` + `make maas-model` + `make maas-verify`). Implies `--skip-observability`. Note the DSC still has `modelsAsService: Managed` via `overlays/maas`, so the operator keeps retrying MaaS components until a Gateway exists; add MaaS later with `/install-maas`.
+- `--skip-observability` — skip Phase 11 (`make observability` + A13 patch). Use on clusters with small or already-loaded masters: the monitoring cascade is heavy on the control plane (the settle-gate still refuses to fire above 80% master memory either way).
 - `--force` — run all phases even if they appear already completed.
 
 ## Branch Detection
@@ -223,9 +223,9 @@ Known gotcha (reference `docs/workarounds.md` §A6 and `docs/issues/nightly-csv-
 
 Verify: all apps Synced + Healthy; `oc get csv -A | grep -v Succeeded` empty or only transient.
 
-### Phase 10: MaaS (Platform) — Optional
+### Phase 10: MaaS (Platform) — Default On
 
-**Skip if**: `--skip-maas`.
+**Runs by default** (no prompt). **Skip if**: `--skip-maas`.
 
 `make maas` installs the MaaS platform only (Postgres+PVC, Gateway, Authorino SSL). Observability is no longer installed as part of this phase — see Phase 11.
 
@@ -250,9 +250,9 @@ Verify: `oc get llminferenceservice -n llm` Ready=True for the deployed model; `
 
 Quick smoke test: `make maas-verify 2>&1 | tee $LOGDIR/phase10-maas-verify.log` — exit 0 means auth + rate limiting + inference all work.
 
-### Phase 11: Observability — Opt-In, Settle-Gated
+### Phase 11: Observability — Default On, Settle-Gated
 
-**Run only if**: `--with-observability` was passed AND Phase 10 (MaaS) ran. Default is skip.
+**Runs by default** once Phase 10 succeeded. **Skip if**: `--skip-observability` or `--skip-maas`, or Phase 10 failed.
 
 `make observability` runs a settle-gate, flips the `instance-rhoai` ArgoCD Application from `overlays/maas` to `overlays/maas-observability`, and waits for Perses/Tempo/OTel/MonitoringStack pods to Ready. The overlay flip adds `DSCI.spec.monitoring.metrics.storage`, which triggers the rhods-operator Monitoring controller's full observability cascade.
 

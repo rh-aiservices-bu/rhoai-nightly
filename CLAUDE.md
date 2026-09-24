@@ -287,13 +287,13 @@ To change the RHOAI version, edit `components/operators/rhoai-operator/base/cata
 ```yaml
 # catalogsource.yaml - change the image tag
 spec:
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly
-  displayName: RHOAI 3.5 Nightly
+  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-ea.2-nightly
+  displayName: RHOAI 3.6 EA2 Nightly
 ```
 
-The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently **`stable-3.x`**; `beta` is the EA channel and today still serves 3.5.0-ea.2 — see `docs/issues/maas-payload-h2-endstream-hang.md`).
+The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently **`beta`** — EA builds ship only on `beta`; the `rhoai-3.6-ea.2-nightly` catalog's `stable-3.x` head is still 3.5.0. Switch back to `stable-3.x` once tracking a GA z-stream nightly).
 
-**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.5-nightly` tag so a fresh install always gets the newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to exactly one build (e.g. a ledger audit); revert it before merging.
+**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.6-ea.2-nightly` tag so a fresh install always gets the newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to exactly one build (e.g. a ledger audit); revert it before merging.
 
 ```bash
 # After editing, commit and push
@@ -307,7 +307,8 @@ make restart-catalog  # Force catalog pod to pull new image
 ```
 
 **Catalog image examples:**
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly` (the nightly track)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-ea.2-nightly` (the nightly track; EA → channel `beta`)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly` (the previous 3.5 z-stream nightly track; channel `stable-3.x`)
 - `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5` (the released z-stream — a *different track*, moving to it is a track change)
 
 ## Configuration (.env file)

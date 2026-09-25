@@ -414,7 +414,9 @@ fi
 GATEWAY_STATUS=$(oc get gateway maas-default-gateway -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || echo "Unknown")
 
 # Test health endpoint (may need DNS propagation time for LoadBalancer)
-HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://maas.${CLUSTER_DOMAIN}/maas-api/health" 2>/dev/null || echo "000")
+# curl already prints 000 on connect failure; `|| true` (not `|| echo 000`) avoids "000000"
+HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "https://maas.${CLUSTER_DOMAIN}/maas-api/health" 2>/dev/null || true)
+HTTP_CODE=${HTTP_CODE:-000}
 
 log_info "========================================="
 log_info "MaaS Installation Summary"

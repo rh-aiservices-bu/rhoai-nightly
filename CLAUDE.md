@@ -540,7 +540,7 @@ MaaS has three layers:
    - ArgoCD Application creation — injects cluster-specific values (`clusterDomain`, `certName`, `namespace`) into Helm chart
    - Does NOT install observability — that's its own operation (`make observability`)
 
-3. **Operator-managed** - Deployed automatically when DSC has `modelsAsService: Managed`:
+3. **Operator-managed** - Deployed automatically when DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; was `kserve.modelsAsService` on 3.5 — that field is deprecated and ignored on 3.6 EA2, see `docs/issues/dsc-maas-deprecated-field-ignored.md`):
    - maas-api, maas-controller, payload-processing deployments
    - HTTPRoutes, AuthPolicies, NetworkPolicies
 
@@ -580,8 +580,8 @@ uninstall-maas.sh:
 
 The DataScienceCluster is split across base + overlays:
 
-- `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `modelsAsService.managementState: Removed` and `rawDeploymentServiceConfig: Headed`. Base is the safe no-MaaS baseline.
-- `components/instances/rhoai-instance/overlays/maas/` patches `modelsAsService.managementState: Managed` — this is the default overlay the `instance-rhoai` ApplicationSet entry points at, so MaaS is on out of the box.
+- `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `aigateway.managementState` + `aigateway.modelsAsAService.managementState: Removed` (and the deprecated `kserve.modelsAsService: Removed`) and `rawDeploymentServiceConfig: Headed`. Base is the safe no-MaaS baseline.
+- `components/instances/rhoai-instance/overlays/maas/` patches both `aigateway` states to `Managed` — this is the default overlay the `instance-rhoai` ApplicationSet entry points at, so MaaS is on out of the box.
 - `components/instances/rhoai-instance/overlays/maas-observability/` layers on top of `maas` and adds `DSCI.spec.monitoring.metrics.storage`, which triggers the rhods-operator Monitoring controller's full observability cascade (Perses, TempoStack, OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint, MonitoringStack, ThanosQuerier). `scripts/install-observability.sh` flips the Application source to this overlay only after a settle-gate confirms the cluster is healthy enough to absorb the load.
 
 With MaaS on (default), the operator attempts to deploy MaaS components as soon as DSC syncs, even before `install-maas.sh` runs. The operator tolerates the missing Gateway and retries until it appears.

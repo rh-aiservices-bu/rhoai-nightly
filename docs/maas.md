@@ -16,7 +16,7 @@ separate, deliberate steps.
 | Gateway + GatewayClass | Helm chart (ArgoCD) | LoadBalancer gateway for MaaS traffic. |
 | PostgreSQL secrets | `install-maas.sh` | Generated password, DB connection URL. |
 | Authorino SSL | `install-maas.sh` | Env vars for TLS trust. |
-| maas-api, maas-controller | RHOAI operator | Deployed automatically when the DSC has `modelsAsService: Managed`. |
+| maas-api, maas-controller | RHOAI operator | Deployed automatically when the DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; `kserve.modelsAsService` on 3.5). |
 | UWM | `make uwm` (part of `make infra`) | Prerequisite for scraping MaaS metrics. |
 | TelemetryPolicy + Istio Telemetry | `instance-maas-observability` (ArgoCD) | Per-subscription/model/user metric labels. Added by `make observability`. |
 | Observability cascade (Kuadrant, ServiceMonitors, Perses/Tempo/OTel) | `make observability` (separate, settle-gated) | Lights up the RHOAI Observability dashboard. |

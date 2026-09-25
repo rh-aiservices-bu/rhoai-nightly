@@ -104,13 +104,19 @@ log_info "RHOAI operator found"
 oc get datasciencecluster default-dsc &>/dev/null || { log_error "DataScienceCluster not found"; exit 1; }
 log_info "DataScienceCluster found"
 
-# Check DSC modelsAsService
-MAAS_STATE=$(oc get datasciencecluster default-dsc -o jsonpath='{.spec.components.kserve.modelsAsService.managementState}' 2>/dev/null)
+# Check DSC MaaS state — RHOAI 3.6+ uses aigateway.modelsAsAService; fall back
+# to the deprecated kserve.modelsAsService for 3.5 clusters.
+MAAS_FIELD="aigateway.modelsAsAService"
+MAAS_STATE=$(oc get datasciencecluster default-dsc -o jsonpath='{.spec.components.aigateway.modelsAsAService.managementState}' 2>/dev/null)
+if [ -z "$MAAS_STATE" ]; then
+    MAAS_FIELD="kserve.modelsAsService"
+    MAAS_STATE=$(oc get datasciencecluster default-dsc -o jsonpath='{.spec.components.kserve.modelsAsService.managementState}' 2>/dev/null)
+fi
 if [ "$MAAS_STATE" != "Managed" ]; then
-    log_warn "modelsAsService managementState is '${MAAS_STATE:-not set}' (expected 'Managed')"
+    log_warn "${MAAS_FIELD} managementState is '${MAAS_STATE:-not set}' (expected 'Managed')"
     log_warn "The DSC change should be synced via ArgoCD before running this script"
 else
-    log_info "modelsAsService managementState: Managed"
+    log_info "${MAAS_FIELD} managementState: Managed"
 fi
 
 # Check Authorino

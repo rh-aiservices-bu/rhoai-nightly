@@ -15,8 +15,8 @@ spec:
     feastoperator:
       managementState: Managed
     # RHOAI 3.6+: MaaS lives under aigateway.modelsAsAService (the deprecated
-    # kserve.modelsAsService is silently ignored on 3.6 —
-    # docs/issues/dsc-maas-deprecated-field-ignored.md). overlays/maas flips
+    # kserve.modelsAsService was ignored on 3.6.0-ea.2; GA's v2->v3 conversion
+    # maps it, but we set the new field directly). overlays/maas flips
     # BOTH states to Managed: an explicit aigateway.managementState=Removed
     # disables the whole AI Gateway module, MaaS included.
     aigateway:

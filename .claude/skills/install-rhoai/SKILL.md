@@ -16,7 +16,7 @@ Parse `$ARGUMENTS` for optional flags:
 - `--skip-gpu` — skip GPU MachineSet creation (`make gpu`). Leaves `make maas-model` autodetect to pick `simulator`.
 - `--skip-cpu` — skip CPU MachineSet creation (`make cpu`).
 - `--skip-maas` — skip Phase 10 (`make maas` + `make maas-model` + `make maas-verify`). Implies `--skip-observability`. Note the DSC still has `modelsAsService: Managed` via `overlays/maas`, so the operator keeps retrying MaaS components until a Gateway exists; add MaaS later with `/install-maas`.
-- `--skip-observability` — skip Phase 11 (`make observability` + A13 patch). Use on clusters with small or already-loaded masters: the monitoring cascade is heavy on the control plane (the settle-gate still refuses to fire above 80% master memory either way).
+- `--skip-observability` — skip Phase 11 (`make observability`). Use on clusters with small or already-loaded masters: the monitoring cascade is heavy on the control plane (the settle-gate still refuses to fire above 80% master memory either way).
 - `--force` — run all phases even if they appear already completed.
 
 ## Branch Detection
@@ -269,23 +269,14 @@ If the gate refuses, don't override — fix the underlying condition and retry. 
 
 Verify after flip: Perses, TempoStack, OpenTelemetryCollector DaemonSet, MonitoringStack pods Running in `redhat-ods-monitoring`. Masters stay < 80%.
 
-**Then apply workaround A13 — required on every new cluster, or the Observability tab stays dead.** Perses pods Running is NOT sufficient: the operator does not set `Dashboard.spec.observability`, so the dashboard never registers the `/perses` proxy and the UI shows "Unexpected token '<'". Nothing in this repo applies it (deliberate: it is Temporary, tracked by RHOAIENG-80354 / opendatahub-operator#3923).
-
-First confirm it is still needed — non-empty output means the operator now owns the field and A13 can be skipped (and `docs/workarounds.md` A13 should be retired):
+**Then verify the Observability tab is wired up.** Perses pods Running is NOT sufficient on its own. On RHOAI 3.6 the dashboard operator auto-detects the Perses service (RHOAIENG-80354, fixed) — no manual patch is needed (the old `Dashboard.spec.observability` patch, workaround A13, was retired 2026-10-16; the field stays unset by design):
 
 ```bash
-oc get dashboard default-dashboard -o json --show-managed-fields | jq -r \
-  '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | (.fieldsV1["f:spec"]["f:observability"])? // empty'
+oc get dashboard default-dashboard -o jsonpath='{.status.conditions[?(@.type=="ObservabilityAvailable")].status} {.status.conditions[?(@.type=="ObservabilityAvailable")].reason}{"\n"}'
+# expect: True Deployed
 ```
 
-If empty, apply:
-
-```bash
-oc patch dashboard default-dashboard --type merge -p \
-  '{"spec":{"observability":{"enabled":true,"persesService":{"name":"data-science-perses","namespace":"redhat-ods-monitoring","port":8080}}}}'
-```
-
-Verify the operator renders the bundle (~15s): `ObservabilityAvailable=True`, a `dashboard-perses-access` NetworkPolicy appears, and an in-pod curl from `rhods-dashboard` to `http://data-science-perses.redhat-ods-monitoring.svc.cluster.local:8080/api/v1/dashboards` returns 200 (it times out with exit 28 beforehand).
+If it is not `True`, that is a product regression — root-cause it and add a `docs/issues/` entry; do not re-introduce the manual patch without a Jira.
 
 Rerun `make maas-verify` — should still exit 0 with observability active.
 
@@ -303,7 +294,7 @@ Expected end-state:
 - DSC Ready=True, DSCI Ready=True
 - rhods-operator 3 pods Running
 - If Phase 10 ran: maas-api + gateway + model Ready
-- If Phase 11 ran: Perses CR present with Service on :8080 in redhat-ods-monitoring, AND the A13 patch applied with `ObservabilityAvailable=True` (Perses Running alone does not mean the dashboard works)
+- If Phase 11 ran: Perses CR present with Service on :8080 in redhat-ods-monitoring, AND the Dashboard CR reports `ObservabilityAvailable=True` (Perses Running alone does not mean the dashboard works)
 - Masters steady-state < 80% memory (< 60% on a cluster larger than m6a.2xlarge). Reference: a full base+MaaS+observability+evalhub install on 32GiB m6a.2xlarge masters peaked at 65%
 
 If any check fails, run the Problem Tracking loop — update `docs/issues/`/`docs/workarounds.md` with symptom + root cause + repo-side fix, not just a cluster-side patch.

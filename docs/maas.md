@@ -113,15 +113,13 @@ success rate, GPU/CPU/memory, per-subscription usage). The nav item is set by
 (`observabilityDashboard: true`) and is visible only to dashboard admins
 (cluster-admin); non-admins won't see it.
 
-> **One manual step is still required per cluster.** Perses pods Running is not
-> enough: the operator does not set `Dashboard.spec.observability`, so the
-> dashboard never registers the `/perses` proxy and the tab shows
-> `Unexpected token '<'`. Apply workaround
-> [A13](workarounds.md#a13-observability-dashboard--set-dashboardspecobservability-manually-temporary)
-> after `make observability`, then confirm `ObservabilityAvailable=True`.
-> Tracked upstream as RHOAIENG-80354; nothing in this repo applies it because it
-> is temporary. Re-check whether it is still needed before applying — the
-> detection command is in the A13 entry.
+> **Verify the dashboard wiring.** Perses pods Running is not enough on its own;
+> confirm the Dashboard CR reports `ObservabilityAvailable=True` (reason
+> `Deployed`) after `make observability`:
+> `oc get dashboard default-dashboard -o jsonpath='{.status.conditions[?(@.type=="ObservabilityAvailable")].status}'`.
+> On RHOAI 3.6 the dashboard operator auto-detects the Perses service, so no
+> manual step is needed (the per-cluster `Dashboard.spec.observability` patch
+> that 3.5 required was retired 2026-10-16). `make diagnose` checks this too.
 
 ## Uninstall
 

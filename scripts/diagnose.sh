@@ -256,10 +256,10 @@ if [[ -n "$BAD_PODS_OTHER" ]]; then
     done
 fi
 
-# OOMKilled is called out separately: it is the single most common failure mode
-# in this stack (docs/workarounds.md A2 raises the MaaS gateway to 2Gi for
-# exactly this reason) and it is invisible in the pod STATUS column once the
-# container restarts successfully.
+# OOMKilled is called out separately: it has been the single most common
+# failure mode in this stack (the gateway istio-proxy OOMs behind retired
+# workarounds A1/A2, see docs/workarounds.md) and it is invisible in the pod
+# STATUS column once the container restarts successfully.
 OOM_PODS=$(oc get pods -A -o json 2>/dev/null | jq -r '
     .items[]
     | . as $p
@@ -273,7 +273,7 @@ if [[ -n "$OOM_PODS" ]]; then
     echo "$OOM_PODS" | head -5 | while read -r line; do
         echo "         $(echo "$line" | awk '{print $1"/"$2" container="$3" "$4}')"
     done
-    recommend "OOMKilled containers found — check limits (see docs/workarounds.md A1/A2 for the gateway cases)"
+    recommend "OOMKilled containers found — check limits; for a gateway istio-proxy, check for a leaked Kuadrant wasm filter (Kuadrant Wasm Leak check below)"
 else
     pass "OOMKilled" "No containers OOMKilled"
 fi
@@ -722,23 +722,22 @@ if oc get crd perses.perses.dev &>/dev/null; then
         if [[ -n "$PERSES_SVC" ]]; then
             PERSES_PORT=$(oc get svc "$PERSES_NAME" -n redhat-ods-monitoring -o jsonpath='{.spec.ports[?(@.port==8080)].port}' 2>/dev/null || echo "")
             if [[ "$PERSES_PORT" == "8080" ]]; then
-                # A Service on :8080 is NOT proof the dashboard can use it. On
-                # 2026-08-04 (tm9xb) every server-side signal was green while the
-                # Observability page was 100% broken, two ways:
-                # Root cause is a SINGLE unset field: Dashboard.spec.observability.enabled
-                # defaults false and no rhods-operator path sets it, so the dashboard
-                # operator skips the whole manifests/observability/rhoai/ bundle. The
-                # missing dashboard-perses-access NetworkPolicy and the missing RHOAI
-                # PersesDashboards are consequences of that, not separate blockers, so
-                # the .enabled test must come first and the reachability test is only
-                # meaningful once it is true.
-                # See docs/issues/observability-dashboard-unreachable.md
+                # A Service on :8080 is NOT proof the dashboard can use it (on
+                # 2026-08-04, tm9xb, every server-side signal was green while the
+                # Observability page was 100% broken). The authoritative signal is
+                # the Dashboard CR's ObservabilityAvailable condition: on RHOAI
+                # 3.6 the dashboard operator auto-detects the Perses service
+                # (RHOAIENG-80354, odh-dashboard#9269) and renders the
+                # observability bundle (Perses proxy config, dashboard-perses-access
+                # NetworkPolicy, RHOAI PersesDashboards), reporting
+                # ObservabilityAvailable=True reason=Deployed.
                 #
-                # Test .enabled explicitly, not mere presence of the object: it is
-                # +kubebuilder:default=false, so once anything causes the object to
-                # materialize as {"enabled":false} a presence check reads non-empty and
-                # would blame the network path while the flag is still off.
-                DASH_OBS=$(oc get dashboard default-dashboard -o jsonpath='{.spec.observability.enabled}' 2>/dev/null || echo "")
+                # Do NOT key on Dashboard.spec.observability: on 3.6 it stays unset
+                # by design, so a spec-based test is a false positive. (Through 3.5
+                # the field had to be patched by hand — retired workaround A13.)
+                DASH_OBS=$(oc get dashboard default-dashboard -o jsonpath='{.status.conditions[?(@.type=="ObservabilityAvailable")].status}' 2>/dev/null || echo "")
+                DASH_OBS_WHY=$(oc get dashboard default-dashboard -o jsonpath='{.status.conditions[?(@.type=="ObservabilityAvailable")].reason}: {.status.conditions[?(@.type=="ObservabilityAvailable")].message}' 2>/dev/null || echo "")
+                [[ "$DASH_OBS_WHY" == ": " ]] && DASH_OBS_WHY=""
                 DASH_POD=$(oc get pods -n redhat-ods-applications -l app=rhods-dashboard \
                     --field-selector=status.phase=Running -o name 2>/dev/null | head -1 | sed 's|pod/||')
                 PERSES_REACH=""
@@ -755,8 +754,8 @@ if oc get crd perses.perses.dev &>/dev/null; then
                     PERSES_EXEC_RC=0
                 fi
 
-                if [[ "$DASH_OBS" != "true" ]]; then
-                    warn "Observability Dashboard" "Dashboard CR spec.observability.enabled is not true — the whole observability bundle (Perses proxy config, dashboard-perses-access NetworkPolicy, RHOAI PersesDashboards) is skipped; UI shows 'Unable to reach observability dashboards' (RHOAIENG-80354)"
+                if [[ "$DASH_OBS" != "True" ]]; then
+                    warn "Observability Dashboard" "Dashboard CR ObservabilityAvailable=${DASH_OBS:-<unset>} (${DASH_OBS_WHY:-no condition}) — observability bundle not deployed; UI shows 'Unable to reach observability dashboards'"
                 elif [[ -z "$DASH_POD" ]]; then
                     warn "Observability Dashboard" "No Running rhods-dashboard pod — cannot test the path to $PERSES_NAME"
                 elif [[ "$PERSES_REACH" != "200" ]]; then
@@ -826,7 +825,7 @@ if [[ -n "$GATEWAYS" ]]; then
             GWPASS) pass "Gateway" "$REST" ;;
             GWWARN) warn "Gateway" "$REST" ;;
             GWFAIL) fail "Gateway" "$REST"
-                    recommend "Gateway data plane down: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=<name>; check for OOMKilled (docs/workarounds.md A1/A2)" ;;
+                    recommend "Gateway data plane down: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=<name>; check for OOMKilled" ;;
         esac
     done < /tmp/.diag-gw-$$
     rm -f /tmp/.diag-gw-$$
@@ -852,7 +851,7 @@ if [[ -n "$CLUSTER_DOMAIN" ]]; then
                 recommend "Dashboard unreachable — check the gateway pod: oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=data-science-gateway" ;;
             *)
                 fail "Dashboard Reachable" "https://${DASH_HOST}/ -> HTTP $DASH_CODE (expected 200/302)"
-                recommend "Dashboard returning $DASH_CODE — check gateway pod for OOMKilled/CrashLoopBackOff (docs/workarounds.md A1)" ;;
+                recommend "Dashboard returning $DASH_CODE — check gateway pod for OOMKilled/CrashLoopBackOff (see Kuadrant Wasm Leak check)" ;;
         esac
     else
         info "Dashboard Reachable" "No dashboard route found"
@@ -873,26 +872,27 @@ if [[ -n "$MAAS_HOST" ]]; then
     fi
 fi
 
-# ── Known-workaround effectiveness (docs/workarounds.md A1) ──────────────────
-# The Kuadrant wasm leak being PRESENT is normal; what matters is whether our
-# strip EnvoyFilter actually neutralises it. istio orders EnvoyFilters by
-# (priority, creationTimestamp, name) — if the strip sorts BEFORE Kuadrant's
-# filter, the REMOVE runs before the INSERT and the wasm survives.
-if oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress &>/dev/null; then
-    LEAK_SELECTOR=$(oc get envoyfilter kuadrant-maas-default-gateway -n openshift-ingress -o jsonpath='{.spec.workloadSelector}' 2>/dev/null || echo "")
-    if [[ -z "$LEAK_SELECTOR" ]]; then
-        STRIP_PRIO=$(oc get envoyfilter strip-kuadrant-wasm-dashboard-gateway -n openshift-ingress -o jsonpath='{.spec.priority}' 2>/dev/null || echo "")
-        if [[ -z "$STRIP_PRIO" ]]; then
-            fail "Wasm Leak Strip" "Kuadrant EnvoyFilter has empty workloadSelector (leaking) and no strip filter found"
-            recommend "Dashboard gateway will crash-loop — see docs/workarounds.md A1"
-        elif [[ "$STRIP_PRIO" -le 0 ]] 2>/dev/null; then
-            warn "Wasm Leak Strip" "strip filter priority=$STRIP_PRIO — ordering not guaranteed vs Kuadrant's filter"
-            recommend "Set spec.priority > 0 on strip-kuadrant-wasm-dashboard-gateway (docs/workarounds.md A1)"
-        else
-            pass "Wasm Leak Strip" "Leak present but strip filter has priority=$STRIP_PRIO (applies after Kuadrant)"
-        fi
+# ── Kuadrant wasm leak regression detector ───────────────────────────────────
+# Regression guard for the retired workaround A1 (docs/workarounds.md; fixed in
+# RHCL 1.4.3, CONNLINK-1510). The bug's signature: an EnvoyFilter in
+# openshift-ingress that INSERTs a wasm HTTP filter but carries no
+# workloadSelector. istio 1.26.x ignores targetRefs on EnvoyFilters, so such a
+# filter applies to EVERY gateway in the namespace — including the dashboard's
+# data-science-gateway, whose istio-proxy then OOM/crash-loops.
+if oc get crd envoyfilters.networking.istio.io &>/dev/null; then
+    WASM_LEAKERS=$(oc get envoyfilter -n openshift-ingress -o json 2>/dev/null | jq -r '
+        .items[]
+        | select(((.spec.workloadSelector // {}).labels // {}) | length == 0)
+        | select([.spec.configPatches[]?
+                  | select(.applyTo == "HTTP_FILTER")
+                  | select((.patch.operation // "") | startswith("INSERT"))
+                  | (.patch.value // {}) | tostring | test("wasm"; "i")] | any)
+        | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$WASM_LEAKERS" ]]; then
+        fail "Kuadrant Wasm Leak" "selector-less EnvoyFilter(s) insert wasm into every gateway: $(echo "$WASM_LEAKERS" | tr '\n' ' ')"
+        recommend "Regression of CONNLINK-1510 (retired A1): the dashboard gateway will likely OOM — root-cause + file upstream (docs/issues/), see docs/workarounds.md retired list"
     else
-        pass "Wasm Leak Strip" "Kuadrant EnvoyFilter is scoped (no leak) — strip no longer needed"
+        pass "Kuadrant Wasm Leak" "No selector-less wasm EnvoyFilters in openshift-ingress"
     fi
 fi
 

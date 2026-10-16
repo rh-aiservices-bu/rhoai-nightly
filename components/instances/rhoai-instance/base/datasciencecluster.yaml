@@ -8,25 +8,25 @@ metadata:
     app.kubernetes.io/name: datasciencecluster
 spec:
   components:
-    # RHOAI 3.6+: MaaS lives under aigateway.modelsAsAService. The old
-    # kserve.modelsAsService below is deprecated and kept at Removed as the
-    # operator asks ("Clear to Removed after migration"); on 3.6 EA2 it is
-    # silently ignored anyway (docs/issues/dsc-maas-deprecated-field-ignored.md).
-    # overlays/maas flips both aigateway states to Managed.
-    aigateway:
-      managementState: Removed
-      modelsAsAService:
-        managementState: Removed
     aipipelines:
       managementState: Managed
     dashboard:
       managementState: Managed
     feastoperator:
       managementState: Managed
+    # RHOAI 3.6+: MaaS lives under aigateway.modelsAsAService (the deprecated
+    # kserve.modelsAsService is silently ignored on 3.6 —
+    # docs/issues/dsc-maas-deprecated-field-ignored.md). overlays/maas flips
+    # BOTH states to Managed: an explicit aigateway.managementState=Removed
+    # disables the whole AI Gateway module, MaaS included.
+    aigateway:
+      managementState: Removed
+      modelsAsAService:
+        managementState: Removed
+    mcplifecycleoperator:
+      managementState: Managed
     kserve:
       managementState: Managed
-      modelsAsService:
-        managementState: Removed
       nim:
         managementState: Managed
       rawDeploymentServiceConfig: Headed

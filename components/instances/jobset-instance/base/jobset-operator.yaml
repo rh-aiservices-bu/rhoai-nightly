@@ -6,3 +6,4 @@ metadata:
 spec:
   logLevel: Normal
   operatorLogLevel: Normal
+  managementState: Managed

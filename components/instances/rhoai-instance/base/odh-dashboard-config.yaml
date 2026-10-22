@@ -19,7 +19,6 @@ spec:
     connectionTest: true
     deploymentWizardYAMLViewer: true
     enablement: true
-    externalModels: true
     externalVectorStores: true
     featureStoreAdmin: true
     genAiStudio: true

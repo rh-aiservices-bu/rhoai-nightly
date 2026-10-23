@@ -1,7 +1,7 @@
 ---
 name: install-maas
-description: Install MaaS (Models as a Service) on a connected RHOAI cluster. Installs the MaaS platform, deploys a GPU-aware auto-selected model, verifies, and optionally runs observability (settle-gated, separate step).
-argument-hint: "[--branch <branch>] [--models-only] [--verify-only] [--skip-models] [--skip-verify] [--with-observability]"
+description: Install MaaS (Models as a Service) on a connected RHOAI cluster. Installs the MaaS platform, deploys a GPU-aware auto-selected model, verifies, then runs observability (settle-gated, separate step) unless --skip-observability.
+argument-hint: "[--branch <branch>] [--models-only] [--verify-only] [--skip-models] [--skip-verify] [--skip-observability]"
 allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(git *), Bash(LOGDIR=*), Bash(MAAS_MODELS=*), Bash(GITOPS_BRANCH=*), Bash(scripts/*), Bash(date *), Bash(curl *), Bash(tee *), Bash(jq *), AskUserQuestion, Edit, Skill(install-rhoai)
 ---
 
@@ -13,7 +13,7 @@ Install Models as a Service on an OpenShift cluster with RHOAI. Handles the full
 2. Install MaaS platform only (`make maas`) — Postgres+PVC, Gateway, Authorino SSL
 3. Deploy a GPU-appropriate model (`make maas-model` — autodetects)
 4. Verify the installation (`make maas-verify`)
-5. Optionally install observability as a separate, settle-gated step (`make observability`)
+5. Install observability as a separate, settle-gated step (`make observability`) — default on, opt out with `--skip-observability`
 
 **`make maas` no longer installs observability.** The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack) is heavy on the control plane and is gated behind `make observability`, which refuses to run on a stressed cluster. This decoupling is intentional and shipped on `main`; see `docs/workarounds.md` §B (settle-gate row) — see `docs/workarounds.md` (settle-gate row in section B) for the OOM it prevents.
 
@@ -24,7 +24,7 @@ Install Models as a Service on an OpenShift cluster with RHOAI. Handles the full
 - `--verify-only` — skip install and models, only run `make maas-verify`
 - `--skip-models` — install platform but don't deploy models
 - `--skip-verify` — skip the verification step
-- `--with-observability` — after the MaaS platform + models are healthy, also run `make observability`. Default is off.
+- `--skip-observability` — don't run `make observability` after the MaaS platform + models are healthy. Use on clusters with small or already-loaded masters (the settle-gate still refuses above 80% master memory either way). `--models-only` and `--verify-only` also skip observability.
 
 ## Branch Detection
 
@@ -189,9 +189,9 @@ Six phases:
 
 Expected exit 0. Report the passed/failed count to the user.
 
-### Phase 4: Observability — Optional, Settle-Gated
+### Phase 4: Observability — Default On, Settle-Gated
 
-**Run only if**: `--with-observability`.
+**Runs by default** once the MaaS platform is healthy. **Skip if**: `--skip-observability`, `--models-only`, or `--verify-only`.
 
 ```bash
 make observability 2>&1 | tee $LOGDIR/phase4-observability.log

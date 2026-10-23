@@ -239,7 +239,7 @@ Wait until DataScienceCluster shows Ready and pods are Running.
 
 Check for and remediate each of these — pods "Running" is NOT sufficient:
 
-1. **Immutable-selector outage (RHOAIENG-79525 class).** The operator may be
+1. **Immutable-selector outage.** The operator may be
    unable to patch `spec.selector` on pre-existing Deployments while it HAS
    updated the matching Service selectors → empty endpoints → 503 despite
    Running pods. Sweep:
@@ -269,13 +269,15 @@ Check for and remediate each of these — pods "Running" is NOT sufficient:
    ```
    Remedy for each hit: `oc delete deployment <name> -n <ns>` — the owning
    operator recreates it with the new selector (verified: rhods-dashboard,
-   <1 min recovery). Known candidates: rhods-dashboard (79525),
-   maas-controller (78140), workbenches (79547).
+   <1 min recovery). Known candidates: rhods-dashboard (3.4→3.5, fixed in
+   3.5 GA), maas-controller (78140), workbenches (79547).
 2. **EnvoyFilter scoping (RHOAIENG-80043).**
    `oc get envoyfilter payload-processing -n openshift-ingress -o jsonpath='{.spec.workloadSelector}'`
    must be non-empty on builds ≥ maas `58e59dec`; if empty, dashboard POSTs
-   will 401 (leaked ext_proc). Do NOT remove the A1 wasm strip — the Kuadrant
-   filter is still selector-less.
+   will 401 (leaked ext_proc). Since RHCL 1.4.3 the `kuadrant-*` filters carry
+   a `workloadSelector` too; `make diagnose` FAILs "Kuadrant Wasm Leak" if any
+   selector-less EnvoyFilter inserts wasm (a CONNLINK-1510 regression — the
+   dashboard gateway would OOM).
 3. **Dashboard write probe** (catches both of the above end-to-end):
    ```
    TOKEN=$(oc whoami -t); BASE=https://rh-ai.<apps-domain>
@@ -285,9 +287,9 @@ Check for and remediate each of these — pods "Running" is NOT sufficient:
      "$BASE/api/k8s/apis/authorization.k8s.io/v1/selfsubjectaccessreviews"
    # must be 200 — 401 = EnvoyFilter leak, 503 = empty endpoints
    ```
-4. **H2 close** (the ea.2 END_STREAM bug this upgrade fixes): an HTTP/2 chat
-   completion through the MaaS gateway must return in <1s, not hang to the
-   client's --max-time. See docs/issues/maas-payload-h2-endstream-hang.md.
+4. **H2 close** (regression check for the 3.5.0-ea.2 END_STREAM hang, fixed by
+   ai-gateway-payload-processing#419): an HTTP/2 chat completion through the
+   MaaS gateway must return in <1s, not hang to the client's --max-time.
 5. **Tenant impact:** existing playgrounds break (ogx upgrade issue) — comms
    before the window; MaaS API keys survive.
 

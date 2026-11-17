@@ -38,7 +38,7 @@ help:
 	@echo ""
 	@echo "Phase 4-5: Deploy and Sync"
 	@echo "  make deploy       - Deploy root app (creates apps with sync DISABLED)"
-	@echo "  make sync         - Sync all apps one-by-one in dependency order"
+	@echo "  make sync         - Sync all apps one-by-one in dependency order (SYNC_SKIP_APPS skips apps)"
 	@echo "  make sync-app APP=<name> - Sync a single app (e.g., APP=nfd)"
 	@echo ""
 	@echo "Shortcuts:"

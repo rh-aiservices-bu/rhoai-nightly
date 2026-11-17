@@ -8,6 +8,7 @@
 # Usage:
 #   ./sync-apps.sh
 #   SYNC_TIMEOUT=600 ./sync-apps.sh  # 10-minute timeout per app
+#   SYNC_SKIP_APPS="nvidia-operator instance-nvidia" ./sync-apps.sh  # skip listed apps
 
 set -euo pipefail
 
@@ -16,6 +17,18 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 # Timeout for each app to become healthy (seconds)
 HEALTH_TIMEOUT="${SYNC_TIMEOUT:-300}"
+
+# Apps to skip entirely (space-separated ArgoCD app names). Skipped apps keep
+# their current sync policy: no auto-sync is enabled, no health wait runs.
+# Quotes are stripped defensively; make passes .env values through verbatim.
+SYNC_SKIP_APPS="${SYNC_SKIP_APPS:-}"
+SYNC_SKIP_APPS="${SYNC_SKIP_APPS//\"/}"
+SYNC_SKIP_APPS="${SYNC_SKIP_APPS//\'/}"
+
+is_skipped() {
+    local app="$1"
+    [[ " $SYNC_SKIP_APPS " == *" $app "* ]]
+}
 
 wait_for_crd() {
     local app="$1"
@@ -172,7 +185,15 @@ wait_for_all_apps() {
     local timeout=120
     local start_time=$(date +%s)
 
+    local apps_to_sync=()
     for app in "${SYNC_ORDER[@]}"; do
+        if is_skipped "$app"; then
+            continue
+        fi
+        apps_to_sync+=("$app")
+    done
+
+    for app in "${apps_to_sync[@]}"; do
         while ! oc get application.argoproj.io/"$app" -n openshift-gitops &>/dev/null; do
             local elapsed=$(($(date +%s) - start_time))
             if [[ $elapsed -ge $timeout ]]; then
@@ -185,7 +206,11 @@ wait_for_all_apps() {
         done
     done
     echo ""
-    log_info "All ${#SYNC_ORDER[@]} apps exist"
+    if [[ ${#apps_to_sync[@]} -lt ${#SYNC_ORDER[@]} ]]; then
+        log_info "All ${#apps_to_sync[@]} apps exist ($(( ${#SYNC_ORDER[@]} - ${#apps_to_sync[@]} )) skipped via SYNC_SKIP_APPS)"
+    else
+        log_info "All ${#apps_to_sync[@]} apps exist"
+    fi
 }
 
 main() {
@@ -194,14 +219,24 @@ main() {
     # Pre-flight check: ensure all apps exist
     wait_for_all_apps
 
-    log_info "Starting staged sync of ${#SYNC_ORDER[@]} apps..."
+    local apps_to_sync=()
+    for app in "${SYNC_ORDER[@]}"; do
+        if is_skipped "$app"; then
+            log_info "Skipping $app (SYNC_SKIP_APPS)"
+            continue
+        fi
+        apps_to_sync+=("$app")
+    done
+
+    log_info "Starting staged sync of ${#apps_to_sync[@]} apps..."
     log_info "Each app will wait up to ${HEALTH_TIMEOUT}s to become healthy"
     echo ""
 
     local success=0
     local skipped=0
+    local config_skipped=$(( ${#SYNC_ORDER[@]} - ${#apps_to_sync[@]} ))
 
-    for app in "${SYNC_ORDER[@]}"; do
+    for app in "${apps_to_sync[@]}"; do
         if sync_app "$app"; then
             success=$((success + 1))
         else
@@ -210,7 +245,7 @@ main() {
         echo ""
     done
 
-    log_info "Sync complete: $success processed, $skipped skipped/warnings"
+    log_info "Sync complete: $success synced, $config_skipped skipped by config, $skipped failed/timed out"
 
     # Show final status (retry on API server timeout)
     echo ""
@@ -218,6 +253,9 @@ main() {
     retry 3 oc get applications.argoproj.io -n openshift-gitops \
         -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status
     echo ""
+    if [[ -n "$SYNC_SKIP_APPS" ]]; then
+        log_info "Skipped apps keep their current sync policy: $SYNC_SKIP_APPS"
+    fi
     log_info "Auto-sync is ON. Apps will self-heal from git."
     log_info "Run 'make sync-disable' to disable auto-sync for manual changes."
 }

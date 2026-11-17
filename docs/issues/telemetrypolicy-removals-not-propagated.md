@@ -1,9 +1,10 @@
 # TelemetryPolicy label REMOVALS never propagate to the wasm config (RHCL 1.4.2)
 
 **Jira: NOT FILED** — filing target: CONNLINK (RHCL). This file is the
-ready-to-file draft. **File it referencing
-[CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300)** (see
-below) rather than as an isolated report.
+ready-to-file draft. **File it as a standalone CONNLINK bug**, citing
+[CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300) as related
+context. The earlier plan — comment on 1300 and ask for a scope extension —
+is dead: CONNLINK-1300 was **Closed / Won't Do on 2026-09-11** (see below).
 
 Found 2026-08-01 on cluster-tm9xb (RHOAI 3.5.0 nightly, RHCL 1.4.2) during a
 controlled propagation experiment. Supersedes the RHCL 1.4.1-era
@@ -24,9 +25,11 @@ controlled propagation experiment. Supersedes the RHCL 1.4.1-era
 > comments **describe this removal-propagation bug as a workaround obstacle**
 > ("I had to delete the tenant cr and create it again because TelemetryPolicy
 > changes were not propagated to the WASM EnvoyFilter") but do NOT track it,
-> and the response-stream hang below appears nowhere in it. So: comment on
+> and the response-stream hang below appears nowhere in it. ~~So: comment on
 > 1300 with the propagation asymmetry + stream-hang evidence, and get either a
-> scope extension or a linked bug. Related same-class finding from Kuadrant's
+> scope extension or a linked bug.~~ **Superseded 2026-10-16:** CONNLINK-1300
+> was Closed / Won't Do (2026-09-11), so there is nothing to extend — file this
+> as its own CONNLINK bug. Related same-class finding from Kuadrant's
 > security audit: CONNLINK-1443 (fail-open on pipeline build error).
 >
 > **Re-proven 2026-08-14** (fresh install, cluster-bq4x2, nightly `bda8c789`,

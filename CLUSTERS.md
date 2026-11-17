@@ -72,16 +72,19 @@ remedy — see the skill's Phase 2 for the operational steps:
 2. **EnvoyFilter scoping check** (RHOAIENG-80043): after the upgrade,
    `oc get envoyfilter payload-processing -n openshift-ingress -o
    jsonpath='{.spec.workloadSelector}'` must be non-empty (builds ≥
-   maas commit `58e59dec`). The Kuadrant filter
-   (`kuadrant-maas-default-gateway`) is still selector-less — the A1
-   dashboard-gateway wasm strip **stays in place**.
+   maas commit `58e59dec`). At the time the Kuadrant filter
+   (`kuadrant-maas-default-gateway`) was still selector-less, so the A1
+   dashboard-gateway wasm strip stayed in place; A1 was retired 2026-10-16
+   once RHCL 1.4.3 scoped every `kuadrant-*` filter (CONNLINK-1510) — see
+   the retired list in `docs/workarounds.md`.
 3. **Existing playgrounds break** (ogx upgrade issue,
    `docs/issues/ogx-upgrade-breaks-playgrounds.md`): tenants must delete +
    recreate playgrounds. MaaS API keys survive (postgres untouched).
 4. **H2 close verification** (the reason bu-nightly-2 leaves ea.2): an
    HTTP/2 chat completion against the gateway must finish in <1s, not hang
-   to the client timeout — see `docs/issues/maas-payload-h2-endstream-hang.md`
-   for the exact curl.
+   to the client timeout (3.5.0-ea.2 END_STREAM hang, fixed by
+   ai-gateway-payload-processing#419; the issue file was retired 2026-10-16
+   and remains in git history).
 
 ## Troubleshooting (branch-specific)
 

@@ -449,8 +449,7 @@ PYEOF
     log_info "========================================="
     log_info ""
     log_info "Note: The openshift.io/cluster-monitoring label (if previously removed from"
-    log_info "kuadrant-system, openshift-ingress, llm, or redhat-ods-applications by"
-    log_info "install) is NOT restored automatically — the install removed it because it"
+    log_info "kuadrant-system or llm by install) is NOT restored automatically — the install removed it because it"
     log_info "conflicts with user-workload-monitoring scraping. If you need it back:"
     log_info "  oc label namespace <ns> openshift.io/cluster-monitoring=true --overwrite"
     log_info "========================================="
@@ -482,12 +481,17 @@ applied "UWM verified (owned by make infra / scripts/enable-uwm.sh)"
 # openshift.io/cluster-monitoring=true via the platform Prometheus. For MaaS
 # namespaces we want user-workload-monitoring (UWM) to own scraping — if both
 # are active we get duplicate scrapes and UWM coverage can silently drop from
-# dashboards. Mirrors upstream install-observability.sh (kuadrant-system, llm,
-# MaaS API ns). Our cluster is greenfield, so this is typically a no-op.
+# dashboards. Mirrors upstream install-observability.sh (kuadrant-system, llm).
+# Our cluster is greenfield, so this is typically a no-op.
+#
+# redhat-ods-applications is deliberately NOT scrubbed: RHOAI 3.6.0 GA sets
+# openshift.io/cluster-monitoring=true on it on every DSCI reconcile
+# (rhods-operator internal/controller/dscinitialization/utils.go), so removing
+# the label only fights the operator — it is re-added on the next reconcile.
 log_step "Phase A2: Scrub openshift.io/cluster-monitoring label from MaaS namespaces"
 
 SCRUBBED_NS=()
-for ns in kuadrant-system llm redhat-ods-applications; do
+for ns in kuadrant-system llm; do
     if oc get ns "$ns" >/dev/null 2>&1; then
         label=$(oc get ns "$ns" -o jsonpath='{.metadata.labels.openshift\.io/cluster-monitoring}' 2>/dev/null || true)
         if [ -n "$label" ]; then

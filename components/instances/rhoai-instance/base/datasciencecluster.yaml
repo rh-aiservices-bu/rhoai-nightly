@@ -14,6 +14,11 @@ spec:
       managementState: Managed
     feastoperator:
       managementState: Managed
+    # RHOAI 3.6+: MaaS lives under aigateway.modelsAsAService (the deprecated
+    # kserve.modelsAsService was ignored on 3.6.0-ea.2; GA's v2->v3 conversion
+    # maps it, but we set the new field directly). overlays/maas flips
+    # BOTH states to Managed: an explicit aigateway.managementState=Removed
+    # disables the whole AI Gateway module, MaaS included.
     aigateway:
       managementState: Removed
       modelsAsAService:
@@ -44,8 +49,10 @@ spec:
       managementState: Managed
     trainer:
       managementState: Managed
+    # Training Operator v1 is obsolete in RHOAI 3.6 — the DSC webhook rejects
+    # Managed ("Use Trainer v2 instead"). Trainer (v2) above stays Managed.
     trainingoperator:
-      managementState: Managed
+      managementState: Removed
     trustyai:
       eval:
         lmeval:

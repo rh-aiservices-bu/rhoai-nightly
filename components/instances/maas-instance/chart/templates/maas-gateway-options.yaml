@@ -7,14 +7,13 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 data:
   # Referenced by maas-default-gateway's spec.infrastructure.parametersRef.
-  # The openshift.io/gateway-controller (OSSM/istio Gateway API) applies the
-  # `deployment` value as a strategic-merge patch onto the generated gateway
-  # Deployment. We use it solely to raise the istio-proxy (envoy) memory limit
-  # from istio's 1Gi default to 2Gi — the default OOMKills (CrashLoopBackOff)
-  # once Kuadrant programs its wasm enforcement config onto this gateway.
+  # The openshift.io/gateway-controller (OSSM/istio Gateway API) merges the
+  # `service` value into the generated gateway Service as a strategic-merge
+  # patch. (A `deployment` key raising istio-proxy memory to 2Gi was carried
+  # here as workaround A2 until 2026-10-16 — retired once RHCL 1.4.3 brought
+  # the proxy back under the 1Gi default; see docs/workarounds.md.)
   #
-  # The `service` value is merged into the generated Service the same way.
-  # metadata.annotations ONLY — no spec.type key, so the Service stays the
+  # The `service` patch carries metadata.annotations ONLY — no spec.type key, so the Service stays the
   # default LoadBalancer. The cross-zone annotation works around the AWS
   # classic ELB the cloud provider builds for an annotation-less Service:
   # cross-zone balancing is off by default, and the ELB can enroll an AZ
@@ -28,14 +27,3 @@ data:
     metadata:
       annotations:
         service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
-  deployment: |
-    spec:
-      template:
-        spec:
-          containers:
-            - name: istio-proxy
-              resources:
-                requests:
-                  memory: 256Mi
-                limits:
-                  memory: 2Gi

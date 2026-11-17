@@ -8,15 +8,11 @@ metadata:
     security.opendatahub.io/authorino-tls-bootstrap: "true"
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  # Raise the auto-provisioned gateway proxy (envoy) memory. Istio's default
-  # gateway-proxy limit is 1Gi, which OOMKills (exit 137, CrashLoopBackOff) when
-  # Kuadrant programs its wasm-shim enforcement config (AuthPolicy +
-  # TokenRateLimitPolicy) onto this gateway — observed on 3.5-ea.2 nightly. Envoy
-  # settles at ~1.4Gi, so 2Gi gives headroom. The openshift.io gateway-controller
-  # does NOT honor sidecar.istio.io/proxyMemoryLimit annotations for
-  # auto-provisioned gateways; the supported knob is a parametersRef ConfigMap
-  # whose `deployment` key strategic-merge-patches the generated Deployment
-  # (see maas-gateway-options.yaml).
+  # Customize the auto-provisioned gateway resources. The openshift.io
+  # gateway-controller does NOT honor annotations for this; the supported knob
+  # is a parametersRef ConfigMap whose keys strategic-merge-patch the generated
+  # objects. Today only the `service` key is used (AWS ELB cross-zone
+  # annotation, workaround A11) — see maas-gateway-options.yaml.
   infrastructure:
     parametersRef:
       group: ""

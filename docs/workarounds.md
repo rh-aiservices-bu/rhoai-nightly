@@ -67,104 +67,103 @@ removed as soon as a nightly ships the fix.
 > applied via a crio reload), not the 10–15 min this repo's docs predicted —
 > corrected across CLAUDE.md, docs/install-make.md and the install-rhoai skill
 > in the same pass.
+>
+> **Upgrade audit: 2026-10-16** — cluster-n56g8, in-place upgrade from
+> 3.6.0-ea.2 to the 3.6.0 GA line (catalog `rhoai-3.6-nightly`, CSV
+> `rhods-operator.3.6.0`, channel `stable-3.x`, RHCL 1.4.3). Every entry was
+> re-checked; **A1, A2 and A13 were retired** (A1/A2 by strip test with a
+> 30-min soak, A13 because 3.6 no longer needs it — it was never applied on
+> n56g8), and six `docs/issues/` ledger files plus two known-issues rows were
+> dropped. Each retirement and its evidence is in the list under section A.
+> Also changed: `install-observability.sh` script Phase A2 (unrelated to
+> workaround A2) no longer scrubs
+> `openshift.io/cluster-monitoring` from `redhat-ods-applications` — 3.6.0 GA
+> sets it there on every DSCI reconcile, so scrubbing only fought the operator.
+> Still carried and still needed: A5, A6, A11, B, C2, E1, E2, F1, F2.
 
 ---
 
 ## A. Workarounds carried in this repo
 
-> Numbering is historical and gappy by design: **A3–A4, A7–A10, A12 and C1 were
-> retired** as their upstream fixes shipped (A8's removal is written up below;
-> the rest are in git history). A missing letter means "removed", never
-> "misplaced" — don't renumber, since the letters are cited from issue files,
-> scripts and commit messages.
+> Numbering is historical and gappy by design: **A1–A4, A7–A10, A12, A13 and C1
+> were retired** as their upstream fixes shipped (A8's removal is written up in
+> the header above, the 2026-10-16 retirements below; the rest are in git
+> history). A missing letter means "removed", never "misplaced" — don't
+> renumber, since the letters are cited from issue files, scripts and commit
+> messages.
+>
+> **Retired 2026-10-16** (cluster-n56g8, `rhoai-3.6-nightly` /
+> `rhods-operator.3.6.0`):
+>
+> - **A1** (dashboard-gateway Kuadrant wasm strip EnvoyFilter,
+>   `dashboard-gateway-wasm-strip.yaml`) — strip test: deleted
+>   `strip-kuadrant-wasm-dashboard-gateway`; the `data-science-gateway` HTTP
+>   filter chain was byte-identical before/after (cors, ext_authz, fault,
+>   grpc_stats, lua, router, istio.alpn/metadata_exchange/stats — no wasm);
+>   istio-proxy 87–98Mi over a 30-min soak incl. load, 0 restarts, 0 OOM. Fixed
+>   upstream by RHCL 1.4.3 ([CONNLINK-1510](https://redhat.atlassian.net/browse/CONNLINK-1510)
+>   Closed, fixVersion 1.4.3 — every `kuadrant-*` EnvoyFilter now carries a
+>   `workloadSelector`). `make diagnose` keeps a regression detector ("Kuadrant
+>   Wasm Leak": FAIL on any selector-less EnvoyFilter inserting wasm).
+> - **A2** (MaaS gateway istio-proxy 2Gi via the `deployment` key of the
+>   `maas-default-gateway-options` parametersRef ConfigMap; the ConfigMap and
+>   its `service` key stay for A11) — strip test: removed the key, gateway
+>   rolled to the 1Gi default; 72/72 concurrent gpt-oss-20b chat requests
+>   (3×24, mixed streaming) returned 200 and `make maas-verify` ALL PASS; peak
+>   327Mi, steady ~300Mi over 30 min, 0 restarts, 0 OOM (3.5 measured
+>   1170–1226Mi). [CONNLINK-1567](https://redhat.atlassian.net/browse/CONNLINK-1567)
+>   Closed, fixVersion 1.4.3.
+> - **A13** (manual `Dashboard.spec.observability` patch) — never applied on
+>   n56g8: on 3.6 the dashboard operator auto-detects Perses (odh-dashboard
+>   #9269, "fix(RHOAIENG-80354): auto-detect Perses service");
+>   `ObservabilityAvailable=True reason=Deployed`, `dashboard-perses-access`
+>   NetworkPolicy present, `/perses/*` on the dashboard backend returns Perses
+>   JSON. [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354)
+>   Closed/Done, fixVersion 3.5 GA. The field stays unset **by design**, so any
+>   detection keyed on `spec.observability` or its managedFields is a false
+>   positive — `make diagnose` now keys on the `ObservabilityAvailable`
+>   condition. Ledger file `observability-dashboard-unreachable.md` deleted.
+> - **Ledger `maas-payload-h2-endstream-hang.md`** (ea.2 HTTP/2 END_STREAM
+>   hang) — its own delete condition is met: the released `beta` channel moved
+>   past 3.5.0-ea.2 (now 3.6.0-ea.2). Never filed; fixed by
+>   ai-gateway-payload-processing#419.
+> - **Ledger `dsc-maas-deprecated-field-ignored.md`** — fixed in 3.6.0 GA: DSC
+>   storage is v3 (no `kserve.modelsAsService`) and the v2→v3 conversion maps a
+>   legacy `kserve.modelsAsService: Managed` to `aigateway.modelsAsAService:
+>   Managed` (rhods-operator rhoai-3.6
+>   `api/datasciencecluster/v2/datasciencecluster_conversion.go`, #4137,
+>   2026-10-07). Affected 3.6.0-ea.2 only; never filed.
+> - **Ledger `telemetrypolicy-labels-not-emitted.md`** — misdiagnosis, not a
+>   bug: on RHCL 1.4.3 the labels land on the Limitador counters
+>   (`authorized_hits` carries model/subscription/user;
+>   `authorized_calls`/`limited_calls` carry subscription/user), matching the
+>   upstream MaaS docs ("model label is only available on authorized_hits");
+>   `kuadrant_allowed` was never the target. Not filed (correctly).
+> - **Ledger `gitops-catalog-ose-cli-latest.md`** — symptom gone:
+>   `registry.redhat.io/openshift4/ose-cli:latest` resolves again,
+>   `job-gpu-console-plugin` Completed, `nvidia-operator` Synced/Healthy. The
+>   upstream hygiene PR [redhat-cop/gitops-catalog#490](https://github.com/redhat-cop/gitops-catalog/pull/490)
+>   (stop using `:latest`) is still open.
+> - **Ledger `playground-maas-autowiring.md`** — not applicable on 3.6: the
+>   fake-token machinery is gone ([RHOAIENG-38993](https://redhat.atlassian.net/browse/RHOAIENG-38993)
+>   Closed, fixVersion 3.6 EA1) and this repo tracks 3.6 only.
+>   [RHOAIENG-79529](https://redhat.atlassian.net/browse/RHOAIENG-79529) stays
+>   open on Jira for 3.5.
+> - **known-issues.md row "Dashboard dead (503) after an in-place upgrade"** —
+>   [RHOAIENG-79525](https://redhat.atlassian.net/browse/RHOAIENG-79525)
+>   Closed/Done, fixVersion 3.5 GA.
+> - **Reworded, not retired:** [CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300)
+>   (TelemetryPolicy NoSuchKey disables rate limiting) is Closed / Won't Do
+>   (2026-09-11), so the safe-labels-only TelemetryPolicy config is permanent
+>   guidance, and `telemetrypolicy-removals-not-propagated.md` must be filed as
+>   a standalone CONNLINK bug rather than a comment on 1300.
+> - **docs/issues/trustyai-lmeval-crd-type-mismatch.md** (opened and retired
+>   the same day) — the 2026-10-15 `rhoai-3.6-nightly` operator shipped a
+>   boolean TrustyAI module CRD vs the DSC's `allow`/`deny` strings
+>   (`ProvisioningSucceeded=Error`). Fixed by rhods-operator `4f8c88949`; the
+>   2026-10-16 build (`b14cd97f`) re-applied the string CRD ~10 min after the
+>   operator restarted and the error cleared. Never needed a workaround.
 
-
-### A1. Dashboard gateway — strip leaked Kuadrant wasm
-
-- **File:** `components/instances/maas-instance/chart/templates/dashboard-gateway-wasm-strip.yaml`
-- **Without it:** `data-science-gateway` istio-proxy OOMKilled (exit 137,
-  CrashLoopBackOff) once Kuadrant programs enforcement — dashboard dead.
-  Kuadrant's wasm config leaks onto the dashboard gateway it was never meant for.
-- **Jira:** [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043)
-  **Resolved/Done 2026-08-05** (401 leg — fix = models-as-a-service#1313,
-  cherry-picked downstream 2026-08-04, QE-verified). The OOM leg's
-  [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227) was also
-  marked Resolved 2026-08-05 but carries **no fix PR, no fixVersion, no linked
-  change** — resolved with zero fix evidence, and the leak mechanism is still
-  live on today's nightly (below), so the Jira state does NOT make this entry
-  removable. The generic Kuadrant-side bug (its EnvoyFilters ship `targetRefs`
-  only, which Istio ignores without `ENABLE_ENHANCED_RESOURCE_SCOPING`) is now
-  tracked upstream — **the filing gap is closed**:
-  [CONNLINK-1510](https://redhat.atlassian.net/browse/CONNLINK-1510) "EnvoyFilters
-  incorrectly affect all Gateways in namespace" (New, **fixVersion RHCL 1.4.3**,
-  due 2026-09-03; found 2026-08-14 during the bq4x2 audit). It root-causes the
-  leak to [istio/istio#56417](https://github.com/istio/istio/issues/56417) —
-  Istio 1.26.x does not enforce `targetRef` on EnvoyFilter — and its stated fix is
-  exactly what this entry predicted: *"while we still support istio v1.26.x we
-  should use `workloadSelector` instead of `targetRef`"*. Raised from
-  [RHOAIENG-81865](https://redhat.atlassian.net/browse/RHOAIENG-81865).
-  **This gives A1 a concrete remove-when for the first time: RHCL 1.4.3.**
-- **Verified needed 2026-07-31** (tm9xb, SM 3.4.0): stripped it → OOM ×6 within
-  minutes of Kuadrant programming its EnvoyFilters.
-- **Re-confirmed 2026-08-04** on FBC `f4183f7e`: models-as-a-service#1313 gave
-  `payload-processing` a `workloadSelector` (that's the RHOAIENG-80043 401 leg,
-  now fixed), but the OOM leg is Kuadrant-owned and untouched —
-  `kuadrant-maas-default-gateway`, `kuadrant-auth-*` and
-  `kuadrant-ratelimiting-*` still carry `targetRefs` only, so they still leak.
-- **Re-confirmed 2026-08-14** (fresh install, bq4x2, nightly `bda8c789`): still
-  exactly four selector-less filters — the same three `kuadrant-*` plus
-  `maas-default-gateway-authn-ssl`. Effectiveness verified, not just presence:
-  the strip filter sits at priority=100 and `data-science-gateway` istio-proxy
-  ran **0 restarts at 82Mi** (vs the MaaS gateway's 1226Mi with the wasm
-  attached) through a full `maas-verify`. No OOMKill anywhere on the cluster.
-- **Re-confirmed 2026-08-05** (fresh install, g767p, nightly with #1313 in the
-  build): the three `kuadrant-*` filters are still selector-less, and so is a
-  fourth — `maas-default-gateway-authn-ssl`, owned by **odh-model-controller**
-  (labels `app.kubernetes.io/managed-by=odh-model-controller`), which #1313 did
-  not cover. `make diagnose` independently reports "Leak present but strip
-  filter has priority=100". Detection:
-  ```bash
-  oc get envoyfilter -n openshift-ingress -o json | \
-    jq -r '.items[] | select(.spec.workloadSelector == null) | .metadata.name'
-  ```
-  Any `kuadrant-*` name in that output means the leak is live and A1 is needed.
-- **Remove when:** a bare install keeps the dashboard gateway at 1/1 with
-  Kuadrant policies enforced on the MaaS gateway. As of 2026-08-14 there is
-  finally an upstream target to watch: **RHCL 1.4.3** (CONNLINK-1510). Check the
-  detection command once that lands — but settle it on the cluster, not on the
-  release note, since the fourth leaker (`maas-default-gateway-authn-ssl`) is
-  odh-model-controller's and CONNLINK-1510 will not cover it.
-
-### A2. MaaS gateway — raise istio-proxy memory to 2Gi
-
-- **File:** `components/instances/maas-instance/chart/templates/maas-gateway-options.yaml`
-  (`deployment` key, via the Gateway's `infrastructure.parametersRef`)
-- **Without it:** `maas-default-gateway` envoy OOMKilled at istio's 1Gi default
-  once the Kuadrant wasm enforcement config lands (AuthPolicy +
-  TokenRateLimitPolicy) — MaaS endpoint dead.
-- **Jira:** [RHOAIENG-68589](https://redhat.atlassian.net/browse/RHOAIENG-68589)
-  Closed/Done; [RHOAIENG-79227](https://redhat.atlassian.net/browse/RHOAIENG-79227)
-  Resolved (no fix evidence);
-  [RHOAIENG-79551](https://redhat.atlassian.net/browse/RHOAIENG-79551)
-  **Closed/Duplicate as of 2026-08-14** (was In Progress) — 79551 was about the
-  **data-science-gateway** 1Gi default, not this gateway, and closing it as a
-  duplicate removes the last open Jira that could have carried a default-memory
-  change. No upstream change to istio-proxy memory defaults exists for either
-  gateway. Newly relevant:
-  [CONNLINK-1567](https://redhat.atlassian.net/browse/CONNLINK-1567) (New, filed
-  2026-08-14) reports an infinite Kuadrant EnvoyFilter reconciliation loop
-  OOMKilling on the same `maas-default-gateway` code path — a plausible
-  contributor to the steady-state footprint, worth re-measuring if it lands.
-- **Verified needed 2026-07-31** (tm9xb): stripped it → OOM ×5 at 1Gi.
-- **Re-measured 2026-08-14** (fresh bq4x2): istio-proxy at **1170Mi while
-  idle** — already over the 1Gi default before any load — rising to a steady
-  **1214–1226Mi** sampled across a full `maas-verify`. The idle figure is the
-  sharper argument: this gateway cannot start under the default limit, so the
-  patch is not merely headroom for peak traffic.
-- **Re-measured 2026-08-05** (fresh g767p): istio-proxy at **1217Mi** during a
-  plain `maas-verify` run — above the 1Gi default it would revert to.
-- **Remove when:** a bare install survives Kuadrant enforcement under
-  `maas-verify` load with the default limit.
 
 ### A5. ArgoCD application-controller — 4Gi memory
 
@@ -223,64 +222,6 @@ removed as soon as a nightly ships the fix.
   cluster since tm9xb where the workaround is demonstrably load-bearing, not
   just precautionary. Still unfiled upstream (OCPBUGS search 2026-08-05 found
   nothing covering cross-zone/empty-AZ on Gateway API classic ELBs).
-
-### A13. Observability dashboard — set `Dashboard.spec.observability` manually (TEMPORARY)
-
-- **Applied:** cluster-side patch (not in git — one-time `oc patch`, survives
-  reconciliation because the rhods-operator's SSA apply doesn't own the field):
-  ```bash
-  oc patch dashboard default-dashboard --type merge -p \
-    '{"spec":{"observability":{"enabled":true,"persesService":{"name":"data-science-perses","namespace":"redhat-ods-monitoring","port":8080}}}}'
-  ```
-- **Without it:** Observe & monitor → Dashboard is dead ("Unexpected token
-  '<'"): nothing sets `spec.observability.enabled`, so the dashboard backend
-  never registers the `/perses` proxy route (the SPA catch-all returns HTML to
-  a JSON fetch) and the observability bundle (NetworkPolicy, RHOAI
-  PersesDashboards) is never rendered. Details:
-  [issues/observability-dashboard-unreachable.md](issues/observability-dashboard-unreachable.md)
-- **Jira:** [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354)
-  (In Progress, no fixVersion; **actively worked — updated 2026-08-14**). Tracked
-  work: GH issue
-  [opendatahub-operator#3910](https://github.com/opendatahub-io/opendatahub-operator/issues/3910),
-  fix PR
-  [opendatahub-operator#3923](https://github.com/opendatahub-io/opendatahub-operator/pull/3923)
-  (operator projection), plus
-  [odh-dashboard#9078](https://github.com/opendatahub-io/odh-dashboard/pull/9078)
-  (dashboard test) and
-  [opendatahub-operator#3909](https://github.com/opendatahub-io/opendatahub-operator/pull/3909)
-  (monitoring preconditions). The Jira carries the same `oc patch` we apply.
-- **Why carried:** the Observability dashboards are themselves a feature under
-  test; without the patch they are untestable. Applied bu-nightly-2 2026-08-05;
-  verified `ObservabilityAvailable=True reason=Deployed`, pods rolled,
-  `/perses/api` answering.
-- **Re-proven on fresh install 2026-08-14** (bq4x2, nightly `bda8c789`,
-  operator `3dbb64be`): all four probes negative — managedFields projection
-  empty, `spec.observability` absent, `ObservabilityAvailable=False
-  reason=Disabled`, in-pod curl to Perses exits 28, no NetworkPolicy. Run
-  **after** the observability cascade was live (DSCI already carried
-  `monitoring.metrics.storage`), which is the sharpest form of this test: #3923
-  projects DSCI config into the Dashboard CR, so a build carrying it would have
-  populated the field at that point. Post-patch the bundle rendered in ~15s
-  (NetworkPolicy created, `ObservabilityAvailable=True`, in-pod Perses 200).
-- **Re-proven on fresh install 2026-08-05** (g767p): operator does not set the
-  field (pre-patch: `ObservabilityAvailable=False reason=Disabled`, no
-  `dashboard-perses-access` NetworkPolicy, in-pod curl to Perses times out);
-  after the patch all three flip healthy within ~2 min. Fix PR
-  opendatahub-operator#3923 is still **open** — not merged to any branch, and
-  the dashboard module handler on `rhoai-3.5` has no observability code at all.
-  **Must be re-applied on every new cluster** — nothing in this repo applies it
-  (deliberate: it is Temporary and the operator fix is in flight).
-- **Remove when:** a nightly carries opendatahub-operator#3923. Detection —
-  the operator owns the field (manual patch redundant):
-  ```bash
-  oc get dashboard default-dashboard -o json --show-managed-fields | jq -r \
-    '.metadata.managedFields[] | select(.manager | test("kubectl") | not) | (.fieldsV1["f:spec"]["f:observability"])? // empty'
-  ```
-  Non-empty output = operator projects it; delete the manual field ownership by
-  re-applying without it or simply leave (operator now authoritative) and drop
-  this entry. NB `--show-managed-fields` is required — modern `oc` strips
-  `managedFields` from `-o json` by default, which made the previous form of
-  this command (and the variant in the issue file) silently useless.
 
 ---
 

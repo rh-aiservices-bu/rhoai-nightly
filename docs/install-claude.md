@@ -20,8 +20,8 @@ Type these as slash commands in Claude Code.
 
 | Skill | Purpose |
 |-------|---------|
-| `/install-rhoai` | Full install — equivalent to `make all` (infra, secrets, gitops, deploy, sync) with skip detection. Optionally continues into MaaS + observability. |
-| `/install-maas` | Install MaaS on a cluster that already has RHOAI: platform, a GPU-aware model, verification, and optional observability. |
+| `/install-rhoai` | Full install — equivalent to `make all` (infra, secrets, gitops, deploy, sync) with skip detection. Then continues into MaaS + observability unless skipped. |
+| `/install-maas` | Install MaaS on a cluster that already has RHOAI: platform, a GPU-aware model, verification, and observability (skip with `--skip-observability`). |
 | `/install-evalhub` | Install (or uninstall) Eval Hub — TrustyAI EvalHub + MLflow + DSPA. Orthogonal to MaaS/observability. |
 | `/diagnose-rhoai` | Full cluster health check — runs diagnosis, preflight, and config validation as appropriate. |
 | `/uninstall-rhoai` | Remove RHOAI — runs `undeploy` + `clean` with assessment and progress reporting. |
@@ -48,8 +48,9 @@ Useful arguments:
 
 ```
 /install-rhoai --skip-gpu              # CPU-only cluster
-/install-rhoai --skip-maas             # RHOAI only, no MaaS
-/install-rhoai --with-observability    # also run the observability cascade
+/install-rhoai                        # RHOAI + MaaS + observability (default)
+/install-rhoai --skip-observability   # RHOAI + MaaS, no observability cascade
+/install-rhoai --skip-maas            # RHOAI only (implies --skip-observability)
 /install-rhoai --branch my-feature     # sync ArgoCD from a feature branch
 /install-rhoai --force                 # re-run phases even if detected complete
 ```
@@ -59,9 +60,9 @@ Useful arguments:
 If RHOAI is already installed (via `make` or `/install-rhoai --skip-maas`):
 
 ```
-/install-maas                  # platform + GPU-aware model + verify
-/install-maas --models-only    # just (re)deploy models
-/install-maas --with-observability
+/install-maas                        # platform + GPU-aware model + verify + observability
+/install-maas --models-only          # just (re)deploy models
+/install-maas --skip-observability   # MaaS without the observability cascade
 ```
 
 See [MaaS](maas.md) for what gets deployed and the available models.

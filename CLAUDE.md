@@ -287,13 +287,13 @@ To change the RHOAI version, edit `components/operators/rhoai-operator/base/cata
 ```yaml
 # catalogsource.yaml - change the image tag
 spec:
-  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly
-  displayName: RHOAI 3.5 Nightly
+  image: quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-nightly
+  displayName: RHOAI 3.6 Nightly
 ```
 
-The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently **`stable-3.x`**; `beta` is the EA channel and today still serves 3.5.0-ea.2 — see `docs/issues/maas-payload-h2-endstream-hang.md`).
+The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently **`stable-3.x`** — the `rhoai-3.6-nightly` head is `rhods-operator.3.6.0`, skipRange `>=3.5.0 <3.6.0`. EA builds ship only on `beta`; switch to `beta` when tracking an `-ea.N-nightly` tag).
 
-**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.5-nightly` tag so a fresh install always gets the newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to exactly one build (e.g. a ledger audit); revert it before merging.
+**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.6-nightly` tag so a fresh install always gets the newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to exactly one build (e.g. a ledger audit); revert it before merging.
 
 ```bash
 # After editing, commit and push
@@ -307,7 +307,9 @@ make restart-catalog  # Force catalog pod to pull new image
 ```
 
 **Catalog image examples:**
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly` (the nightly track)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-nightly` (the 3.6 z-stream nightly track; channel `stable-3.x`)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-ea.2-nightly` (an EA nightly track; channel `beta`)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly` (the previous 3.5 z-stream nightly track; channel `stable-3.x`)
 - `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5` (the released z-stream — a *different track*, moving to it is a track change)
 
 ## Configuration (.env file)
@@ -539,7 +541,7 @@ MaaS has three layers:
    - ArgoCD Application creation — injects cluster-specific values (`clusterDomain`, `certName`, `namespace`) into Helm chart
    - Does NOT install observability — that's its own operation (`make observability`)
 
-3. **Operator-managed** - Deployed automatically when DSC has `modelsAsService: Managed`:
+3. **Operator-managed** - Deployed automatically when DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; was `kserve.modelsAsService` on 3.5 — that field is deprecated: on 3.6.0 GA the DSC v2→v3 conversion maps a legacy `kserve.modelsAsService: Managed` onto `aigateway.modelsAsAService`, while 3.6.0-ea.2 silently ignored it):
    - maas-api, maas-controller, payload-processing deployments
    - HTTPRoutes, AuthPolicies, NetworkPolicies
 
@@ -579,8 +581,8 @@ uninstall-maas.sh:
 
 The DataScienceCluster is split across base + overlays:
 
-- `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `modelsAsService.managementState: Removed` and `rawDeploymentServiceConfig: Headed`. Base is the safe no-MaaS baseline.
-- `components/instances/rhoai-instance/overlays/maas/` patches `modelsAsService.managementState: Managed` — this is the default overlay the `instance-rhoai` ApplicationSet entry points at, so MaaS is on out of the box.
+- `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `aigateway.managementState` + `aigateway.modelsAsAService.managementState: Removed` (the deprecated `kserve.modelsAsService` is omitted) and `rawDeploymentServiceConfig: Headed`. Base is the safe no-MaaS baseline.
+- `components/instances/rhoai-instance/overlays/maas/` patches both `aigateway` states to `Managed` — this is the default overlay the `instance-rhoai` ApplicationSet entry points at, so MaaS is on out of the box.
 - `components/instances/rhoai-instance/overlays/maas-observability/` layers on top of `maas` and adds `DSCI.spec.monitoring.metrics.storage`, which triggers the rhods-operator Monitoring controller's full observability cascade (Perses, TempoStack, OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint, MonitoringStack, ThanosQuerier). `scripts/install-observability.sh` flips the Application source to this overlay only after a settle-gate confirms the cluster is healthy enough to absorb the load.
 
 With MaaS on (default), the operator attempts to deploy MaaS components as soon as DSC syncs, even before `install-maas.sh` runs. The operator tolerates the missing Gateway and retries until it appears.
@@ -649,7 +651,7 @@ The only thing we need to provide is the **Cluster Observability Operator (COO)*
 
 - `components/operators/cluster-observability-operator/` — COO Subscription (channel `stable`, AllNamespaces, installed into namespace **`openshift-cluster-observability-operator`** — this exact namespace is required; rhods-operator's `perses-operator-access` NetworkPolicy only admits it, and installing COO into `openshift-operators` breaks the Perses path with "bad request: metadata.project doesn't exist". See the note in that subscription.yaml).
 
-Once COO is installed, the RHOAI operator does everything else. No custom Perses resources are managed in this repo — creating our own would conflict with (and be continuously overwritten by) the operator, and our v1alpha1 CR would clash with the operator's v1alpha2 preference. If the Observability tab is blank, check that COO is subscribed and the `perses.perses.dev` CRD exists; the operator reconciles the rest.
+Once COO is installed, the RHOAI operator does everything else. No custom Perses resources are managed in this repo — creating our own would conflict with (and be continuously overwritten by) the operator, and our v1alpha1 CR would clash with the operator's v1alpha2 preference. If the Observability tab is blank, check that COO is subscribed and the `perses.perses.dev` CRD exists; the operator reconciles the rest. On 3.6 the dashboard operator also auto-detects the Perses service and wires the `/perses` proxy itself — confirm with the Dashboard CR condition `ObservabilityAvailable=True` (reason `Deployed`); `Dashboard.spec.observability` stays unset by design (the manual patch 3.5 needed is retired).
 
 ### Architecture
 
@@ -681,7 +683,7 @@ MaaS observability has three layers:
 install-observability.sh:
   1. Preflight: cluster connection, Kuadrant + Istio Telemetry CRDs
   2. Phase A:  VERIFY UWM is enabled (fails with pointer to `make uwm` if not)
-  3. Phase A2: Scrub openshift.io/cluster-monitoring label from MaaS namespaces (UWM owns scraping)
+  3. Phase A2: Scrub openshift.io/cluster-monitoring label from kuadrant-system + llm (UWM owns scraping; redhat-ods-applications is skipped — RHOAI 3.6 sets the label there on every DSCI reconcile)
   4. Phase S:  Settle-gate (CSVs Succeeded, DSC/DSCI Ready, no bad pods, etcd healthy, masters <80% mem)
   5. Phase G:  Create instance-maas-observability ArgoCD Application (TelemetryPolicy + Istio Telemetry sync via ArgoCD)
   6. Phase O:  Flip instance-rhoai source -> overlays/maas-observability (RHOAI operator's monitoring cascade fires)

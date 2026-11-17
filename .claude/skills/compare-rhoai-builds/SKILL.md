@@ -127,12 +127,10 @@ diagnosis.
 
 | If this moved | Re-verify |
 |---|---|
-| the operator (`odh-rhel9-operator`) | A13 / `observability-dashboard-unreachable`, A6 |
-| `odh-dashboard`, `ODH_OGX_*` | `playground-maas-autowiring`, `ogx-upgrade-breaks-playgrounds` |
-| `ODH_MAAS_*`, `ODH_AI_GATEWAY_OPERATOR` | A1, A2, E1 |
-| `ODH_AI_GATEWAY_PAYLOAD_PROCESSING` | `maas-payload-h2-endstream-hang` |
-| `ODH_MODEL_CONTROLLER` | A1 (the `maas-default-gateway-authn-ssl` filter leg) |
-| `rhcl-operator` CSV version | both `telemetrypolicy-*` entries |
+| the operator (`odh-rhel9-operator`) | A6 |
+| `odh-dashboard`, `ODH_OGX_*` | `ogx-upgrade-breaks-playgrounds`, `duplicate-usage-tab-after-upgrade` |
+| `ODH_MAAS_*`, `ODH_AI_GATEWAY_OPERATOR` | E1 |
+| `rhcl-operator` CSV version | `telemetrypolicy-removals-not-propagated`; `make diagnose` "Kuadrant Wasm Leak" regression check |
 | nothing RHOAI-side | A11, `servicemonitors-bearertokenfile` — platform bugs, a nightly cannot affect them |
 
 Component → source repo, for `--repos` output. RHDS is the downstream mirror, so

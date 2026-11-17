@@ -1,10 +1,23 @@
 # RHOAI Known Issues
 
-Product issues found in **RHOAI 3.5 nightlies** by this deployment. Each
-problem links to its full analysis; workaround links go to the exact steps.
-Last audit: **2026-08-14** (fresh install on cluster-bq4x2, OCP 4.20.32,
+Product issues found in **RHOAI 3.x nightlies** by this deployment (now
+tracking **3.6**). Each problem links to its full analysis; workaround links go
+to the exact steps.
+
+Last audit: **2026-10-16** (cluster-n56g8, in-place upgrade 3.6.0-ea.2 →
+`rhoai-3.6-nightly` / `rhods-operator.3.6.0`, RHCL 1.4.3). Retired as fixed or
+not applicable on 3.6.0 GA: the dashboard-gateway Kuadrant wasm leak (RHCL
+1.4.3, CONNLINK-1510), the MaaS gateway proxy OOM (CONNLINK-1567), the
+unreachable Observability dashboard (RHOAIENG-80354 — the dashboard operator now
+auto-detects Perses), the post-upgrade dashboard 503 (RHOAIENG-79525, fixed 3.5
+GA), the ea.2 HTTP/2 hang, the playground API 401 (RHOAIENG-38993, fixed 3.6
+EA1), and the "missing" per-subscription labels (a misdiagnosis — they are on
+the Limitador counters). Details: the retired list in
+[workarounds.md](workarounds.md).
+
+Previous audit: **2026-08-14** (fresh install on cluster-bq4x2, OCP 4.20.32,
 multi-AZ, `rhoai-3.5-nightly` built 2026-08-14 03:44Z, digest `bda8c789`) —
-every row below re-checked against a live cluster on that build, Jira statuses
+every row then listed re-checked against a live cluster on that build, Jira statuses
 re-pulled the same day. Nothing was resolved by the new build; one previously
 unfiled mechanism is now tracked upstream as CONNLINK-1510.
 
@@ -12,31 +25,29 @@ unfiled mechanism is now tracked upstream as CONNLINK-1510.
 
 | Problem | What you'll see | Jira | Workaround |
 |---|---|---|---|
-| [Playground's llama-stack API unusable outside the UI](issues/playground-maas-autowiring.md) | UI chat works, but direct API calls to the playground endpoint 401; 401 noise in pod logs at startup | [RHOAIENG-79529](https://redhat.atlassian.net/browse/RHOAIENG-79529) New; full fix [RHOAIENG-38993](https://redhat.atlassian.net/browse/RHOAIENG-38993) targets 3.6 EA1, no 3.5 backport | [Patch a real MaaS key into the playground](issues/playground-maas-autowiring.md#workaround--minimal-token-only) (only needed for direct API use) |
-| [Per-subscription usage metrics missing labels](issues/telemetrypolicy-labels-not-emitted.md) | Per-subscription Observability breakdowns empty | not filed (RHCL wasm-shim); re-confirmed on RHCL 1.4.2 2026-08-14. Check RHOAIENG-81078 / RHOAIENG-80951 first — both produce the same missing-label symptom from a CEL key that never resolves | none |
 | [Playgrounds break after an RHOAI (ogx) upgrade](issues/ogx-upgrade-breaks-playgrounds.md) | Playgrounds created before the upgrade show `Failed` (workload still runs) | not filed | Delete + recreate the playground; recurs next upgrade |
 | [Some component metrics silently never collected](issues/servicemonitors-bearertokenfile.md) | Two operator controllers absent from Prometheus; recurring `InvalidConfiguration` warning events | not filed | none |
 | [Removing a telemetry label doesn't take effect](issues/telemetrypolicy-removals-not-propagated.md) | Deleted TelemetryPolicy labels keep flowing; policy reports Enforced | not filed (found 2026-08-01) | Admin: delete the policy; ArgoCD recreates it clean |
-| [Observability dashboard unreachable](issues/observability-dashboard-unreachable.md) | Observe & monitor → Dashboard shows "Unable to reach observability dashboards / not valid JSON" out of the box; metrics still collected | [RHOAIENG-80354](https://redhat.atlassian.net/browse/RHOAIENG-80354) In Progress, actively worked 2026-08-14 (PRs #3923/#3909 + odh-dashboard#9078, none merged) | [A13](workarounds.md#a13-observability-dashboard--set-dashboardspecobservability-manually-temporary) — a one-line `oc patch`, **must be applied on each cluster** (done: bu-nightly-2 + g767p 2026-08-05, bq4x2 2026-08-14) |
-| Dashboard dead (503) after an in-place RHOAI upgrade *(no `issues/` file — filed upstream, tracked in Jira only)* | Whole dashboard "no healthy upstream"; operator logs `spec.selector … field is immutable` | [RHOAIENG-79525](https://redhat.atlassian.net/browse/RHOAIENG-79525) **Resolved/Done, fixVersion 3.5 GA** (as of 2026-08-13) | Admin: `oc delete deployment rhods-dashboard -n redhat-ods-applications` — operator recreates it correctly (hit on tm9xb 2026-08-04 upgrading to 3.5.0 released FBC) |
 | [Two "Usage" tabs on the Observability dashboard after an upgrade](issues/duplicate-usage-tab-after-upgrade.md) | Observe → Observability shows `Usage` twice; the second tab can't be clicked, and the one that renders shows no data. The current 3.5 Usage dashboard (rate-limited requests, consumption table) is unreachable. Hits any cluster that ran MaaS + observability on 3.4 GA (or 3.5-ea.1) and upgraded to 3.5 | not filed (found 2026-08-07; needs 2 filings) | Admin, optional: `oc delete persesdashboard dashboard-3-maas-usage-admin -n redhat-ods-applications` plus its `kuadrant-prometheus-datasource` — both are unowned, nothing recreates them |
+| [Ray and TrustyAI stay on old versions after a 3.6 upgrade](issues/upgrade-36-deployment-selector-immutable.md) | After upgrading to 3.6.0, DataScienceCluster stays NotReady (`RayReady`, `TrustyAIReady=DeployFailed`); their operators keep running the pre-upgrade build | not filed | none (do not hand-delete; report it) |
+| [Pipelines module NotReady after a 3.6 upgrade](issues/upgrade-36-aipipelines-servicemonitor-owner.md) | DataScienceCluster `AIPipelinesReady=False` (`MonitoringReconcileFailed`); pipelines themselves keep running | not filed | none |
+| [Some RHOAI component metrics fail to scrape on 3.6](issues/servicemonitors-tls-servername-platform-prometheus.md) | Cluster admin: several `redhat-ods-applications` metrics targets down with x509 errors | not filed | none |
+| [MaaS "Usage" dashboard is empty](issues/maas-usage-dashboard-total-suffix.md) | Observe → Observability → Usage shows no data despite live MaaS traffic | not filed | none |
 | [Nightly-to-nightly upgrades never happen via OLM](issues/nightly-csv-name-static.md) | Cluster admin: catalog serves a newer nightly but the operator never upgrades; Subscription says `AtLatestKnown` | not filed (build/release eng) | Admin: [`make restart-catalog`](workarounds.md#a6-catalog-re-resolution-guards--restart-catalogsh) — its image-aware guard does the required clean reinstall |
-| [MaaS responses never close over HTTP/2](issues/maas-payload-h2-endstream-hang.md) | On **3.5.0-ea.2** builds — including the released `beta` channel — every MaaS LLM request returns 200 with a full body but the connection never terminates, so HTTP/2 clients block to their own read timeout. HTTP/1.1 clients are unaffected, which hides it from many Python users | not filed — no Jira exists (closest: RHOAIENG-79535, different fix) | Upgrade to 3.5.0 (`stable-3.x`). Fixed there and re-verified no-regression on the 2026-08-14 nightly |
 
 ## Worked around in this deployment — you should NOT hit these
 
 Product bugs we found that remain **unfixed upstream**; this deployment
 carries a temporary workaround for each ("Workaround" links to it and its
-removal condition). If one of these symptoms appears anyway, the workaround
+removal condition) — except CONNLINK-1300, which upstream declined to fix, so
+its guidance is permanent. If one of these symptoms appears anyway, the workaround
 has regressed — tell the maintainers.
 
 | Problem | Would look like | Jira | Workaround |
 |---|---|---|---|
-| Kuadrant wasm config leaks onto the dashboard gateway → OOM crash-loop | RHOAI dashboard unreachable | [RHOAIENG-80043](https://redhat.atlassian.net/browse/RHOAIENG-80043) Resolved (401 leg only — the leak itself is still live 2026-08-05 and untracked on the Kuadrant side) | [A1](workarounds.md#a1-dashboard-gateway--strip-leaked-kuadrant-wasm) |
-| MaaS gateway proxy OOMs at its default memory limit | All MaaS API calls dead | [RHOAIENG-68589](https://redhat.atlassian.net/browse/RHOAIENG-68589) + siblings | [A2](workarounds.md#a2-maas-gateway--raise-istio-proxy-memory-to-2gi) |
 | Gateway load balancer provisioned half-dead on AWS | ~50% of external MaaS calls hang | not filed (OCPBUGS draft in [issue](issues/gateway-elb-crosszone-blackhole.md)) | [A11](workarounds.md#a11-maas-gateway-elb--enable-cross-zone-load-balancing) |
 | Operators cache a failed dependency probe at startup | API-key creation 500s; components stuck NotReady after install | [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925) Backlog | [E1 auto-remedy](workarounds.md#e1-operators-cache-a-dependency-probe-at-startup-and-never-re-check) in the install script |
-| Telemetry label with a bad source silently disables rate limiting | No 429s ever; unlimited usage | [CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300) → RHCL 1.4.3 | Safe-labels-only TelemetryPolicy config |
+| Telemetry label with a bad source silently disables rate limiting | No 429s ever; unlimited usage | [CONNLINK-1300](https://redhat.atlassian.net/browse/CONNLINK-1300) **Closed / Won't Do** (2026-09-11) — no upstream fix coming | Safe-labels-only TelemetryPolicy config — **permanent guidance**: only add labels whose CEL source always resolves |
 
 ---
 

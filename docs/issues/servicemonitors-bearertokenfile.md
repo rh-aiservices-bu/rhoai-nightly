@@ -1,5 +1,16 @@
 # Two operator ServiceMonitors rejected by UWM (`bearerTokenFile`) — controller metrics silently unscraped
 
+> **Re-scoped 2026-10-16** (n56g8, RHOAI 3.6.0 GA): GA labels
+> `redhat-ods-applications` `openshift.io/cluster-monitoring=true`, so the
+> RHOAI monitors there moved to **platform** Prometheus and UWM no longer
+> rejects them (their new failure mode is TLS — see
+> [servicemonitors-tls-servername-platform-prometheus.md](servicemonitors-tls-servername-platform-prometheus.md)).
+> Still rejected by UWM for `bearerTokenFile`:
+> `redhat-ai-gateway-infra/maas-api-metrics` (MaaS's own API metrics) plus the
+> non-RHOAI otel and jobset monitors. GA also ships new `bearerTokenFile`
+> monitors (aihub, mcp-lifecycle-operator, kubeflow-trainer) that would hit
+> this in any UWM-scraped namespace.
+
 **Jira: NOT FILED** for 3.5 (precedent fix pattern: [RHOAIENG-19954](https://redhat.atlassian.net/browse/RHOAIENG-19954), Kueue, rhoai-2.19). Filing draft below.
 
 > **Re-confirmed 2026-08-05** on a fresh 3.5-nightly install (g767p): both

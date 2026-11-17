@@ -91,8 +91,9 @@ oc get pods -A -o json | jq -r '.items[] | . as $p | (.status.containerStatuses/
   | "\($p.metadata.namespace)/\($p.metadata.name) \(.name) restarts=\(.restartCount)"'
 ```
 
-OOMKilled is the most common failure mode in this stack (two separate
-`docs/workarounds.md` entries exist for it — A1/A2) and it is **invisible in the STATUS
+OOMKilled has been the most common failure mode in this stack (the gateway
+istio-proxy OOMs behind workarounds A1/A2, both retired 2026-10-16 — see the
+retired list in `docs/workarounds.md`) and it is **invisible in the STATUS
 column** once the container restarts successfully. Check it explicitly.
 
 **3c. Do the CR conditions agree with reality?**
@@ -150,8 +151,8 @@ reports success. Confirm by checking the ReplicaSet hash and pod AGE actually
 changed.
 
 **A workaround existing ≠ the workaround working.** Verify the *effect*, not the
-presence of the manifest. The dashboard wasm-strip EnvoyFilter was present and
-correctly targeted, yet ineffective because istio orders EnvoyFilters by
+presence of the manifest. The dashboard-gateway strip EnvoyFilter (a workaround
+retired 2026-10-16) was once present and correctly targeted, yet ineffective because istio orders EnvoyFilters by
 (priority, creationTimestamp, name) and Kuadrant's filter was created later.
 → Check the outcome (pod restart count, actual behaviour), not the object.
 

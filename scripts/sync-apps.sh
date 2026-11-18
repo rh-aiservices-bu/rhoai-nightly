@@ -8,7 +8,7 @@
 # Usage:
 #   ./sync-apps.sh
 #   SYNC_TIMEOUT=600 ./sync-apps.sh  # 10-minute timeout per app
-#   SYNC_SKIP_APPS="nvidia-operator instance-nvidia" ./sync-apps.sh  # skip listed apps
+#   SYNC_SKIP_APPS="app-one app-two" ./sync-apps.sh  # skip listed apps
 
 set -euo pipefail
 

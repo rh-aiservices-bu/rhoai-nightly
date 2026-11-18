@@ -77,7 +77,6 @@ rhoai-nightly/
 │   ├── operators/                       # Operator subscriptions
 │   │   ├── nfs-provisioner/             # NFS Provisioner for RWX PVCs
 │   │   ├── nfd/                         # Node Feature Discovery
-│   │   ├── nvidia-operator/             # NVIDIA GPU Operator
 │   │   ├── rhoai-operator/              # RHOAI operator + nightly catalog
 │   │   ├── kueue-operator/              # Kueue for job queueing
 │   │   ├── jobset-operator/             # JobSet for distributed workloads

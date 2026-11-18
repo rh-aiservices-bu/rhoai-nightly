@@ -12,4 +12,3 @@ resources:
   - hardwareprofile-cpu.yaml
   - hardwareprofile-default-disabled.yaml
   - hardwareprofile-gpu.yaml
-  - model-catalog-sources.yaml

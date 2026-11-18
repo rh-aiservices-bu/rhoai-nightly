@@ -29,7 +29,8 @@ SYNC_ORDER=(
     "instance-nfs"
     "nfd"
     "instance-nfd"
-    "nvidia-operator"
+    # No nvidia-operator: on OpenShift 5 the GPU operator is helm-installed
+    # outside ArgoCD (gpu-operator-certified is absent from the v5.0 catalog).
     "instance-nvidia"
 
     # Phase 2: Dependent Operators

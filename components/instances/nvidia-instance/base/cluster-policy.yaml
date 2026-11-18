@@ -4,10 +4,16 @@ metadata:
   name: gpu-cluster-policy
 spec:
   vgpuDeviceManager:
+    repository: nvcr.io/nvidia/cloud-native
+    image: vgpu-device-manager
+    version: v0.5.2
     config:
       default: default
     enabled: true
   migManager:
+    repository: nvcr.io/nvidia/cloud-native
+    image: k8s-mig-manager
+    version: v0.15.2
     config:
       default: all-disabled
       name: default-mig-parted-config
@@ -18,10 +24,19 @@ spec:
     runtimeClass: nvidia
     use_ocp_driver_toolkit: true
   dcgm:
+    repository: nvcr.io/nvidia/cloud-native
+    image: dcgm
+    version: 4.7.0-ubuntu24.04
     enabled: true
   gfd:
+    repository: nvcr.io/nvidia
+    image: k8s-device-plugin
+    version: v0.20.2
     enabled: true
   dcgmExporter:
+    repository: nvcr.io/nvidia/k8s
+    image: dcgm-exporter
+    version: 4.7.0-4.9.0-distroless
     config:
       name: ''
     serviceMonitor:
@@ -30,7 +45,15 @@ spec:
   cdi:
     default: false
     enabled: true
+  # Component images are pinned explicitly: the GPU operator on this rig is
+  # helm-installed, and no OLM CSV exists to inject component images through
+  # operator env vars, so the ClusterPolicy carries every image path itself.
+  # Driver 615.71.10 is required on amd64 DTK mode: older rhel10 driver
+  # images crash-loop (NVIDIA/gpu-driver-container#984).
   driver:
+    repository: nvcr.io/nvidia
+    image: driver
+    version: 615.71.10
     licensingConfig:
       nlsEnabled: true
       secretName: ''
@@ -61,6 +84,9 @@ spec:
     enabled: true
     useNvidiaDriverCRD: false
   devicePlugin:
+    repository: nvcr.io/nvidia
+    image: k8s-device-plugin
+    version: v0.20.2
     config:
       name: ''
       default: ''
@@ -75,11 +101,20 @@ spec:
   mig:
     strategy: single
   sandboxDevicePlugin:
+    repository: nvcr.io/nvidia
+    image: kubevirt-gpu-device-plugin
+    version: v1.6.1
     enabled: true
   validator:
+    repository: nvcr.io/nvidia
+    image: gpu-operator
+    version: v26.7.3
     plugin:
       env: []
   nodeStatusExporter:
+    repository: nvcr.io/nvidia
+    image: gpu-operator
+    version: v26.7.3
     enabled: true
   daemonsets:
     rollingUpdate:
@@ -93,7 +128,13 @@ spec:
   vgpuManager:
     enabled: false
   vfioManager:
+    repository: nvcr.io/nvidia/cloud-native
+    image: k8s-driver-manager
+    version: v0.12.1
     enabled: true
   toolkit:
+    repository: nvcr.io/nvidia/k8s
+    image: container-toolkit
+    version: v1.20.2
     installDir: /usr/local/nvidia
     enabled: true

@@ -1,5 +1,5 @@
 kind: DataScienceCluster
-apiVersion: datasciencecluster.opendatahub.io/v2
+apiVersion: datasciencecluster.opendatahub.io/v3
 metadata:
   name: default-dsc
   annotations:
@@ -10,14 +10,18 @@ spec:
   components:
     aipipelines:
       managementState: Managed
+    # v3 splits the dashboard component: `standard` is the classic dashboard,
+    # `maasPortal` is the MaaS portal (not enabled here).
     dashboard:
-      managementState: Managed
-    feastoperator:
-      managementState: Managed
-    # RHOAI 3.6+: MaaS lives under aigateway.modelsAsAService (the deprecated
-    # kserve.modelsAsService was ignored on 3.6.0-ea.2; GA's v2->v3 conversion
-    # maps it, but we set the new field directly). overlays/maas flips
-    # BOTH states to Managed: an explicit aigateway.managementState=Removed
+      standard:
+        managementState: Managed
+    # `data.featureStore` is v3's feature store component; v2 named it
+    # `feastoperator`.
+    data:
+      featureStore:
+        managementState: Managed
+    # RHOAI 3.6+: MaaS lives under aigateway.modelsAsAService. overlays/maas
+    # flips BOTH states to Managed: an explicit aigateway.managementState=Removed
     # disables the whole AI Gateway module, MaaS included.
     aigateway:
       managementState: Removed
@@ -42,17 +46,18 @@ spec:
       # The product default is Removed; this rig wants the Playground, so we
       # opt in.
       managementState: Managed
-    modelregistry:
+    # v3 replaces the v2 `modelregistry` component with `aiHub` (the model
+    # catalog/registry); instancesNamespace hosts the registry resources.
+    aiHub:
       managementState: Managed
-      registriesNamespace: rhoai-model-registries
+      instancesNamespace: rhoai-model-registries
     ray:
       managementState: Managed
     trainer:
       managementState: Managed
-    # Training Operator v1 is obsolete in RHOAI 3.6 — the DSC webhook rejects
-    # Managed ("Use Trainer v2 instead"). Trainer (v2) above stays Managed.
-    trainingoperator:
-      managementState: Removed
+    # v3 has no `trainingoperator` component; Trainer (v2) above is the only
+    # supported path (Training Operator v1 is rejected as Managed by the
+    # 3.6 webhook).
     trustyai:
       eval:
         lmeval:

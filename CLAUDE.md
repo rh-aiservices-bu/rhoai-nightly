@@ -97,6 +97,7 @@ rhoai-nightly/
 │       ├── connectivity-link-instance/  # Connectivity Link config
 │       ├── maas-instance/               # MaaS Helm chart (PostgreSQL+PVC, Gateway)
 │       ├── maas-observability/          # MaaS observability (TelemetryPolicy + Istio Telemetry)
+│       ├── maas-gateway/                # Declarative maas-default-gateway (Praxis AI Gateway, OCP5)
 │       ├── evalhub/                     # EvalHub + MLflow + DSPA (make evalhub)
 │       ├── external-secrets-instance/   # External Secrets instance config
 │       └── maas-models/                # MaaS model manifests (kustomize)
@@ -528,11 +529,10 @@ MaaS enables API key management, subscriptions, and rate limiting for LLM infere
 
 MaaS has three layers:
 
-1. **GitOps (Helm chart)** - `components/instances/maas-instance/chart/`
+1. **GitOps** - PostgreSQL from the Helm chart `components/instances/maas-instance/chart/`; the Gateway is declarative GitOps at `components/instances/maas-gateway/` (`instance-maas-gateway` Application, GatewayClass `data-science-gateway-class`)
    - PostgreSQL deployment with 20Gi PVC (size/storageClassName configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName`; empty storageClassName = cluster default)
    - PostgreSQL Service
-   - GatewayClass `openshift-default`
-   - Gateway `maas-default-gateway` (LoadBalancer with cluster-specific hostname)
+   - The chart's GatewayClass `openshift-default` + Gateway `maas-default-gateway` (LoadBalancer with cluster-specific hostname) templates are the legacy path — superseded on OCP5/Praxis nightlies by the declarative Gateway
 
 2. **Imperative (install-maas.sh)** - Things that can't be in git:
    - PostgreSQL secrets (`postgres-creds`, `maas-db-config`) — generated password
@@ -642,7 +642,7 @@ Observability lights up the RHOAI 3.x Observability dashboard (request rate, suc
 
 **Installed separately from MaaS.** `install-maas.sh` used to call `install-observability.sh` as a final phase, but that coupling was removed. The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack, NodeMetrics) puts substantial memory pressure on the control plane — it now has its own entrypoint with a settle-gate that refuses to fire if masters are >=80% memory (override with `SETTLE_GATE_MASTER_MEM_MAX`) or the cluster isn't otherwise healthy. Run `make observability` when the cluster is ready.
 
-**Dashboard visibility:** `components/instances/rhoai-instance/base/odh-dashboard-config.yaml` sets `spec.dashboardConfig.observabilityDashboard: true` so the **Observability** nav item appears in the RHOAI console. This requires cluster-admin (or equivalent dashboard admin) permissions to see — non-admin users will NOT see the nav item even when the flag is true.
+**Dashboard visibility:** On RHOAI 3.6 the dashboard operator auto-detects the Perses service (`data-science-perses:8080` in `redhat-ods-monitoring`) and wires the `/perses` proxy itself (Dashboard CR condition `ObservabilityAvailable=True`, reason `Deployed`). The OdhDashboardConfig feature-flag map no longer carries these flags — deprecated keys are CEL-rejected and the map is pruned to operator-written overrides. Viewing the Observability tab still requires cluster-admin (or equivalent dashboard admin) permissions.
 
 **Dashboard backend (Perses):** The Observability tab proxies to a Perses Service in `redhat-ods-monitoring` on port 8080. The RHOAI operator's Monitoring controller owns the Perses lifecycle end-to-end — it runs `deployPerses`, `deployPersesTempoIntegration`, `deployPersesPrometheusIntegration`, `deployOpenTelemetryCollector`, and `deployNodeMetricsEndpoint` on every reconcile, creating the Perses CR (named `data-science-perses`), its datasources, the Tempo integration, the OTel collector, the node-metrics endpoint, and the per-RHOAI `PersesDashboard` resources automatically.
 
@@ -1076,6 +1076,7 @@ oc get mcp  # MachineConfigPool status
 | `components/instances/*/kustomization.yaml` | Operator instance configurations |
 | `components/instances/maas-instance/chart/` | MaaS Helm chart (PostgreSQL + PVC, Gateway) |
 | `components/instances/maas-observability/base/` | MaaS observability GitOps manifests (TelemetryPolicy, Istio Telemetry) |
+| `components/instances/maas-gateway/` | Declarative MaaS Gateway on OCP5/Praxis (replaces the legacy chart's Gateway) |
 | `bootstrap/cluster-monitoring-config/` | UWM ConfigMap applied by `scripts/enable-uwm.sh` during `make infra` |
 | `scripts/compare-builds.sh` | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift) |
 | `scripts/cleanup-stale-projects.sh` | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`) |

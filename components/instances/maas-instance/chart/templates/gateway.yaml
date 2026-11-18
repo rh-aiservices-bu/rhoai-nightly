@@ -1,3 +1,5 @@
+# On OCP5/Praxis nightlies this Gateway is superseded by
+# components/instances/maas-gateway/ (instance-maas-gateway Application).
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:

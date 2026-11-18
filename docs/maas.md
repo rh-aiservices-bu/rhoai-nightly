@@ -13,7 +13,7 @@ separate, deliberate steps.
 | Component | Managed by | Description |
 |-----------|------------|-------------|
 | PostgreSQL | Helm chart (ArgoCD) | API-key storage. 20Gi PVC — size/`storageClassName` configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName` (empty = cluster default). |
-| Gateway + GatewayClass | Helm chart (ArgoCD) | LoadBalancer gateway for MaaS traffic. |
+| Gateway + GatewayClass | GitOps: `components/instances/maas-gateway/` (`instance-maas-gateway`) | LoadBalancer gateway for MaaS traffic. OCP5/Praxis owner (GatewayClass `data-science-gateway-class`); the Helm chart's Gateway/GatewayClass templates are the legacy path. |
 | PostgreSQL secrets | `install-maas.sh` | Generated password, DB connection URL. |
 | Authorino SSL | `install-maas.sh` | Env vars for TLS trust. |
 | maas-api, maas-controller | RHOAI operator | Deployed automatically when the DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; `kserve.modelsAsService` on 3.5). |
@@ -28,7 +28,9 @@ make maas
 ```
 
 Auto-detects the cluster domain and TLS cert name, creates the PostgreSQL secrets,
-deploys the Helm chart via ArgoCD (Gateway, GatewayClass, PostgreSQL + 20Gi PVC), and
+deploys the Helm chart via ArgoCD (PostgreSQL + 20Gi PVC; the chart's
+Gateway/GatewayClass templates are the legacy path — the live Gateway comes from
+`components/instances/maas-gateway/` via `instance-maas-gateway`), and
 configures Authorino. ELB DNS propagation can take **2–5 minutes** after install.
 
 > `make maas` does **not** install observability. The observability cascade (Perses,
@@ -108,10 +110,10 @@ prevents the cascade from tipping a stressed control plane into OOM.
 > resized later) — see [Provision a cluster](demo-env.md#1-order-an-aws-openshift-environment).
 
 Observability lights up the RHOAI 3.x **Observability dashboard** (request rate,
-success rate, GPU/CPU/memory, per-subscription usage). The nav item is set by
-`components/instances/rhoai-instance/base/odh-dashboard-config.yaml`
-(`observabilityDashboard: true`) and is visible only to dashboard admins
-(cluster-admin); non-admins won't see it.
+success rate, GPU/CPU/memory, per-subscription usage). On RHOAI 3.6 the
+dashboard operator auto-detects the Perses service and wires the `/perses`
+proxy itself (see the wiring check below); the tab is visible only to
+dashboard admins (cluster-admin); non-admins won't see it.
 
 > **Verify the dashboard wiring.** Perses pods Running is not enough on its own;
 > confirm the Dashboard CR reports `ObservabilityAvailable=True` (reason

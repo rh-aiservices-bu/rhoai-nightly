@@ -64,6 +64,15 @@ spec:
               name: instance-rhoai
               path: components/instances/rhoai-instance/overlays/maas
               namespace: openshift-gitops
+          # Static GitOps owner of the `maas-default-gateway` Gateway for the
+          # Praxis AI Gateway path — NOT created by install-maas.sh (unlike
+          # instance-maas/instance-maas-observability, which are script-created).
+          # Manifests live in components/instances/maas-gateway/.
+          - cluster: local
+            values:
+              name: instance-maas-gateway
+              path: components/instances/maas-gateway
+              namespace: openshift-gitops
   template:
     metadata:
       name: "{{values.name}}"

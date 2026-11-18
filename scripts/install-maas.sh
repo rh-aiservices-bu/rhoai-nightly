@@ -4,16 +4,16 @@
 #
 # This script handles the imperative parts of MaaS setup:
 #   - PostgreSQL secrets (generated password)
-#   - ArgoCD Application for Helm chart (Gateway, GatewayClass, PostgreSQL)
-#   - Authorino SSL env vars
+#   - ArgoCD Application for Helm chart (PostgreSQL)
 #
-# The Helm chart (components/instances/maas-instance/chart/) manages:
-#   - PostgreSQL deployment and service
-#   - GatewayClass and Gateway (with cluster-specific values)
+# The Helm chart (components/instances/maas-instance/chart/) deploys PostgreSQL
+# (and optionally the legacy Gateway/GatewayClass when gateway.enabled=true).
+# The MaaS Gateway is declarative GitOps at components/instances/maas-gateway/
+# (Application instance-maas-gateway, GatewayClass data-science-gateway-class).
+# Authorino SSL configuration applies only when a legacy Authorino stack exists.
 #
 # Prerequisites:
 #   - RHOAI operator installed and DataScienceCluster created
-#   - Authorino deployed in kuadrant-system namespace
 #   - ArgoCD running with at least one synced application
 #
 # Usage:
@@ -59,8 +59,10 @@ Options:
   --dry-run   Preview without applying
   -h, --help  Show this help message
 
-install-maas.sh installs only the MaaS platform (Postgres+PVC, Gateway,
-Authorino SSL, ArgoCD Application pinned to the no-cascade 'maas' overlay).
+install-maas.sh installs only the MaaS platform (PostgreSQL secrets, ArgoCD
+Application for the PostgreSQL chart). The Gateway is declarative GitOps at
+components/instances/maas-gateway/ (instance-maas-gateway Application).
+Authorino SSL is configured only when a legacy Authorino stack exists.
 
 The MaaS Observability dashboard backend (Perses, Tempo, OTel, ServiceMonitors,
 TelemetryPolicy) is no longer installed as part of 'make maas'. That cascade is
@@ -119,18 +121,18 @@ else
     log_info "${MAAS_FIELD} managementState: Managed"
 fi
 
-# Check Authorino
-oc get authorino authorino -n kuadrant-system &>/dev/null || { log_error "Authorino not found in kuadrant-system"; exit 1; }
-log_info "Authorino found in kuadrant-system"
+# Check Authorino — optional. Legacy Kuadrant/Authorino stacks carry it in
+# kuadrant-system; on OCP5/Praxis nightlies the gateway auth path is handled
+# by the Praxis AI Gateway and no Authorino exists.
+if oc get authorino authorino -n kuadrant-system &>/dev/null; then
+    log_info "Authorino found in kuadrant-system — legacy Authorino auth mode applies"
+else
+    log_info "Authorino not present in kuadrant-system — Praxis gateway auth path in use"
+fi
 
 # Detect cluster domain
 CLUSTER_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
 log_info "Cluster domain: ${CLUSTER_DOMAIN}"
-
-# Detect TLS certificate name
-CERT_NAME=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate.name}' 2>/dev/null)
-[ -z "$CERT_NAME" ] && CERT_NAME="router-certs-default"
-log_info "TLS certificate: ${CERT_NAME}"
 
 # Detect repo URL and branch from existing ArgoCD apps
 REPO_URL="${GITOPS_REPO_URL:-$(oc get application.argoproj.io/instance-rhoai -n openshift-gitops -o jsonpath='{.spec.source.repoURL}' 2>/dev/null || echo "")}"
@@ -211,8 +213,6 @@ spec:
     path: components/instances/maas-instance/chart
     helm:
       values: |
-        clusterDomain: ${CLUSTER_DOMAIN}
-        certName: ${CERT_NAME}
         namespace: ${NAMESPACE}
   destination:
     server: https://kubernetes.default.svc
@@ -261,20 +261,24 @@ else
 fi
 
 # =============================================================================
-# Phase 4: Configure Authorino SSL env vars
+# Phase 4: Configure Authorino SSL env vars (legacy stack only)
 # =============================================================================
 log_step "Phase 4: Configure Authorino SSL env vars"
 
-EXISTING_ENVS=$(oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null)
-
-if echo "$EXISTING_ENVS" | grep -q "SSL_CERT_FILE"; then
-    log_info "Authorino SSL already configured, skipping"
+if ! oc get deployment authorino -n kuadrant-system &>/dev/null; then
+    log_info "No Authorino deployment in kuadrant-system — skipping SSL configuration (Praxis gateway auth path in use)"
 else
-    run_cmd oc -n kuadrant-system set env deployment/authorino \
-      SSL_CERT_FILE=/etc/ssl/certs/openshift-service-ca/service-ca-bundle.crt \
-      REQUESTS_CA_BUNDLE=/etc/ssl/certs/openshift-service-ca/service-ca-bundle.crt
+    EXISTING_ENVS=$(oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' 2>/dev/null || true)
 
-    log_info "Authorino SSL configured"
+    if echo "$EXISTING_ENVS" | grep -q "SSL_CERT_FILE"; then
+        log_info "Authorino SSL already configured, skipping"
+    else
+        run_cmd oc -n kuadrant-system set env deployment/authorino \
+          SSL_CERT_FILE=/etc/ssl/certs/openshift-service-ca/service-ca-bundle.crt \
+          REQUESTS_CA_BUNDLE=/etc/ssl/certs/openshift-service-ca/service-ca-bundle.crt
+
+        log_info "Authorino SSL configured"
+    fi
 fi
 
 # =============================================================================
@@ -338,6 +342,9 @@ else
     log_warn "maas-api deployment not found after ${TIMEOUT}s. The operator may still be reconciling."
 fi
 
+# =============================================================================
+# §E1: Legacy Kuadrant AuthPolicy guard — skipped when the AuthPolicy CRD is absent
+# =============================================================================
 # Kuadrant stale-provider guard (docs/workarounds.md §E1).
 # On a fresh install the kuadrant-operator routinely starts BEFORE the DSC has
 # created istiod, caches "Gateway API provider is not installed", and never
@@ -364,6 +371,13 @@ find_maas_authpolicy() {
         jq -r '[.items[] | select(.spec.targetRef.name == "maas-default-gateway")] | first | .metadata.name // empty' \
         2>/dev/null || echo ""
 }
+
+# The whole guard is a legacy-Kuadrant concern: OCP5/Praxis nightlies have no
+# AuthPolicy CRD at all, so skip cleanly instead of burning a 120s wait on a
+# resource that can never appear.
+if ! oc get crd authpolicies.kuadrant.io &>/dev/null; then
+    log_info "No Kuadrant AuthPolicy CRD — skipping §E1 guard (Praxis gateway auth path in use)"
+else
 AP_WAIT=0
 AP_NAME=""
 AP_ACCEPTED=""
@@ -409,6 +423,7 @@ if [ "$AP_ACCEPTED" = "False" ] && echo "$AP_MSG" | grep -qi "restart Kuadrant O
     done
     [ "$AP_ACCEPTED" != "True" ] && log_warn "AuthPolicy still not Accepted after restart — see docs/workarounds.md §E1"
 fi
+fi # end §E1 guard (legacy Kuadrant only)
 
 # Check Gateway status
 GATEWAY_STATUS=$(oc get gateway maas-default-gateway -n openshift-ingress -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || echo "Unknown")

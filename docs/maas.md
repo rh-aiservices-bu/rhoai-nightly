@@ -1,9 +1,10 @@
 # MaaS (Models as a Service)
 
 MaaS provides API-key management, subscriptions, and rate limiting for LLM inference
-services on RHOAI. It uses a hybrid GitOps + imperative approach: a Helm chart for the
-cluster-specific Gateway and PostgreSQL, plus `install-maas.sh` for the bits that can't
-be declarative (generated secrets, Authorino SSL env vars).
+services on RHOAI. It uses a hybrid GitOps + imperative approach: a declarative Gateway
+(`components/instances/maas-gateway/`), a Helm chart for PostgreSQL, plus
+`install-maas.sh` for the bits that can't be declarative (generated secrets; Authorino
+SSL only when a legacy Authorino stack exists).
 
 `make all` installs the MaaS **platform** automatically. Models and observability are
 separate, deliberate steps.
@@ -15,11 +16,22 @@ separate, deliberate steps.
 | PostgreSQL | Helm chart (ArgoCD) | API-key storage. 20Gi PVC — size/`storageClassName` configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName` (empty = cluster default). |
 | Gateway + GatewayClass | GitOps: `components/instances/maas-gateway/` (`instance-maas-gateway`) | LoadBalancer gateway for MaaS traffic. OCP5/Praxis owner (GatewayClass `data-science-gateway-class`); the Helm chart's Gateway/GatewayClass templates are the legacy path. |
 | PostgreSQL secrets | `install-maas.sh` | Generated password, DB connection URL. |
-| Authorino SSL | `install-maas.sh` | Env vars for TLS trust. |
+| Authorino SSL | `install-maas.sh` | Env vars for TLS trust. Legacy Kuadrant/Authorino stacks only — skipped on OCP5/Praxis nightlies, where the Praxis gateway handles auth. |
 | maas-api, maas-controller | RHOAI operator | Deployed automatically when the DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; `kserve.modelsAsService` on 3.5). |
 | UWM | `make uwm` (part of `make infra`) | Prerequisite for scraping MaaS metrics. |
 | TelemetryPolicy + Istio Telemetry | `instance-maas-observability` (ArgoCD) | Per-subscription/model/user metric labels. Added by `make observability`. |
 | Observability cascade (Kuadrant, ServiceMonitors, Perses/Tempo/OTel) | `make observability` (separate, settle-gated) | Lights up the RHOAI Observability dashboard. |
+
+Legacy OCP 4.x opt-in for the chart's Gateway templates (ArgoCD Application
+`helm.values`; `install-maas.sh` injects only `namespace`, so these must be
+supplied by whoever creates the Application):
+
+```yaml
+gateway:
+  enabled: true
+  clusterDomain: apps.<cluster-domain>
+  certName: router-certs-default   # optional; override as needed
+```
 
 ## Install the platform
 
@@ -27,11 +39,12 @@ separate, deliberate steps.
 make maas
 ```
 
-Auto-detects the cluster domain and TLS cert name, creates the PostgreSQL secrets,
+Auto-detects the cluster domain, creates the PostgreSQL secrets,
 deploys the Helm chart via ArgoCD (PostgreSQL + 20Gi PVC; the chart's
 Gateway/GatewayClass templates are the legacy path — the live Gateway comes from
-`components/instances/maas-gateway/` via `instance-maas-gateway`), and
-configures Authorino. ELB DNS propagation can take **2–5 minutes** after install.
+`components/instances/maas-gateway/` via `instance-maas-gateway`), and configures
+Authorino SSL only when a legacy Authorino stack exists. ELB DNS propagation can
+take **2–5 minutes** after install.
 
 > `make maas` does **not** install observability. The observability cascade (Perses,
 > Tempo, OTel, MonitoringStack) puts significant memory pressure on the control plane,

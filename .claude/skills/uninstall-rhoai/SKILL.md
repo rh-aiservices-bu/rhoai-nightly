@@ -84,7 +84,7 @@ Based on the results, categorize what's on the cluster into:
 **RHOAI-installed components** (things we need to remove):
 - ArgoCD Applications and ApplicationSets (from `make deploy`)
 - Operators we installed: NFD, NVIDIA, RHOAI, Service Mesh, Kueue, JobSet, LeaderWorkerSet, Connectivity Link, NFS Provisioner, External Secrets, cert-manager
-- OLM dependency operators pulled in automatically: authorino, dns-operator, limitador, kuadrant
+- OLM dependency operators pulled in automatically: authorino, dns-operator, limitador, kuadrant (legacy OCP 4.x stacks only — absent on OCP5/Praxis nightlies)
 - Operator instances: DataScienceCluster, ClusterPolicy, NodeFeatureDiscovery, etc.
 - Custom CatalogSources (rhoai-catalog-nightly)
 - Managed namespaces: redhat-ods-*, nvidia-gpu-operator, openshift-nfd, etc.
@@ -170,7 +170,7 @@ oc get namespaces --no-headers 2>/dev/null | grep -E 'redhat-ods|rhoai|nvidia|nf
 If anything remains that should have been cleaned up, report it clearly and offer to manually remove it.
 
 **Common leftovers to watch for:**
-- CSVs in `openshift-operators` for dependency operators (authorino, dns, limitador, kuadrant) — `clean.sh` only targets Service Mesh CSVs in openshift-operators, not all of them
+- CSVs in `openshift-operators` for dependency operators (authorino, dns, limitador, kuadrant — legacy OCP 4.x stacks only) — `clean.sh` only targets Service Mesh CSVs in openshift-operators, not all of them
 - External-secrets-operator CSV — may not be covered if it was installed outside ArgoCD
 - NFS provisioner CSV — may linger in openshift-operators
 

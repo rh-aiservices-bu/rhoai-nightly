@@ -31,12 +31,14 @@ make clean DRY_RUN=true
 ```bash
 make observability-uninstall      # reverse-flip instance-rhoai overlay; cascade tears down
 make maas-model-delete MODEL=all  # remove all deployed models
-make maas-uninstall               # cascade-delete Gateway, PostgreSQL, secrets
+make maas-uninstall               # cascade-delete PostgreSQL, secrets
 ```
 
 `make maas-uninstall` deletes the `instance-maas` ArgoCD Application (which
-cascade-deletes its Helm resources), removes the PostgreSQL secrets and Authorino SSL
-env vars, and cleans up stale DNS records.
+cascade-deletes its Helm resources — the PostgreSQL deployment/service/PVC only;
+the Gateway is declarative, owned by `instance-maas-gateway`), removes the
+PostgreSQL secrets and the Authorino SSL env vars (legacy Kuadrant/Authorino
+stacks only; skipped otherwise), and cleans up stale DNS records.
 
 ## Eval Hub
 

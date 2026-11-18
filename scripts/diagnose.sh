@@ -574,13 +574,12 @@ if [[ -n "$MAAS_APP" ]]; then
         fi
     fi
 
-    # Kuadrant policy enforcement.
-    # Added 2026-07-29: every structural MaaS check passed (gateway Programmed,
-    # maas-api Running, Authorino Running, health 200) while API-key creation
-    # returned 500, because the Kuadrant operator had cached "no Gateway API
-    # provider" at startup, left AuthPolicy Accepted=False, and generated ZERO
-    # AuthConfigs — so Authorino enforced nothing. Pods being Running says
-    # nothing about whether policy is actually attached.
+    # All of the AuthPolicy/AuthConfig/Authorino-SSL checks below are legacy
+    # Kuadrant-stack concerns. On the OCP5/Praxis gateway there is no Authorino
+    # in kuadrant-system — the Praxis gateway handles auth instead.
+    if ! oc get deployment authorino -n kuadrant-system &>/dev/null; then
+        info "AuthPolicy" "Authorino not present in kuadrant-system — Praxis gateway auth path in use"
+    else
     AP_TOTAL=$(oc get authpolicy -A --no-headers 2>/dev/null | grep -cv "^$" || echo 0)
     if [[ "$AP_TOTAL" -gt 0 ]]; then
         AP_BAD=$(oc get authpolicy -A -o json 2>/dev/null | jq -r '
@@ -618,6 +617,7 @@ if [[ -n "$MAAS_APP" ]]; then
         warn "Authorino SSL" "Not configured"
         recommend "Run: make maas (configures Authorino SSL)"
     fi
+    fi # end legacy Authorino-stack checks
 
     # Models
     MODEL_COUNT=$(oc get llminferenceservice -n llm --no-headers 2>/dev/null | wc -l | tr -d ' ')

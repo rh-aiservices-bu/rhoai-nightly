@@ -10,7 +10,7 @@ allowed-tools: Bash(make *), Bash(oc *), Bash(mkdir *), Bash(tail *), Bash(echo 
 Install Models as a Service on an OpenShift cluster with RHOAI. Handles the full MaaS lifecycle:
 
 1. Verify RHOAI is installed (offer to install if not)
-2. Install MaaS platform only (`make maas`) — Postgres+PVC, Gateway, Authorino SSL
+2. Install MaaS platform only (`make maas`) — DB secrets + PostgreSQL chart app; the Gateway is declarative (`instance-maas-gateway`)
 3. Deploy a GPU-appropriate model (`make maas-model` — autodetects)
 4. Verify the installation (`make maas-verify`)
 5. Install observability as a separate, settle-gated step (`make observability`) — default on, opt out with `--skip-observability`
@@ -88,7 +88,7 @@ oc get nodes
 oc get csv -n redhat-ods-operator 2>/dev/null | grep rhods || echo "No RHOAI CSV"
 oc get datasciencecluster default-dsc -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "No DSC or not Ready"
 oc get application.argoproj.io/instance-rhoai -n openshift-gitops -o jsonpath='{.spec.source.path}' 2>/dev/null || echo "No instance-rhoai"
-oc get authorino authorino -n kuadrant-system 2>/dev/null || echo "No Authorino"
+oc get authorino authorino -n kuadrant-system 2>/dev/null || echo "No Authorino (normal on OCP5/Praxis nightlies — Praxis gateway auth path)"
 oc get pods -n redhat-ods-applications 2>/dev/null | grep -E 'maas-api|postgres' || echo "No MaaS components"
 oc get pvc postgres-data -n redhat-ods-applications 2>/dev/null || echo "No postgres PVC"
 oc get llminferenceservice -A 2>/dev/null || echo "No models deployed"
@@ -114,10 +114,10 @@ make maas 2>&1 | tee $LOGDIR/phase1-platform.log
 ```
 
 `install-maas.sh` phases (no longer includes observability):
-1. Preflight (RHOAI CSV, DSC, Authorino, cluster domain)
+1. Preflight (RHOAI CSV, DSC, Authorino when a legacy stack is present, cluster domain)
 2. PostgreSQL secrets
-3. ArgoCD Application (Helm chart — PostgreSQL+PVC + Gateway+GatewayClass)
-4. Authorino SSL env vars
+3. ArgoCD Application (Helm chart — PostgreSQL+PVC; the Gateway is declarative via `instance-maas-gateway`)
+4. Authorino SSL env vars (skipped when no legacy Authorino stack exists)
 5. Wait for maas-api Ready, report Gateway programmed state
 
 Monitor:
@@ -180,7 +180,7 @@ make maas-verify 2>&1 | tee $LOGDIR/phase3-verify.log
 ```
 
 Six phases:
-1. Infrastructure health (Gateway, postgres, maas-api, maas-controller, Authorino, health endpoint)
+1. Infrastructure health (Gateway, postgres, maas-api, maas-controller, Authorino when the legacy stack is present, health endpoint)
 2. Deploys a temporary simulator model + MaaS resources
 3. API verification (create API key, list models, test inference)
 4. Auth enforcement (401 without token, 401 with invalid token)

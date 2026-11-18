@@ -1,6 +1,18 @@
-clusterDomain: ""              # Required — set by install-maas.sh
-certName: router-certs-default # Overridable, auto-detected by script
 namespace: redhat-ods-applications
+
+# Legacy Gateway resources. On OCP5/Praxis nightlies the Gateway is declarative
+# GitOps at components/instances/maas-gateway/ (Application instance-maas-gateway,
+# GatewayClass data-science-gateway-class); enable this only for legacy OCP 4.x
+# installs where the openshift-default GatewayClass exists.
+gateway:
+  enabled: false
+  clusterDomain: ""              # Required when enabled — must be supplied by whoever
+                                 # creates the Application (install-maas.sh injects only `namespace`)
+  certName: router-certs-default # Optional override; not auto-detected
+  # Legacy OCP 4.x opt-in (ArgoCD Application helm.values):
+  #   gateway.enabled: true
+  #   gateway.clusterDomain: apps.<cluster-domain>
+  #   gateway.certName: router-certs-default   # optional; override as needed
 
 postgres:
   persistence:

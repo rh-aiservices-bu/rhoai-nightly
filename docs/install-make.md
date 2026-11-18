@@ -36,7 +36,7 @@ make
 | 3 | `gitops` | Installs the GitOps operator + ArgoCD instance. |
 | 4 | `deploy` | Creates the ArgoCD apps / ApplicationSets (auto-sync **disabled**). |
 | 5 | `sync` | Syncs every app one-by-one in dependency order, enabling auto-sync as each becomes healthy. |
-| 6 | `maas` | Installs the MaaS **platform only** (PostgreSQL + PVC, Gateway, Authorino TLS). |
+| 6 | `maas` | Installs the MaaS **platform only** (PostgreSQL + PVC; the Gateway is declarative via `instance-maas-gateway`; Authorino TLS applies to legacy stacks only). |
 
 > `make all` installs the MaaS **platform**. It does **not** deploy a model and does
 > **not** install observability — those are separate, deliberate steps

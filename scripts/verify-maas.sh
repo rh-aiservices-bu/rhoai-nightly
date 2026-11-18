@@ -177,12 +177,17 @@ else
     log_fail "maas-controller not ready"
 fi
 
-# Kuadrant/Authorino
-AUTHORINO_READY=$(oc get deployment authorino -n kuadrant-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-if [ "${AUTHORINO_READY:-0}" -ge 1 ]; then
-    log_pass "Authorino is running"
+# Authorino is part of the legacy Kuadrant stack only; the Praxis gateway auth
+# path runs without it.
+if ! oc get deployment authorino -n kuadrant-system &>/dev/null; then
+    log_warn "Authorino not present in kuadrant-system — Praxis gateway auth path in use, skipping Authorino check"
 else
-    log_fail "Authorino not ready"
+    AUTHORINO_READY=$(oc get deployment authorino -n kuadrant-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    if [ "${AUTHORINO_READY:-0}" -ge 1 ]; then
+        log_pass "Authorino is running"
+    else
+        log_fail "Authorino not ready"
+    fi
 fi
 
 # MaaS DSC readiness. The condition was renamed across 3.5 nightlies: newer

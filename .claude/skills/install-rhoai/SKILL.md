@@ -15,7 +15,7 @@ Parse `$ARGUMENTS` for optional flags:
 - `--branch <branch>` — git branch for ArgoCD to sync from (sets `GITOPS_BRANCH`). If not specified, auto-detect (see Branch Detection).
 - `--skip-gpu` — skip GPU MachineSet creation (`make gpu`). Leaves `make maas-model` autodetect to pick `simulator`.
 - `--skip-cpu` — skip CPU MachineSet creation (`make cpu`).
-- `--skip-maas` — skip Phase 10 (`make maas` + `make maas-model` + `make maas-verify`). Implies `--skip-observability`. Note the DSC still has `modelsAsService: Managed` via `overlays/maas`, so the operator keeps retrying MaaS components until a Gateway exists; add MaaS later with `/install-maas`.
+- `--skip-maas` — skip Phase 10 (`make maas` + `make maas-model` + `make maas-verify`). Implies `--skip-observability`. Note the DSC still has `aigateway.modelsAsAService: Managed` via `overlays/maas`, so the operator keeps retrying MaaS components until a Gateway exists; add MaaS later with `/install-maas`.
 - `--skip-observability` — skip Phase 11 (`make observability`). Use on clusters with small or already-loaded masters: the monitoring cascade is heavy on the control plane (the settle-gate still refuses to fire above 80% master memory either way).
 - `--force` — run all phases even if they appear already completed.
 
@@ -227,7 +227,7 @@ Verify: all apps Synced + Healthy; `oc get csv -A | grep -v Succeeded` empty or 
 
 **Runs by default** (no prompt). **Skip if**: `--skip-maas`.
 
-`make maas` installs the MaaS platform only (Postgres+PVC, Gateway, Authorino SSL). Observability is no longer installed as part of this phase — see Phase 11.
+`make maas` installs the MaaS platform only (DB secrets, PostgreSQL chart app; the Gateway is declarative via `instance-maas-gateway`, and Authorino SSL is configured only when a legacy Authorino stack exists). Observability is no longer installed as part of this phase — see Phase 11.
 
 Run: `make maas 2>&1 | tee $LOGDIR/phase10-maas.log`. Expect 3-5 min.
 
@@ -259,7 +259,7 @@ Quick smoke test: `make maas-verify 2>&1 | tee $LOGDIR/phase10-maas-verify.log` 
 Run: `make observability 2>&1 | tee $LOGDIR/phase11-observability.log`.
 
 The settle-gate will **refuse** if any of the following are true:
-- Required operator CSVs (rhods, COO, opentelemetry, authorino, limitador) are not Succeeded; servicemeshoperator3 is required only when its Subscription exists (on OCP 4.20.32+ istiod is run by the ingress operator's embedded sail library with no OLM operator — the gate checks istiod health instead)
+- Required operator CSVs (rhods, COO, opentelemetry) are not Succeeded; the settle gate still requires the authorino-operator and limitador-operator CSVs unconditionally, so `make observability` aborts without them even on Praxis nightlies (conditioning the gate is tracked as a follow-up); servicemeshoperator3 is required only when its Subscription exists (on OCP 4.20.32+ istiod is run by the ingress operator's embedded sail library with no OLM operator — the gate checks istiod health instead)
 - DSC or DSCI Ready != True
 - Any pod in redhat-ods-applications / kuadrant-system / openshift-monitoring is non-terminal
 - etcd ClusterOperator is Degraded

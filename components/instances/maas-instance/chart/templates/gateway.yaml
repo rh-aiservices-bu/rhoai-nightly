@@ -1,5 +1,6 @@
 # On OCP5/Praxis nightlies this Gateway is superseded by
 # components/instances/maas-gateway/ (instance-maas-gateway Application).
+{{- if .Values.gateway.enabled }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -23,14 +24,14 @@ spec:
   gatewayClassName: openshift-default
   listeners:
     - name: http
-      hostname: "maas.{{ required "clusterDomain is required" .Values.clusterDomain }}"
+      hostname: "maas.{{ required "gateway.clusterDomain is required" .Values.gateway.clusterDomain }}"
       port: 80
       protocol: HTTP
       allowedRoutes:
         namespaces:
           from: All
     - name: https
-      hostname: "maas.{{ .Values.clusterDomain }}"
+      hostname: "maas.{{ .Values.gateway.clusterDomain }}"
       port: 443
       protocol: HTTPS
       allowedRoutes:
@@ -40,5 +41,6 @@ spec:
         certificateRefs:
           - group: ""
             kind: Secret
-            name: {{ .Values.certName }}
+            name: {{ .Values.gateway.certName }}
         mode: Terminate
+{{- end }}

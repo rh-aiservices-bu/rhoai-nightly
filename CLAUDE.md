@@ -31,7 +31,7 @@ rhoai-nightly/
 │   ├── install-gitops.sh                # Install GitOps operator + ArgoCD
 │   ├── deploy-apps.sh                   # Deploy root app (triggers GitOps)
 │   ├── enable-uwm.sh                    # Enable User Workload Monitoring (part of `make infra`)
-│   ├── install-maas.sh                  # Install MaaS platform ONLY (secrets, ArgoCD app, Authorino) — observability is separate
+│   ├── install-maas.sh                  # Install MaaS platform ONLY (DB secrets, ArgoCD app) — observability is separate
 │   ├── uninstall-maas.sh               # Remove MaaS platform
 │   ├── install-observability.sh        # Install/uninstall MaaS observability (Kuadrant, ServiceMonitors; requires UWM from make infra)
 │   ├── install-evalhub.sh              # Install/uninstall eval-hub via dedicated instance-evalhub ArgoCD Application
@@ -231,8 +231,9 @@ make dedicate-masters # Remove worker role from master nodes
 ### MaaS (Models as a Service)
 
 ```bash
-make maas            # Install MaaS platform ONLY (secrets, ArgoCD app, Authorino SSL).
-                     # Does NOT install the observability cascade — run `make observability`
+make maas            # Install MaaS platform ONLY (DB secrets + instance-maas app for PostgreSQL).
+                     # The Gateway is declarative (instance-maas-gateway app). Does NOT install
+                     # the observability cascade — run `make observability`
                      # separately once the cluster is healthy.
 make maas-model      # Deploy models (default: auto — inspects cluster GPU VRAM)
                      # Autodetect rules: no GPU -> simulator; GPU VRAM >=40Gi -> gpt-oss-20b;
@@ -242,7 +243,7 @@ make maas-model      # Deploy models (default: auto — inspects cluster GPU VRA
 make maas-model-status # Show deployed model status
 make maas-model-delete # Delete models (same MODEL= or MAAS_MODELS logic)
 make maas-verify     # Full end-to-end verification (deploys temp model, tests, cleans up)
-make maas-uninstall  # Remove MaaS platform (deletes ArgoCD app + secrets + Authorino SSL)
+make maas-uninstall  # Remove MaaS platform (deletes ArgoCD app + secrets)
 make observability   # Settle-gate → flip instance-rhoai to overlays/maas-observability
                      #   → wait for Perses/Tempo/OTel. Heavy on the control plane; refuses
                      #   if any master is >=80% memory (SETTLE_GATE_MASTER_MEM_MAX).
@@ -536,8 +537,8 @@ MaaS has three layers:
 
 2. **Imperative (install-maas.sh)** - Things that can't be in git:
    - PostgreSQL secrets (`postgres-creds`, `maas-db-config`) — generated password
-   - Authorino SSL env vars — no CR field, must `oc set env`
-   - ArgoCD Application creation — injects cluster-specific values (`clusterDomain`, `certName`, `namespace`) into Helm chart
+   - Authorino SSL env vars (legacy Kuadrant/Authorino stacks only; skipped on OCP5/Praxis nightlies) — no CR field, must `oc set env`
+   - ArgoCD Application creation — injects the `namespace` value into Helm chart (the chart's legacy Gateway values are gated off by default)
    - Does NOT install observability — that's its own operation (`make observability`)
 
 3. **Operator-managed** - Deployed automatically when DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; was `kserve.modelsAsService` on 3.5 — that field is deprecated: on 3.6.0 GA the DSC v2→v3 conversion maps a legacy `kserve.modelsAsService: Managed` onto `aigateway.modelsAsAService`, while 3.6.0-ea.2 silently ignored it):
@@ -546,17 +547,18 @@ MaaS has three layers:
 
 ### Why Helm (not Kustomize)
 
-The MaaS Gateway needs cluster-specific values (domain, TLS cert name) that vary per cluster. The instances ApplicationSet template assumes Kustomize and can't express Helm values. Instead, `install-maas.sh` creates the `instance-maas` ArgoCD Application directly with Helm source and injected values, bypassing the ApplicationSet.
+The MaaS PostgreSQL + PVC come from the Helm chart because the instances ApplicationSet template assumes Kustomize and can't express a Helm source. The chart's remaining cluster-specific values are its Gateway settings (`gateway.enabled`, `gateway.clusterDomain`), which are legacy-only — they stay gated off and the live Gateway is declarative at `components/instances/maas-gateway/`. `install-maas.sh` creates the `instance-maas` ArgoCD Application directly with a Helm source and injects only `namespace`, bypassing the ApplicationSet.
 
 ### MaaS Install Flow
 
 ```
 install-maas.sh:
-  1. Preflight: check cluster, detect domain/cert/repo/branch
+  1. Preflight: check cluster, detect domain/repo/branch
   2. Create PostgreSQL secrets (idempotent)
   3. Create instance-maas ArgoCD Application (Helm source with values)
-     → ArgoCD syncs: GatewayClass, Gateway, PostgreSQL (Deployment + PVC + Service)
-  4. Configure Authorino SSL env vars
+     → ArgoCD syncs: PostgreSQL (Deployment + PVC + Service); the chart's
+       legacy Gateway/GatewayClass templates are gated off (`gateway.enabled: false`)
+  4. Configure Authorino SSL env vars (skipped when no legacy Authorino stack exists)
   5. Validate: wait for maas-api, check health endpoint
 ```
 
@@ -570,7 +572,7 @@ and `docs/workarounds.md` §B (settle-gate row).
 
 ```
 uninstall-maas.sh:
-  1. Remove Authorino SSL env vars
+  1. Remove Authorino SSL env vars (legacy stack only; no-op on OCP5/Praxis nightlies)
   2. Delete instance-maas ArgoCD Application (cascade-deletes all Helm resources)
   3. Delete PostgreSQL secrets
   4. Clean up stale DNS records
@@ -597,7 +599,7 @@ Models are defined as kustomize manifests in `components/instances/maas-models/`
 ### MaaS Verification
 
 `verify-maas.sh` runs 6 phases:
-1. Infrastructure health (Gateway, PostgreSQL, maas-api, maas-controller, Authorino, health endpoint)
+1. Infrastructure health (Gateway, PostgreSQL, maas-api, maas-controller, Authorino when the legacy stack is present, health endpoint)
 2. Deploy temporary simulator model + MaaS resources
 3. API verification (create API key, list models, test inference)
 4. Auth enforcement (reject unauthenticated + invalid token requests)
@@ -612,7 +614,7 @@ The verify script is self-contained — it deploys its own temporary model and d
 # Check MaaS infrastructure
 oc get application.argoproj.io/instance-maas -n openshift-gitops
 oc get gateway maas-default-gateway -n openshift-ingress
-oc get gatewayclass openshift-default
+oc get gatewayclass data-science-gateway-class
 
 # Check operator-managed MaaS
 oc get modelsasservice -A
@@ -632,7 +634,7 @@ oc get pods -n llm
 curl -sk https://maas.<cluster-domain>/maas-api/health
 # 200 = healthy, 401 = auth working (unauthenticated)
 
-# Check Authorino SSL
+# Check Authorino SSL (legacy Kuadrant/Authorino stacks only; absent on OCP5/Praxis nightlies)
 oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec.containers[0].env}'
 ```
 
@@ -1081,7 +1083,7 @@ oc get mcp  # MachineConfigPool status
 | `scripts/compare-builds.sh` | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift) |
 | `scripts/cleanup-stale-projects.sh` | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`) |
 | `scripts/enable-uwm.sh` | Enable UWM (idempotent merge; --check / --dry-run modes) |
-| `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app, Authorino). Does NOT install observability |
+| `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app; Authorino SSL only when a legacy stack exists). Does NOT install observability |
 | `scripts/install-observability.sh` | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors) |
 | `scripts/uninstall-maas.sh` | MaaS uninstall (cascade delete + cleanup) |
 
@@ -1098,7 +1100,7 @@ oc get mcp  # MachineConfigPool status
 - This repository uses **GitOps** - changes are deployed by committing to git, not by running oc commands
 - Scripts in `scripts/` are **pre-GitOps only** - they run before ArgoCD is installed
 - **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `enable-uwm.sh`, and `restart-catalog.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative. `install-maas.sh`, `install-observability.sh`, and `install-evalhub.sh` are independent; none invokes another.
-- After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets/Authorino)
+- After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets; Authorino SSL applies only on legacy stacks)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
 - **Bugs are the product**: when you hit an upstream bug, the priority is root-cause + a `docs/issues/` entry (with a filing draft) — NOT inventing a workaround. Propose a workaround only if testing is blocked without it, and give it a Jira + remove-when condition
 - **Never commit secrets** - this is a public repository

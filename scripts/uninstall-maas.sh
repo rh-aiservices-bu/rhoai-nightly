@@ -3,8 +3,9 @@
 # uninstall-maas.sh - Remove MaaS resources
 #
 # This script removes:
-#   - Authorino SSL env vars
-#   - instance-maas ArgoCD Application (cascade-deletes Gateway, GatewayClass, PostgreSQL)
+#   - Authorino SSL env vars (legacy Kuadrant/Authorino stacks only; skipped otherwise)
+#   - instance-maas ArgoCD Application (cascade-deletes the PostgreSQL deployment/service/PVC;
+#     the Gateway is declarative, owned by instance-maas-gateway)
 #   - PostgreSQL secrets (not managed by Helm)
 #   - Stale DNS records from LoadBalancer
 #
@@ -146,9 +147,9 @@ log_step "Phase 5: Summary"
 log_info "========================================="
 log_info "MaaS Uninstall Summary"
 log_info "========================================="
-log_info "Removed: Authorino SSL env vars"
+log_info "Removed: Authorino SSL env vars (legacy stacks only; skipped otherwise)"
 log_info "Removed: instance-maas ArgoCD Application"
-log_info "  (cascade-deleted: Gateway, GatewayClass, PostgreSQL deployment/service)"
+log_info "  (cascade-deleted: PostgreSQL deployment/service/PVC; the Gateway is declarative, owned by instance-maas-gateway)"
 log_info "Removed: postgres-creds, maas-db-config secrets"
 log_info "Removed: stale DNS records (if any)"
 log_info ""

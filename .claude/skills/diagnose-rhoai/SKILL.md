@@ -28,10 +28,12 @@ Step 3 below (the independent sweep) is mandatory, not conditional.
 ## Scope
 
 Look at whole-cluster health, but **focus on what this repo installs**: the
-`redhat-ods-*`, `redhat-ai-gateway-infra`, `kuadrant-system`, `llm`,
+`redhat-ods-*`, `redhat-ai-gateway-infra`, `llm`,
 `models-as-a-service`, `nvidia-gpu-operator`, `openshift-nfd`,
 `openshift-gitops`, `external-secrets`, `nfs-provisioner`, `evalhub-tenant`,
-`openshift-ingress` namespaces and the operators in `openshift-operators`.
+`openshift-ingress` namespaces, the operators in `openshift-operators`, and
+`kuadrant-system` when a legacy Kuadrant stack is installed (absent on
+OCP5/Praxis nightlies).
 Platform-owned breakage elsewhere is worth *reporting* but is not ours to fix —
 say so explicitly rather than burying our signal in it.
 

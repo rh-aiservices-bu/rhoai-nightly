@@ -64,7 +64,7 @@ help:
 	@echo "  make refresh-apps - Refresh and sync all apps (one-time, keeps current sync setting)"
 	@echo ""
 	@echo "MaaS (Models as a Service):"
-	@echo "  make maas           - Install MaaS platform (PostgreSQL+PVC, Gateway, Authorino TLS)"
+	@echo "  make maas           - Install MaaS platform (DB secrets, PostgreSQL chart app; Gateway is declarative via instance-maas-gateway)"
 	@echo "                        Does NOT install the observability cascade — run 'make observability'"
 	@echo "                        separately once the cluster is healthy (settle-gate protects masters)."
 	@echo "  make maas-model [MODEL=auto] - Deploy model (auto, gpt-oss-20b, granite-tiny-gpu, simulator, all)"
@@ -269,7 +269,7 @@ dedicate-masters:
 	@echo "Master nodes are now dedicated (no longer schedulable for regular workloads)"
 	@oc get nodes
 
-# Install MaaS (PostgreSQL, Gateway, Authorino TLS)
+# Install MaaS (DB secrets, PostgreSQL chart app; the Gateway is declarative via instance-maas-gateway)
 maas:
 	@scripts/install-maas.sh
 

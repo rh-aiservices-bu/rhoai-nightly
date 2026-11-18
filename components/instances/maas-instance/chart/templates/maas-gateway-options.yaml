@@ -1,3 +1,4 @@
+{{- if .Values.gateway.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -27,3 +28,4 @@ data:
     metadata:
       annotations:
         service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+{{- end }}

@@ -257,9 +257,15 @@ spec:
         realms:
           sso:
             registrationAllowed: false
+            # Defines the realm role so the admin user's realmRoles assignment applies and the groups claim carries it.
+            roles:
+              cluster-admins: {}
             admin:
               username: keycloak-admin
               password: "${KEYCLOAK_ADMIN_PASSWORD}"
+              # Realm role becomes the token groups claim → OCP group sync → the chart's cluster-admins binding.
+              realmRoles:
+                - cluster-admins
             users:
               alice:
                 password: "${KEYCLOAK_TEST_PASSWORD}"

@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - operatorgroup.yaml
-  - rhbk-subscription.yaml
+  - catalogsource.yaml
+  - keycloak-subscription.yaml
   - cnpg-subscription.yaml

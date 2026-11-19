@@ -1,6 +1,5 @@
-# NOTE: the cloudnative-pg package is absent from this nightly's pruned
-# catalogs (see docs/known-issues.md) — channel availability still to be
-# verified once the catalogs carry it.
+# NOTE: served by the one-off filtered catalog in catalogsource.yaml;
+# channel stable-v1 exists in the catalog (unchanged).
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
@@ -10,5 +9,5 @@ spec:
   channel: stable-v1
   installPlanApproval: Automatic
   name: cloudnative-pg
-  source: certified-operators
+  source: keycloak-stack-catalog
   sourceNamespace: openshift-marketplace

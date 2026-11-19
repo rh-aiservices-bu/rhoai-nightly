@@ -1,0 +1,17 @@
+# Community upstream keycloak-operator — same k8s.keycloak.org CRD family as
+# RHBK 26 (which is a repack of it). Chosen because the `rhbk` registry repo is
+# entitlement-gated and the cluster's OpenShift pull secret rejects every rhbk
+# bundle digest ("Token rejected by upstream registry"). Swap back to RHBK
+# (package `rhbk-operator`; our filtered catalog already carries its entries)
+# if the pull secret gains RHBK entitlements.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: keycloak-operator
+  namespace: keycloak
+spec:
+  channel: fast
+  installPlanApproval: Automatic
+  name: keycloak-operator
+  source: community-operators
+  sourceNamespace: openshift-marketplace

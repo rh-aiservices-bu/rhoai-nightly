@@ -1,0 +1,17 @@
+# One-off filtered FBC catalog (rhbk-operator + cloudnative-pg) rendered from
+# the v4.22 indexes with opm (package-scoped catalog.json copies,
+# validate-passed) because OCP 5.0 GA's curated catalogs lag. DELETE this
+# catalog file when the curated v5.0 indexes carry cloudnative-pg and re-point
+# cnpg-subscription.yaml.
+# The catalog retains the rhbk-operator entries for a future RHBK swap when
+# entitlements exist; only cloudnative-pg is subscribed from it today.
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: keycloak-stack-catalog
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: quay.io/jharmison/keycloak-stack-catalog:v4.22.0
+  displayName: Keycloak Stack (filtered v4.22)
+  publisher: jharmison

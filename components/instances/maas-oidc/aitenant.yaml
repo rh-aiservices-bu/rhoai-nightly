@@ -1,0 +1,42 @@
+# OIDC wiring for MaaS-on-Praxis (Keycloak identity provider).
+#
+# The maas-controller (DSC-owned) manages spec.gateway — only spec.oidc is
+# ours, so this manifest applies with ServerSideApply and keeps the
+# controller's field manager intact. Co-managed with the controller on the
+# live object; the gateway block below must match the live spec verbatim.
+#
+# The issuer is the Keycloak realm (instance-keycloak), served over the LE
+# wildcard router cert — publicly trusted, so no DSCI trustedCABundle entry
+# is needed (private-CA IdPs 401 without it: RHOAIENG-103684).
+#
+# clientId must match the realm client whose tokens carry the right azp —
+# the gateway enforces a single-client azp==clientId constraint
+# (RHOAIENG-103680), so the shared realm client `maas-api` is the one
+# AITenant-issued tokens must come from.
+#
+# NOTE: removing spec.oidc does NOT revoke IdP-token access — the gateway's
+# OIDC rules persist until cleaned (RHOAIENG-103587); removing the client in
+# Keycloak is the effective revocation.
+#
+# No client secret is configured here because the AITenant OIDC issuer does
+# JWT bearer validation only — upstream external-oidc.md: "JWT bearer
+# validation only… No client_secret is required or stored at runtime".
+#
+# Portal (maas-consumer-portal) credentials are the imperative
+# administrator-path secret from `make maas-portal-creds` — not set here.
+#
+# CLUSTER-SPECIFIC HOSTNAME: issuerUrl is for this rig's Keycloak only and is
+# kept flat deliberately — patch it per cluster overlay if running elsewhere.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: AITenant
+metadata:
+  name: models-as-a-service
+  namespace: ai-tenants
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+spec:
+  gateway:
+    name: maas-default-gateway
+  oidc:
+    issuerUrl: https://keycloak.apps.cluster.nightly.rhai-tmm.dev/realms/sso
+    clientId: maas-api

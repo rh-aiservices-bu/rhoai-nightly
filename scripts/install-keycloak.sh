@@ -294,8 +294,13 @@ spec:
                   - web-origins
               maas-consumer-portal:
                 secret: "${KEYCLOAK_PORTAL_SECRET}"
+                # Portal host derives from the Dashboard CR's spec.gateway.domain
+                # (live: rh-ai.<wildcard>). Register both candidate hosts since
+                # KeycloakRealmImport is create-only and the live host is only
+                # observable after the portal reconciles.
                 redirectUris:
                   - https://maas.${WILDCARD_DOMAIN}/oauth2/callback
+                  - https://rh-ai.${WILDCARD_DOMAIN}/oauth2/callback
                 defaultClientScopes:
                   - basic
                   - email

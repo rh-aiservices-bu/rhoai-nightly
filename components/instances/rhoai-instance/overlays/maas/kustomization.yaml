@@ -3,9 +3,13 @@ kind: Kustomization
 
 # Overlay: MaaS enabled, monitoring cascade NOT triggered.
 # Base has aigateway.modelsAsAService: Removed and DSCI monitoring.metrics unset.
-# This overlay re-enables MaaS via the operator; observability stays off.
-# To enable the full monitoring cascade, `make observability` flips the
-# ArgoCD Application source to overlays/maas-observability.
+# This overlay re-enables MaaS via the operator. The DSC's dashboard.maasPortal
+# is operator-enforced — user-set values are reverted within seconds on this
+# nightly (portal prerequisites per upstream contract were all satisfied at the
+# time) — so do not patch it; portal enablement is tracked in
+# docs/known-issues.md. Observability stays off; `make observability` flips
+# the ArgoCD Application source to overlays/maas-observability for the full
+# monitoring cascade.
 
 resources:
   - ../../base

@@ -360,6 +360,10 @@ The cluster's OIDC identity provider (console login, MaaS portal) is Keycloak, d
 
 Uninstall with `make keycloak-uninstall`, NOT `oc delete application` — ArgoCD's execution of Helm pre-delete hooks is version/condition-dependent, so deleting the Applications directly could leave the OAuth identityProviders entry and console logoutRedirect pointing at a dead Keycloak. The uninstall strips the IdP entry and redirect itself (belt-and-braces; only its own entries are touched, other IdPs preserved) before deleting the Applications, and keeps ns `keycloak` and kubeadmin. Caveat: `KeycloakRealmImport` is create-only — changed realm values need `KeycloakRealmImport/sso` deleted (ArgoCD prune recreates and re-imports).
 
+### Keycloak ↔ MaaS OIDC wiring
+
+Two realm clients serve MaaS: `maas-api` (the AITenant OIDC issuer — the gateway enforces a single-client `azp==clientId`, RHOAIENG-103680) and `maas-consumer-portal` (the consumer-portal auth-proxy). The GitOps side lives at `components/instances/maas-oidc/` (`instance-maas-oidc` Application): `AITenant.spec.oidc` points at the Keycloak realm issuer (publicly trusted via the LE wildcard cert — no DSCI trustedCABundle needed); both manifests apply with ServerSideApply since the maas-controller and dashboard-operator co-own those CRs. The AITenant OIDC wiring + portal credentials are in place and MaaS token auth works against Keycloak; the portal UI flip is blocked by the operator-enforced `dashboard.maasPortal` flag (see known-issues) and is NOT patched in this repo. The portal's credentials secret (`maas-consumer-portal-auth-proxy-creds`, ns `redhat-ai-gateway-infra`) is the imperative administrator path: `make maas-portal-creds` takes `KEYCLOAK_PORTAL_SECRET` from `.env` and generates `MAAS_PORTAL_COOKIE_SECRET` into `.env` on first run (the tenant-managed alternative, `AITenant.spec.oidc.clientSecretRef`, is not used). Note that removing `spec.oidc` does not revoke IdP-token access — the gateway rules persist until cleaned (RHOAIENG-103587); revoke via the Keycloak client instead.
+
 ## Pull Secret Management
 
 The cluster pull-secret can be managed in two ways:

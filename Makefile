@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp uwm setup infra secrets le-creds gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall keycloak keycloak-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets le-creds gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall keycloak keycloak-uninstall maas-portal-creds evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -82,6 +82,7 @@ help:
 	@echo "                        instance-keycloak-auth Applications; console login via Keycloak)."
 	@echo "                        Requires the keycloak-stack operators; secrets generated into .env."
 	@echo "  make keycloak-uninstall - Remove Keycloak Applications + OAuth IdP wiring (ns keycloak kept)"
+	@echo "  make maas-portal-creds - Provision the MaaS portal auth-proxy credentials secret (requires KEYCLOAK_PORTAL_SECRET)"
 	@echo ""
 	@echo "Eval Hub:"
 	@echo "  make evalhub        - Enable eval-hub (EvalHub + MLflow + DSPA in evalhub-tenant ns)"
@@ -326,6 +327,12 @@ keycloak: ## Deploy Keycloak + realm sso via OCI charts (instance-keycloak[-auth
 keycloak-uninstall: ## Remove Keycloak Applications + OAuth IdP wiring
 	@chmod +x scripts/install-keycloak.sh
 	@scripts/install-keycloak.sh --uninstall
+
+# Provision the MaaS portal auth-proxy credentials secret (administrator path;
+# KEYCLOAK_PORTAL_SECRET from .env, cookie secret generated into .env)
+maas-portal-creds: ## Provision MaaS portal auth-proxy credentials secret
+	@chmod +x scripts/add-maas-portal-creds.sh
+	@scripts/add-maas-portal-creds.sh
 
 # Enable eval-hub (creates dedicated instance-evalhub ArgoCD Application)
 # Orthogonal to MaaS / observability — does not modify the instance-rhoai overlay

@@ -561,9 +561,6 @@ fi
 # Keycloak issuer behind the route to validate against.
 log_step "Phase 4: Apply instance-keycloak-auth Application (chart keycloak-auth@${KEYCLOAK_AUTH_CHART_VERSION})"
 
-# OpenShift requires ':'-containing usernames as 'b64:<base64>' in Groups
-CLUSTER_ADMIN_B64=$(printf '%s' "keycloak:keycloak-admin" | base64)
-
 run_cmd_dry oc apply -f - <<EOF
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -595,12 +592,11 @@ spec:
           enabled: true
         clusterAdmins:
           users:
-            # OCP prefixes OIDC usernames with the IdP name (default
-            # usernamePrefix) — the mapped username is keycloak:keycloak-admin
-            # (keycloak-admin's preferred_username via the profile scope), so
-            # the bare "keycloak-admin" can never match. Group members with
-            # ':' must be b64-encoded per OpenShift validation.
-            - "b64:${CLUSTER_ADMIN_B64}"
+            # OCP maps the console user name directly from the mapped
+            # preferred_username claim (mappingMethod: claim, no
+            # usernamePrefix), so the bare "keycloak-admin" matches; the IdP
+            # prefix exists only on identity object names (keycloak:<sub>).
+            - keycloak-admin
         removeKubeAdmin: false
         # The rig's router cert is the Let's Encrypt wildcard (publicly
         # trusted), so the OAuth server needs no extra CA bundle.

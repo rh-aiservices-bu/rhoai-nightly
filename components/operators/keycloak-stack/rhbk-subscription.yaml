@@ -1,0 +1,14 @@
+# NOTE: the rhbk-operator package is absent from this nightly's pruned
+# catalogs (see docs/known-issues.md) — channel availability still to be
+# verified once the catalogs carry it.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhbk-operator
+  namespace: keycloak
+spec:
+  channel: stable-v2
+  installPlanApproval: Automatic
+  name: rhbk-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

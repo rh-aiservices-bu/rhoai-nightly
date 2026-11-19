@@ -36,6 +36,7 @@ rhoai-nightly/
 │   ├── uninstall-maas.sh               # Remove MaaS platform
 │   ├── install-observability.sh        # Install/uninstall MaaS observability (Kuadrant, ServiceMonitors; requires UWM from make infra)
 │   ├── install-evalhub.sh              # Install/uninstall eval-hub via dedicated instance-evalhub ArgoCD Application
+│   ├── install-keycloak.sh             # Install/uninstall Keycloak IdP via OCI charts (make keycloak; requires keycloak-stack operators)
 │   ├── restart-catalog.sh              # Restart RHOAI catalog + re-resolve Subscription after catalog image flip
 │   ├── setup-maas-model.sh             # Deploy/delete/status MaaS models
 │   ├── verify-maas.sh                  # End-to-end MaaS verification
@@ -351,7 +352,13 @@ GITOPS_BRANCH=main
 
 ## Let's Encrypt Wildcard TLS
 
-`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…` points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`; the ingress operator retires `router-certs-default` and mounts the custom wildcard secret on the routers directly, so the MaaS Gateway listener references `apps-wildcard-tls` explicitly (updated in the same flow). Everything flows through GitOps except the credential secret (imperative via `.env`, like the pull-secret flow).
+`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…` points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`; the ingress operator retires `router-certs-default` and mounts the custom wildcard secret on the routers directly, so the MaaS Gateway listener references `apps-wildcard-tls` explicitly (updated in the same flow). Everything flows through GitOps except the credential secret (imperative via `.env`, like the pull-secret flow). Alongside the public `letsencrypt-prod` issuer, the cert-manager operator component also provisions an internal CA (`selfsigned-issuer` → Certificate `selfsigned-ca` → ClusterIssuer `ca-issuer`) for chart-stack TLS that references it by name (CNPG in the postgres-cluster chart, etc.).
+
+## Keycloak (identity provider)
+
+The cluster's OIDC identity provider (console login, MaaS portal) is Keycloak, deployed by `make keycloak` (`scripts/install-keycloak.sh`) from two OCI charts on ghcr (`jharmison-redhat/helm-charts`): `keycloak` (Keycloak CR + realm `sso` + CNPG postgres, Application `instance-keycloak`) and `keycloak-auth` (OAuth IdP upsert, cluster-admins group, console logout redirect, Application `instance-keycloak-auth`), in that order — the auth hooks need a live issuer. The RHBK + CloudNativePG operators come from the GitOps component `components/operators/keycloak-stack/` (which also owns ns `keycloak`); the chart instances are script-created ArgoCD Applications with Helm values injected from `.env` (the install-maas.sh pattern) — realm users, client secrets and the OAuth IdP secret are never in git, missing `KEYCLOAK_*` vars are generated and appended to `.env` on first run. Realm `sso` carries clients `ocp-idp` (OCP OAuth), `maas-api`, `maas-consumer-portal`; admin user `keycloak-admin` (password `KEYCLOAK_ADMIN_PASSWORD` in `.env`), test users alice/bob.
+
+Uninstall with `make keycloak-uninstall`, NOT `oc delete application` — ArgoCD's execution of Helm pre-delete hooks is version/condition-dependent, so deleting the Applications directly could leave the OAuth identityProviders entry and console logoutRedirect pointing at a dead Keycloak. The uninstall strips the IdP entry and redirect itself (belt-and-braces; only its own entries are touched, other IdPs preserved) before deleting the Applications, and keeps ns `keycloak` and kubeadmin. Caveat: `KeycloakRealmImport` is create-only — changed realm values need `KeycloakRealmImport/sso` deleted (ArgoCD prune recreates and re-imports).
 
 ## Pull Secret Management
 
@@ -1094,6 +1101,7 @@ oc get mcp  # MachineConfigPool status
 | `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app; Authorino SSL only when a legacy stack exists). Does NOT install observability |
 | `scripts/install-observability.sh` | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors) |
 | `scripts/uninstall-maas.sh` | MaaS uninstall (cascade delete + cleanup) |
+| `scripts/install-keycloak.sh` | Keycloak IdP install/uninstall (script-created Applications, OCI charts, secrets in .env) (`make keycloak`) |
 
 ## Related Repositories
 
@@ -1107,7 +1115,7 @@ oc get mcp  # MachineConfigPool status
 
 - This repository uses **GitOps** - changes are deployed by committing to git, not by running oc commands
 - Scripts in `scripts/` are **pre-GitOps only** - they run before ArgoCD is installed
-- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `enable-uwm.sh`, `restart-catalog.sh`, and `add-le-creds.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative (`add-le-creds.sh` creates the Route53 credential secret in ns `cert-manager` after GitOps). `install-maas.sh`, `install-observability.sh`, and `install-evalhub.sh` are independent; none invokes another.
+- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `install-keycloak.sh`, `enable-uwm.sh`, `restart-catalog.sh`, and `add-le-creds.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative (`add-le-creds.sh` creates the Route53 credential secret in ns `cert-manager` after GitOps). `install-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, and `install-keycloak.sh` are independent; none invokes another.
 - After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets; Authorino SSL applies only on legacy stacks)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
 - **Bugs are the product**: when you hit an upstream bug, the priority is root-cause + a `docs/issues/` entry (with a filing draft) — NOT inventing a workaround. Propose a workaround only if testing is blocked without it, and give it a Jira + remove-when condition

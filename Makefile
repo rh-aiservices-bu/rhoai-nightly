@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp uwm setup infra secrets le-creds gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets le-creds gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall keycloak keycloak-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -76,6 +76,12 @@ help:
 	@echo "  make maas-uninstall - Remove MaaS resources created by install-maas.sh"
 	@echo "  make observability  - (Re-)install MaaS observability only (UWM + monitors + Kuadrant)"
 	@echo "  make observability-uninstall - Uninstall MaaS observability (leaves UWM ConfigMap in place)"
+	@echo ""
+	@echo "Keycloak (identity provider):"
+	@echo "  make keycloak       - Deploy Keycloak + realm sso via OCI charts (instance-keycloak +"
+	@echo "                        instance-keycloak-auth Applications; console login via Keycloak)."
+	@echo "                        Requires the keycloak-stack operators; secrets generated into .env."
+	@echo "  make keycloak-uninstall - Remove Keycloak Applications + OAuth IdP wiring (ns keycloak kept)"
 	@echo ""
 	@echo "Eval Hub:"
 	@echo "  make evalhub        - Enable eval-hub (EvalHub + MLflow + DSPA in evalhub-tenant ns)"
@@ -310,6 +316,16 @@ observability: ## Install MaaS observability (UWM + monitors + Kuadrant)
 observability-uninstall: ## Uninstall MaaS observability
 	@chmod +x scripts/install-observability.sh
 	@scripts/install-observability.sh --uninstall
+
+# Deploy Keycloak identity provider (script-created Applications, secrets from .env)
+keycloak: ## Deploy Keycloak + realm sso via OCI charts (instance-keycloak[-auth])
+	@chmod +x scripts/install-keycloak.sh
+	@scripts/install-keycloak.sh
+
+# Remove Keycloak Applications + OAuth IdP wiring (ns keycloak kept)
+keycloak-uninstall: ## Remove Keycloak Applications + OAuth IdP wiring
+	@chmod +x scripts/install-keycloak.sh
+	@scripts/install-keycloak.sh --uninstall
 
 # Enable eval-hub (creates dedicated instance-evalhub ArgoCD Application)
 # Orthogonal to MaaS / observability — does not modify the instance-rhoai overlay

@@ -302,6 +302,25 @@ oc delete pod  -n openshift-operators -l control-plane=controller-manager,app=ku
 `install-maas.sh` auto-remedies the Kuadrant case (waits for the AuthPolicy
 condition to materialize, then bounces the pod on the known message).
 
+**2026-11-19 (OCP 5.0.1, RHCL 1.5.0) — the remedy outcome changed.** Deleting
+the Kuadrant operator pod restores `Accepted=True` on the gateway
+AuthPolicies, but the RHCL `kuadrant-wasm-shim` then fails to load in the
+ingress-operator sail envoy: the envoy-internal remote wasm fetch from
+`kuadrant-operator-wasm.openshift-operators.svc:8082/plugin.wasm` fails while
+the server is verified serving (5.4MB, HTTP 200) and an identically-labeled
+curl pod fetches it fine; the plugin's `failure_policy: FAIL_RELOAD` is
+fail-closed → 5xx on **all `maas.apps` traffic** (MaaS inference AND portal
+API; `/health` stays 200). Full analysis + filing draft:
+[issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md). Security
+note on the unenforced window: while the cached probe left every AuthPolicy
+unenforced on the gateway, anonymous `GET /maas-api/v1/models` returned 200 —
+the MaaS API was fully exposed — so the pre-remedy state is a security hole,
+not a fallback; keep enforcement (fail-closed) despite the outage.
+**Remove when:** this note (not the E1 remedy — the pod-bounce remedy itself
+stays until RHOAIENG-67925 fixes the startup probe) — when a RHCL build loads
+the wasm shim in the OCP5 sail envoy; verify via envoy logs (no wasm fetch
+failure) and `maas.apps` traffic returning 200.
+
 ### E2. `make maas-model` times out on gpt-oss-20b (cold image cache)
 
 The wait budget (900s) is shorter than a cold pull + vLLM load (~18 min: two

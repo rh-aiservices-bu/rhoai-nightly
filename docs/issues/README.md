@@ -35,6 +35,7 @@ Working rules:
 | [upgrade-36-aipipelines-servicemonitor-owner.md](upgrade-36-aipipelines-servicemonitor-owner.md) | **NOT FILED** — target RHOAIENG (AI Pipelines module migration) | Open — same upgrade: leftover `DataSciencePipelines` CR still controls the DSPO ServiceMonitor, so `AIPipelines` reports `MonitoringReconcileFailed`; DSC `Ready=False`. Verify the 3.5 → 3.6 path before filing |
 | [servicemonitors-tls-servername-platform-prometheus.md](servicemonitors-tls-servername-platform-prometheus.md) | **NOT FILED** — target RHOAIENG (monitoring + trainer / model-registry / odh-model-controller / ogx) | Open — 3.6.0 GA moved `redhat-ods-applications` to platform monitoring; 7 component metrics targets `up=0` on x509 name mismatches (stale upstream-namespace `serverName`; ogx monitor selector also matches other components' Services) |
 | [maas-usage-dashboard-total-suffix.md](maas-usage-dashboard-total-suffix.md) | **NOT FILED** — target RHOAIENG (maas-controller) | Open — `dashboard-3-maas-usage-admin` queries `*_total` (12 queries); Limitador (RHCL 1.4.3) exports the names without `_total` → Usage panels empty. Re-confirmed n56g8 2026-10-16 |
+| [rhcl-wasm-fail-closed.md](rhcl-wasm-fail-closed.md) | **NOT FILED** — draft ready, target **CONNLINK** (RHCL / Connectivity Link) + [Kuadrant/kuadrant-operator](https://github.com/Kuadrant/kuadrant-operator) mirror | Open — found 2026-11-19 (OCP 5.0.1, RHCL 1.5.0); no workaround that restores traffic — enforcement (fail-closed) is kept as the current honest state |
 
 ## Open Jiras backing carried workarounds
 
@@ -51,7 +52,8 @@ TelemetryPolicy-removals (**standalone CONNLINK bug** — CONNLINK-1300 is
 Closed / Won't Do, so the comment route is gone), ogx-upgrade (RHAIENG — link
 RHAIENG-6384), nightly-csv-name-static (build/release eng), duplicate-usage-tab
 (**two** RHOAIENG filings — maas-controller Perses orphan, and the dashboard
-tab-keying bug; added 2026-08-07).
+tab-keying bug; added 2026-08-07), rhcl-wasm-fail-closed (**CONNLINK** +
+Kuadrant/kuadrant-operator mirror; added 2026-11-19).
 
 Dropped from the queue 2026-10-16 (n56g8, RHOAI 3.6.0 GA) — see the retired
 list in [../workarounds.md](../workarounds.md): TelemetryPolicy-labels

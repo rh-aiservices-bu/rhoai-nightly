@@ -73,7 +73,7 @@ Live-verified on tm9xb: annotating the Service flipped the dead IP to
 HTTP 200 **immediately** (first probe after the cloud controller applied it):
 
 ```bash
-oc annotate svc maas-default-gateway-openshift-default -n openshift-ingress \
+oc annotate svc maas-default-gateway-data-science-gateway-class -n openshift-ingress \
   "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled=true"
 ```
 

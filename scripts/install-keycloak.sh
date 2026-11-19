@@ -25,8 +25,11 @@
 #
 # Chart caveats (from the chart READMEs):
 #   - KeycloakRealmImport is CREATE-ONLY: re-running with changed realm
-#     values does not re-import. Delete KeycloakRealmImport/sso (ns keycloak)
-#     first — ArgoCD's prune recreates it and the import job re-runs.
+#     values does not re-import.
+#     Re-import runbook: after changing realms.* values,
+#       oc delete keycloakrealmimport sso -n keycloak
+#     then re-run 'make keycloak' — ArgoCD's prune recreates the CR and the
+#     import job re-runs against the changed values.
 #   - ArgoCD's handling of the chart's helm pre-delete hooks (OAuth-IdP /
 #     logout-redirect removal) depends on the ArgoCD version and the deletion
 #     path, so they are not guaranteed to fire when an Application is
@@ -346,6 +349,153 @@ spec:
                       jsonType.label: String
                       multivalued: 'true'
                       user.attribute: foo
+              # Keycloak does NOT auto-seed built-in client scopes in an
+              # imported realm — the clients above reference profile / email /
+              # roles / web-origins / acr / service_account, so those scopes
+              # must be defined here or the referenced scope names resolve to
+              # nothing and no mappers fire (IDs carry zero claims; OCP falls
+              # back to sub). Shapes below follow Keycloak's built-in default
+              # client scopes (verified against a realm export).
+              - name: profile
+                description: OpenID Connect scope for add user profile to the token
+                protocol: openid-connect
+                attributes:
+                  display.on.consent.screen: 'true'
+                  include.in.token.scope: 'true'
+                protocolMappers:
+                  - name: username
+                    protocol: openid-connect
+                    protocolMapper: oidc-usermodel-property-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      claim.name: preferred_username
+                      id.token.claim: 'true'
+                      introspection.token.claim: 'true'
+                      jsonType.label: String
+                      user.attribute: username
+                      userinfo.token.claim: 'true'
+                  - name: first name
+                    protocol: openid-connect
+                    protocolMapper: oidc-usermodel-property-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      claim.name: first_name
+                      id.token.claim: 'true'
+                      introspection.token.claim: 'true'
+                      jsonType.label: String
+                      user.attribute: firstName
+                      userinfo.token.claim: 'true'
+                  - name: last name
+                    protocol: openid-connect
+                    protocolMapper: oidc-usermodel-property-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      claim.name: last_name
+                      id.token.claim: 'true'
+                      introspection.token.claim: 'true'
+                      jsonType.label: String
+                      user.attribute: lastName
+                      userinfo.token.claim: 'true'
+                  - name: full name
+                    protocol: openid-connect
+                    protocolMapper: oidc-full-name-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      id.token.claim: 'true'
+                      userinfo.token.claim: 'true'
+              - name: email
+                description: OpenID Connect scope for add user email address to the token
+                protocol: openid-connect
+                attributes:
+                  display.on.consent.screen: 'true'
+                  include.in.token.scope: 'true'
+                protocolMappers:
+                  - name: email
+                    protocol: openid-connect
+                    protocolMapper: oidc-usermodel-property-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      claim.name: email
+                      id.token.claim: 'true'
+                      introspection.token.claim: 'true'
+                      jsonType.label: String
+                      user.attribute: email
+                      userinfo.token.claim: 'true'
+                  - name: email verified
+                    protocol: openid-connect
+                    protocolMapper: oidc-usermodel-property-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      claim.name: email_verified
+                      id.token.claim: 'true'
+                      introspection.token.claim: 'true'
+                      jsonType.label: boolean
+                      user.attribute: emailVerified
+                      userinfo.token.claim: 'true'
+              - name: roles
+                description: OpenID Connect scope for add user roles to the access token
+                protocol: openid-connect
+                attributes:
+                  display.on.consent.screen: 'true'
+                  include.in.token.scope: 'false'
+                protocolMappers:
+                  - name: realm roles
+                    protocol: openid-connect
+                    protocolMapper: oidc-usermodel-realm-role-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      claim.name: realm_access.roles
+                      jsonType.label: String
+                      multivalued: 'true'
+                      user.attribute: foo
+                  - name: audience resolve
+                    protocol: openid-connect
+                    protocolMapper: oidc-audience-resolve-mapper
+                    consentRequired: false
+                    config: {}
+              - name: web-origins
+                description: OpenID Connect scope for add allowed web origins to the access token
+                protocol: openid-connect
+                attributes:
+                  display.on.consent.screen: 'false'
+                  include.in.token.scope: 'false'
+                protocolMappers:
+                  - name: allowed web origins
+                    protocol: openid-connect
+                    protocolMapper: oidc-allowed-origins-mapper
+                    consentRequired: false
+                    config: {}
+              - name: acr
+                description: OpenID Connect scope for add acr (authentication context class reference) to the token
+                protocol: openid-connect
+                attributes:
+                  display.on.consent.screen: 'false'
+                  include.in.token.scope: 'false'
+                protocolMappers:
+                  - name: acr loa level
+                    protocol: openid-connect
+                    protocolMapper: oidc-acr-mapper
+                    consentRequired: false
+                    config:
+                      access.token.claim: 'true'
+                      id.token.claim: 'true'
+                      userinfo.token.claim: 'true'
+              # No mappers — the scope only has to exist for the
+              # service_account defaultClientScopes reference to resolve
+              # (client-credentials tokens need no user-claim mappers).
+              - name: service_account
+                description: OpenID Connect scope for add service account specific claims to the token
+                protocol: openid-connect
+                attributes:
+                  display.on.consent.screen: 'false'
+                  include.in.token.scope: 'false'
   destination:
     server: https://kubernetes.default.svc
     namespace: keycloak
@@ -411,6 +561,9 @@ fi
 # Keycloak issuer behind the route to validate against.
 log_step "Phase 4: Apply instance-keycloak-auth Application (chart keycloak-auth@${KEYCLOAK_AUTH_CHART_VERSION})"
 
+# OpenShift requires ':'-containing usernames as 'b64:<base64>' in Groups
+CLUSTER_ADMIN_B64=$(printf '%s' "keycloak:keycloak-admin" | base64)
+
 run_cmd_dry oc apply -f - <<EOF
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -442,7 +595,12 @@ spec:
           enabled: true
         clusterAdmins:
           users:
-            - keycloak-admin
+            # OCP prefixes OIDC usernames with the IdP name (default
+            # usernamePrefix) — the mapped username is keycloak:keycloak-admin
+            # (keycloak-admin's preferred_username via the profile scope), so
+            # the bare "keycloak-admin" can never match. Group members with
+            # ':' must be b64-encoded per OpenShift validation.
+            - "b64:${CLUSTER_ADMIN_B64}"
         removeKubeAdmin: false
         # The rig's router cert is the Let's Encrypt wildcard (publicly
         # trusted), so the OAuth server needs no extra CA bundle.

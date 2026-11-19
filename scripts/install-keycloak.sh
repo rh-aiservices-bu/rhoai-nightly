@@ -159,10 +159,12 @@ log_info "Cluster domain: ${WILDCARD_DOMAIN} (email domain: ${EMAIL_DOMAIN})"
 
 KEYCLOAK_CHART_VERSION="${KEYCLOAK_CHART_VERSION:-0.5.0}"
 KEYCLOAK_AUTH_CHART_VERSION="${KEYCLOAK_AUTH_CHART_VERSION:-0.4.4}"
-# ArgoCD treats `oci://`-prefixed repoURLs as raw OCI sources and ignores the
-# `chart` field (upstream issues argoproj/argo-cd#25513, #28899) — the scheme
-# must be omitted for Helm OCI sources.
-KEYCLOAK_REPO_BASE="ghcr.io/jharmison-redhat/helm-charts"
+# Raw-OCI source form: with `oci://`-prefixed repoURL ArgoCD 3.x classifies the
+# source as raw OCI and ignores `chart:`; each chart here IS a single OCI
+# artifact (helm-push layout), so the raw form is the precise semantic and
+# enables digest pinning via targetRevision (argo-cd#24970; the scheme-less
+# Helm-source form also works — #25513, #28899).
+KEYCLOAK_REPO_BASE="oci://ghcr.io/jharmison-redhat/helm-charts"
 
 # Uninstall short-circuits before secret generation (it needs no secrets;
 # the function is defined at the bottom of the script).
@@ -235,8 +237,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${KEYCLOAK_REPO_BASE}
-    chart: keycloak
+    repoURL: ${KEYCLOAK_REPO_BASE}/keycloak
+    path: "."
     targetRevision: ${KEYCLOAK_CHART_VERSION}
     helm:
       valuesObject:
@@ -415,8 +417,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${KEYCLOAK_REPO_BASE}
-    chart: keycloak-auth
+    repoURL: ${KEYCLOAK_REPO_BASE}/keycloak-auth
+    path: "."
     targetRevision: ${KEYCLOAK_AUTH_CHART_VERSION}
     helm:
       valuesObject:

@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The wildcard hostname is cluster-specific — kept flat deliberately, same
+# convention as components/instances/maas-gateway/gateway.yaml. Patch it in a
+# per-cluster overlay if running elsewhere.
+#
+# Sync waves: the IngressController patch waits for the Certificate to go
+# Ready (issuance complete) so the router never points at a missing secret.
+# The CertManager singleton args live in the cert-manager operator component
+# (cross-Application ordering relies on ArgoCD app-by-app sync order; a first
+# challenge attempt before the args land retries).
+resources:
+  - cluster-issuer.yaml
+  - certificate.yaml
+  - ingresscontroller-default-cert.yaml

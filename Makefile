@@ -9,7 +9,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: help gpu cpu icsp uwm setup infra secrets gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
+.PHONY: help gpu cpu icsp uwm setup infra secrets le-creds gitops deploy bootstrap status all clean undeploy configure-repo scale refresh restart-catalog sync sync-app sync-disable sync-enable refresh-apps dedicate-masters maas maas-uninstall maas-verify maas-model maas-model-status maas-model-delete observability observability-uninstall evalhub evalhub-uninstall diagnose compare cleanup-projects preflight validate-config
 
 # Default target - run everything
 .DEFAULT_GOAL := all
@@ -32,6 +32,7 @@ help:
 	@echo "  make secrets      - Setup pull-secret (auto-detects mode)"
 	@echo "                      Mode A: QUAY_USER/QUAY_TOKEN set → manual credentials"
 	@echo "                      Mode B: Bootstrap repo access → External Secrets"
+	@echo "  make le-creds     - Provision Route53 credentials for Let's Encrypt DNS-01"
 	@echo ""
 	@echo "Phase 3: GitOps"
 	@echo "  make gitops       - Install GitOps operator + ArgoCD (waits for ready)"
@@ -127,6 +128,11 @@ infra: icsp cpu gpu uwm
 # Secrets - auto-detects mode (manual credentials or External Secrets)
 secrets:
 	@scripts/setup-secrets.sh
+
+# Route53 credentials for the Let's Encrypt DNS-01 issuer (LE_AWS_* from .env)
+le-creds:
+	@chmod +x scripts/add-le-creds.sh
+	@scripts/add-le-creds.sh
 
 # All pre-GitOps setup (infra + secrets)
 setup: infra secrets

@@ -73,6 +73,14 @@ spec:
               name: instance-maas-gateway
               path: components/instances/maas-gateway
               namespace: openshift-gitops
+          # Let's Encrypt wildcard for *.apps.<cluster-domain>: DNS-01 via
+          # Route53 on the platform cert-manager, sideloaded as the ingress
+          # controller default certificate. Requires `make le-creds` first.
+          - cluster: local
+            values:
+              name: instance-letsencrypt
+              path: components/instances/letsencrypt
+              namespace: openshift-gitops
   template:
     metadata:
       name: "{{values.name}}"

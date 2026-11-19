@@ -1,0 +1,18 @@
+# The cert-manager instance (certmanagers.operator.openshift.io/cluster) has
+# no namespace restriction, so the Certificate lives in openshift-ingress —
+# the same namespace as router-certs-default, which the ingress operator
+# rewrites from this secret (see ingresscontroller-default-cert.yaml).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: apps-wildcard-tls
+  namespace: openshift-ingress
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  secretName: apps-wildcard-tls
+  dnsNames:
+    - "*.apps.cluster.nightly.rhai-tmm.dev"
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer

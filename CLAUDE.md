@@ -25,6 +25,7 @@ This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.x
 rhoai-nightly/
 ├── scripts/                              # Pre-GitOps setup scripts
 │   ├── add-pull-secret.sh               # Add quay.io/rhoai pull credentials
+│   ├── add-le-creds.sh                  # Add Route53 credentials for Let's Encrypt DNS-01 (make le-creds)
 │   ├── create-icsp.sh                   # Create ImageContentSourcePolicy
 │   ├── create-gpu-machineset.sh         # Create GPU MachineSet (g6e.2xlarge)
 │   ├── create-cpu-machineset.sh         # Create CPU worker MachineSet (m6a.4xlarge)
@@ -82,7 +83,8 @@ rhoai-nightly/
 │   │   ├── jobset-operator/             # JobSet for distributed workloads
 │   │   ├── leader-worker-set/           # Leader-Worker pattern
 │   │   ├── connectivity-link/           # Connectivity Link
-│   │   ├── cert-manager/                # cert-manager operator
+│   │   ├── cert-manager/                # cert-manager operator (owns the CertManager singleton controller args)
+│   │   ├── keycloak-stack/              # RHBK + CloudNativePG operators for Keycloak (owns ns keycloak; Keycloak instance lands with the keycloak charts)
 │   │   ├── external-secrets-operator/   # External Secrets operator
 │   │   ├── opentelemetry-operator/      # Red Hat build of OpenTelemetry
 │   │   └── cluster-observability-operator/ # COO (Perses CRDs for Observability dashboard)
@@ -98,6 +100,7 @@ rhoai-nightly/
 │       ├── maas-instance/               # MaaS Helm chart (PostgreSQL+PVC, Gateway)
 │       ├── maas-observability/          # MaaS observability (TelemetryPolicy + Istio Telemetry)
 │       ├── maas-gateway/                # Declarative maas-default-gateway (Praxis AI Gateway, OCP5)
+│       ├── letsencrypt/                 # LE wildcard DNS-01 + ingresscontroller default-cert sideload
 │       ├── evalhub/                     # EvalHub + MLflow + DSPA (make evalhub)
 │       ├── external-secrets-instance/   # External Secrets instance config
 │       └── maas-models/                # MaaS model manifests (kustomize)
@@ -345,6 +348,10 @@ GITOPS_BRANCH=main
 # RHOAI version: edit components/operators/rhoai-operator/base/catalogsource.yaml
 # See "RHOAI Version Configuration" section above
 ```
+
+## Let's Encrypt Wildcard TLS
+
+`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…` points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`; the ingress operator rewrites `router-certs-default`, so the MaaS Gateway listener inherits trust with no Gateway change. Everything flows through GitOps except the credential secret (imperative via `.env`, like the pull-secret flow).
 
 ## Pull Secret Management
 
@@ -1083,6 +1090,7 @@ oc get mcp  # MachineConfigPool status
 | `scripts/compare-builds.sh` | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift) |
 | `scripts/cleanup-stale-projects.sh` | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`) |
 | `scripts/enable-uwm.sh` | Enable UWM (idempotent merge; --check / --dry-run modes) |
+| `scripts/add-le-creds.sh` | Provision the Route53 credential secret for Let's Encrypt DNS-01 (`make le-creds`) |
 | `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app; Authorino SSL only when a legacy stack exists). Does NOT install observability |
 | `scripts/install-observability.sh` | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors) |
 | `scripts/uninstall-maas.sh` | MaaS uninstall (cascade delete + cleanup) |
@@ -1099,7 +1107,7 @@ oc get mcp  # MachineConfigPool status
 
 - This repository uses **GitOps** - changes are deployed by committing to git, not by running oc commands
 - Scripts in `scripts/` are **pre-GitOps only** - they run before ArgoCD is installed
-- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `enable-uwm.sh`, and `restart-catalog.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative. `install-maas.sh`, `install-observability.sh`, and `install-evalhub.sh` are independent; none invokes another.
+- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `enable-uwm.sh`, `restart-catalog.sh`, and `add-le-creds.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative (`add-le-creds.sh` creates the Route53 credential secret in ns `cert-manager` after GitOps). `install-maas.sh`, `install-observability.sh`, and `install-evalhub.sh` are independent; none invokes another.
 - After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets; Authorino SSL applies only on legacy stacks)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
 - **Bugs are the product**: when you hit an upstream bug, the priority is root-cause + a `docs/issues/` entry (with a filing draft) — NOT inventing a workaround. Propose a workaround only if testing is blocked without it, and give it a Jira + remove-when condition

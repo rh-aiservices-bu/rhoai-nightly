@@ -1,0 +1,32 @@
+# Converge the OpenShift CertManager singleton to match the cert-manager chart
+# at github.com/jharmison-redhat/helm-charts (charts/cert-manager, template
+# converge-cert-manager-config.yaml):
+#
+# - DNS-01 propagation self-checks must go through public recursive resolvers
+#   only (Quad9 + Cloudflare). The --dns01-recursive-nameservers-only flag
+#   blocks the fallback to node resolv.conf / authoritative queries, which
+#   cannot validate TXT records against the authoritative Route53 zone on this
+#   rig.
+# - --enable-certificate-owner-ref=false keeps Certificate secrets (the
+#   sideloaded router wildcard) alive after Certificate deletion.
+#
+# This is controller-wide behavior configured by this operator component; the
+# letsencrypt instance component (components/instances/letsencrypt) consumes
+# it via its ClusterIssuer/Certificate.
+#
+# This manifest is rendered directly rather than run as a hook Job like the
+# reference chart: ArgoCD desired-state + self-heal provides the same
+# reconcile guarantee. ServerSideApply ensures only our fields are set — the
+# operator retains management of the rest of the singleton.
+apiVersion: operator.openshift.io/v1alpha1
+kind: CertManager
+metadata:
+  name: cluster
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+spec:
+  controllerConfig:
+    overrideArgs:
+      - --dns01-recursive-nameservers=9.9.9.9:53,1.1.1.1:53
+      - --dns01-recursive-nameservers-only
+      - --enable-certificate-owner-ref=false

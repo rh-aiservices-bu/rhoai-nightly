@@ -1,0 +1,59 @@
+# Internal CA stack, mirroring the user's cert-manager chart
+# (github.com/jharmison-redhat/helm-charts, charts/cert-manager, template
+# clusterissuer.yaml, selfSigned bootstrap path rendered when `ca.tlsCrt` /
+# `ca.tlsKey` are unset):
+#
+# selfsigned-issuer (ClusterIssuer, selfSigned) -> selfsigned-ca (Certificate,
+# ns cert-manager, secret cert-manager-ca) -> ca-issuer (ClusterIssuer, CA
+# signer on that secret).
+#
+# Workload charts in the Keycloak stack reference these by name: the
+# postgres-cluster chart's CNPG Cluster sets issuerRef
+# {kind: ClusterIssuer, name: ca-issuer} for its server TLS. The platform
+# cert-manager does not render the chart's clusterissuer.yaml, so without
+# these objects the CertificateRequest is Approved but cannot sign
+# ("Referenced ClusterIssuer not found") and the CNPG bootstrap stalls.
+#
+# This CA is internal/private trust — distinct from letsencrypt-prod
+# (components/instances/letsencrypt), which is publicly trusted. The chart
+# provisions the same objects in the cert-manager namespace, where the
+# ClusterIssuer's CA secret must live to resolve.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: selfsigned-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: selfsigned-ca
+  # Explicit 10-year lifetime: without it cert-manager applies its 90-day
+  # default, and an expiring self-signed root hard-fails verification in Go
+  # clients
+  duration: 87600h
+  secretName: cert-manager-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # Explicit: the upstream default became `Always` in cert-manager 1.18, and
+    # key rotation at renewal would break chains anchored on the bundle's
+    # original entry; renewal reuses this key instead
+    rotationPolicy: Never
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: ca-issuer
+spec:
+  ca:
+    secretName: cert-manager-ca

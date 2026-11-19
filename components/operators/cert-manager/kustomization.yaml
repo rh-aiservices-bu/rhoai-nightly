@@ -6,3 +6,6 @@ resources:
   - operatorgroup.yaml
   - subscription.yaml
   - certmanager-config.yaml
+  # Order within the file matters (bootstrap issuer -> CA Certificate ->
+  # ca-issuer); see the header comment in internal-ca.yaml.
+  - internal-ca.yaml

@@ -32,6 +32,9 @@ Thumbs.db
 # Local MCP server config (per-developer tooling)
 .mcp.json
 
+# Playwright MCP browser-probe artifacts (per-developer tooling)
+.playwright-mcp/
+
 # Backup files
 *.bak
 *~

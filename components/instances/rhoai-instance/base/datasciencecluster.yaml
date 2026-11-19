@@ -11,7 +11,8 @@ spec:
     aipipelines:
       managementState: Managed
     # v3 splits the dashboard component: `standard` is the classic dashboard,
-    # `maasPortal` is the MaaS portal (not enabled here).
+    # `maasPortal` is the MaaS portal (not enabled here; enabled by the
+    # overlays/maas overlay directory).
     dashboard:
       standard:
         managementState: Managed

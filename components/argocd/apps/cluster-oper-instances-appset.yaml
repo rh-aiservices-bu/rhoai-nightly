@@ -81,10 +81,12 @@ spec:
               name: instance-letsencrypt
               path: components/instances/letsencrypt
               namespace: openshift-gitops
-          # MaaS-on-Praxis OIDC wiring: AITenant spec.oidc (Keycloak issuer)
-          # + Dashboard maasPortal flip. Static GitOps owner, NOT
-          # script-created — the portal credentials secret is imperative via
-          # `make maas-portal-creds` (see scripts/add-maas-portal-creds.sh).
+          # MaaS-on-Praxis OIDC wiring: AITenant spec.oidc (Keycloak issuer).
+          # Static GitOps owner, NOT script-created — the portal credentials
+          # secret is imperative via `make maas-portal-creds` (see
+          # scripts/add-maas-portal-creds.sh). The Dashboard maasPortal flag
+          # itself is patched in the rhoai-instance overlays/maas overlay
+          # directory, not here.
           # Manifests live in components/instances/maas-oidc/.
           - cluster: local
             values:

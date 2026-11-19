@@ -3,13 +3,19 @@ kind: Kustomization
 
 # Overlay: MaaS enabled, monitoring cascade NOT triggered.
 # Base has aigateway.modelsAsAService: Removed and DSCI monitoring.metrics unset.
-# This overlay re-enables MaaS via the operator. The DSC's dashboard.maasPortal
-# is operator-enforced — user-set values are reverted within seconds on this
-# nightly (portal prerequisites per upstream contract were all satisfied at the
-# time) — so do not patch it; portal enablement is tracked in
-# docs/known-issues.md. Observability stays off; `make observability` flips
-# the ArgoCD Application source to overlays/maas-observability for the full
-# monitoring cascade.
+# This overlay re-enables MaaS via the operator. The portal flag lives here
+# because base is the no-MaaS baseline (aigateway states Removed, no AITenant
+# OIDC wiring, no portal creds secret), so the portal belongs with the overlay
+# that turns MaaS on. The auth proxy + routes layer renders only once those
+# prerequisites exist (ai-gateway-controller-owned, not a user prerequisite):
+# with the flag Managed, dashboard-operator deploys the portal operand
+# (Deployment/Service/HTTPRoute) and ai-gateway-controller adds the auth
+# proxy + routes + AuthPolicies once the maas-portal Service, AITenant OIDC
+# and creds secret all exist. Portal API function depends on gateway
+# AuthPolicy enforcement — see docs/known-issues.md (RHCL AuthPolicy/wasm
+# defects) before expecting end-to-end function. Observability stays off;
+# `make observability` flips the ArgoCD Application source to
+# overlays/maas-observability for the full monitoring cascade.
 
 resources:
   - ../../base
@@ -25,3 +31,8 @@ patches:
       - op: replace
         path: /spec/components/aigateway/modelsAsAService/managementState
         value: Managed
+      # Base omits maasPortal entirely, so `add` (not `replace`) is required.
+      - op: add
+        path: /spec/components/dashboard/maasPortal
+        value:
+          managementState: Managed

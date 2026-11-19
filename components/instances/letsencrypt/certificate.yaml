@@ -1,7 +1,8 @@
 # The cert-manager instance (certmanagers.operator.openshift.io/cluster) has
-# no namespace restriction, so the Certificate lives in openshift-ingress —
-# the same namespace as router-certs-default, which the ingress operator
-# rewrites from this secret (see ingresscontroller-default-cert.yaml).
+# no namespace restriction, so the Certificate lives in openshift-ingress, the
+# namespace of its consumers: the ingress router (defaultCertificate, see
+# ingresscontroller-default-cert.yaml) and the MaaS Gateway listener
+# (instance-maas-gateway) both consume this secret directly.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

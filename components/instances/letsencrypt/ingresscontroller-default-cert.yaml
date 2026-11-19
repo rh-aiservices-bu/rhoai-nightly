@@ -1,7 +1,7 @@
-# Sideloads the LE wildcard as the ingress router default certificate: the
-# ingress operator rewrites router-certs-default (ns openshift-ingress) with
-# this secret's contents, so the MaaS Gateway listener — which references
-# router-certs-default — serves the LE cert with no Gateway change.
+# Sideloads the LE wildcard as the ingress router default certificate: when a
+# custom defaultCertificate is set, the ingress operator retires
+# router-certs-default and mounts this secret on the routers directly. The MaaS
+# Gateway listener references apps-wildcard-tls directly (instance-maas-gateway).
 apiVersion: operator.openshift.io/v1
 kind: IngressController
 metadata:

@@ -2,9 +2,11 @@
 # DNS-01 only: hosts like maas.apps.cluster.nightly.rhai-tmm.dev resolve to the
 # Gateway ELB rather than the ingress router, so HTTP-01 challenges can never
 # reach the router for the names this rig serves. The Route53 zone is
-# nightly.rhai-tmm.dev (awsdns NS records); solver.dnsZones pins it so the
-# solver only answers challenges for that authoritative zone (matching the
-# reference chart's requirement for dns-type solvers) — zone discovery is
+# nightly.rhai-tmm.dev (awsdns NS records); the solver's selector dnsZones
+# constraint pins it so the solver only answers challenges for that
+# authoritative zone (matching the reference chart's requirement for dns-type
+# solvers; the chart's type: dns / dnsConfig / dnsZones shape is its own values
+# intermediate format, not the CRD field placement) — zone discovery is
 # otherwise used by default; pin solver.route53.hostedZoneID instead if
 # discovery ever mis-resolves.
 # The Route53 credential secret is provisioned out-of-band by `make le-creds`.
@@ -21,11 +23,12 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:
-      - dns01:
+      - selector:
+          dnsZones:
+            - nightly.rhai-tmm.dev
+        dns01:
           route53:
             region: us-east-2
-            dnsZones:
-              - nightly.rhai-tmm.dev
             accessKeyIDSecretRef:
               name: letsencrypt-route53-credentials
               key: aws-access-key-id

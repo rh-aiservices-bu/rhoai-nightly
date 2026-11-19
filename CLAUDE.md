@@ -351,7 +351,7 @@ GITOPS_BRANCH=main
 
 ## Let's Encrypt Wildcard TLS
 
-`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…` points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`; the ingress operator rewrites `router-certs-default`, so the MaaS Gateway listener inherits trust with no Gateway change. Everything flows through GitOps except the credential secret (imperative via `.env`, like the pull-secret flow).
+`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…` points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`; the ingress operator retires `router-certs-default` and mounts the custom wildcard secret on the routers directly, so the MaaS Gateway listener references `apps-wildcard-tls` explicitly (updated in the same flow). Everything flows through GitOps except the credential secret (imperative via `.env`, like the pull-secret flow).
 
 ## Pull Secret Management
 

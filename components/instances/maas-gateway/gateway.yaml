@@ -4,7 +4,11 @@
 # GatewayClass on OCP 5.x; the chart's `openshift-default` class is the
 # OCP 4.20-era path. The listener hostname is the cluster-specific field —
 # kept flat deliberately; patch it in a per-cluster overlay if running
-# elsewhere.
+# elsewhere. The HTTPS listener references the LE wildcard secret
+# `apps-wildcard-tls` directly: once a custom `defaultCertificate` is set,
+# the ingress operator retires `router-certs-default` and mounts the custom
+# secret on the routers, so there is nothing to inherit from. The letsencrypt
+# component (instance-letsencrypt) owns that secret's lifecycle.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -33,5 +37,5 @@ spec:
         certificateRefs:
           - group: ""
             kind: Secret
-            name: router-certs-default
+            name: apps-wildcard-tls
         mode: Terminate

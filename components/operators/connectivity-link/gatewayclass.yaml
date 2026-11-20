@@ -1,0 +1,36 @@
+# Gateway API enablement on OCP 5: creating the `openshift-default`
+# GatewayClass with controllerName `openshift.io/gateway-controller/v1` is the
+# documented enablement step (OCP 5.0 docs: Ingress and load balancing →
+# Configuring Gateway API → Enabling Gateway API). It is the only controllerName
+# the Ingress Operator manages; seeing this class, it accepts the class,
+# installs its Istio control plane, and takes over management of the Istio
+# CRDs (its `CRDsReady` condition). The Gateway API CRDs must already exist —
+# this object cannot be created without them.
+#
+# This object precedes the RHCL Subscription on purpose. The RHCL/Kuadrant
+# operator caches its Gateway API provider probe at startup and never re-checks
+# (RHOAIENG-67925): an operator that starts before the provider's CRDs exist
+# silently never enforces any AuthPolicy (fail-open). Sync wave 0 applies the
+# GatewayClass before wave 1 applies the Subscription, and the ordering gate is
+# ArgoCD's own GatewayClass health check: the application stays Progressing
+# until the class reports Accepted=True, so wave 1 (the Subscription) applies
+# only after the class is accepted and the RHCL operator's provider probe can
+# succeed. OLM latency only widens that margin (the Subscription's CSV has
+# been observed reaching Succeeded in ~12-40s). A cluster where no
+# implementation accepts the class would hold wave 1 (the Subscription) at
+# Progressing indefinitely — the class is a hard prerequisite, by design. See
+# docs/issues/rhcl-wasm-fail-closed.md for the aftermath of the race on a
+# cluster where the ordering was inverted.
+#
+# The class is accepted by the Ingress Operator's gateway controller on OCP
+# 4.20+ and OCP 5 alike; what differs on OCP 4.20 is the Kuadrant provider
+# path (legacy servicemeshoperator3 / embedded sail) — see docs/workarounds.md
+# §B and §C2.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: openshift-default
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  controllerName: "openshift.io/gateway-controller/v1"

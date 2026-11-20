@@ -1,8 +1,11 @@
 # Declarative replacement for the legacy instance-maas Helm chart Gateway.
 # The AITenant/MaasTenantConfig controllers require this exact name and
-# namespace (controller defaults). `data-science-gateway-class` is the only
-# GatewayClass on OCP 5.x; the chart's `openshift-default` class is the
-# OCP 4.20-era path. The listener hostname is the cluster-specific field —
+# namespace (controller defaults). The MaaS Gateway's class is
+# `data-science-gateway-class`; `openshift-default` also exists on OCP 5,
+# created by `components/operators/connectivity-link/gatewayclass.yaml` as the
+# RHCL provider-enablement trigger (no `gatewayClassName` references it). The
+# chart's own `openshift-default` template is the OCP 4.20-era legacy path.
+# The listener hostname is the cluster-specific field —
 # kept flat deliberately; patch it in a per-cluster overlay if running
 # elsewhere. The HTTPS listener references the LE wildcard secret
 # `apps-wildcard-tls` directly: once a custom `defaultCertificate` is set,

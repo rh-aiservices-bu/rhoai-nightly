@@ -535,7 +535,7 @@ Operators and instances have dependencies that must be respected:
 **Specific Dependencies:**
 - `nvidia-instance` requires `nfd-instance` (NFD must label GPU nodes first)
 - `rhoai-instance` requires `rhoai-operator` to be ready
-- Service Mesh is **not** GitOps-managed here: the ingress operator owns istio for Gateway API, and on OCP 4.20.32+ no `servicemeshoperator3` OLM operator exists at all (`managed-by=sail-library`). See `docs/workarounds.md` §B and §C2
+- Service Mesh is **not** GitOps-managed here: the ingress operator owns istio for Gateway API. On `ocp5-testing` the connectivity-link component declaratively creates the `openshift-default` GatewayClass (sync-wave 0, preceding the RHCL subscription at wave 1 in the same component), which triggers the Ingress Operator's built-in Istio — no servicemesh operator on OCP 5 either; on OCP 4.20.32+ no `servicemeshoperator3` OLM operator exists at all (`managed-by=sail-library`). See `docs/workarounds.md` §B and §C2
 - `nfs-instance` requires `nfs-provisioner` operator (no other dependencies)
 
 The ApplicationSets handle this by deploying all operators first, then all instances.

@@ -12,6 +12,10 @@ enforcement on the MaaS gateway.
 **Workaround in this repo:** none that restores traffic — enforcement
 (fail-closed) is kept as the current honest state (workarounds.md **E1**);
 the unenforced rollback is not cleanly reachable and is a security hole.
+Not a mitigation for this defect: Prevention for the bootstrap race that
+triggered the §E1 remedy — `components/operators/connectivity-link/` wave-orders
+the `openshift-default` GatewayClass (wave 0) ahead of the RHCL Subscription
+(wave 1).
 
 ## Symptom
 

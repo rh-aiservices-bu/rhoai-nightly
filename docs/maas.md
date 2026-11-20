@@ -14,7 +14,7 @@ separate, deliberate steps.
 | Component | Managed by | Description |
 |-----------|------------|-------------|
 | PostgreSQL | Helm chart (ArgoCD) | API-key storage. 20Gi PVC — size/`storageClassName` configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName` (empty = cluster default). |
-| Gateway + GatewayClass | GitOps: `components/instances/maas-gateway/` (`instance-maas-gateway`) | LoadBalancer gateway for MaaS traffic. OCP5/Praxis owner (GatewayClass `data-science-gateway-class`); the Helm chart's Gateway/GatewayClass templates are the legacy path. |
+| Gateway + GatewayClass | GitOps: `components/instances/maas-gateway/` (`instance-maas-gateway`) | LoadBalancer gateway for MaaS traffic. OCP5/Praxis owner (GatewayClass `data-science-gateway-class`; the platform `openshift-default` enablement class from `components/operators/connectivity-link/` also exists on OCP 5 but is referenced by no Gateway); the Helm chart's Gateway/GatewayClass templates are the legacy path. |
 | PostgreSQL secrets | `install-maas.sh` | Generated password, DB connection URL. |
 | Authorino SSL | `install-maas.sh` | Env vars for TLS trust. Legacy Kuadrant/Authorino stacks only — skipped on OCP5/Praxis nightlies, where the Praxis gateway handles auth. |
 | maas-api, maas-controller | RHOAI operator | Deployed automatically when the DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; `kserve.modelsAsService` on 3.5). |

@@ -316,6 +316,16 @@ note on the unenforced window: while the cached probe left every AuthPolicy
 unenforced on the gateway, anonymous `GET /maas-api/v1/models` returned 200 —
 the MaaS API was fully exposed — so the pre-remedy state is a security hole,
 not a fallback; keep enforcement (fail-closed) despite the outage.
+
+**2026-11-20 — Prevention.** `components/operators/connectivity-link/`
+wave-orders the bootstrap: the `openshift-default` GatewayClass (sync-wave 0)
+applies ahead of the RHCL Subscription (sync-wave 1), so the Ingress Operator
+installs its Istio CRDs before the Kuadrant operator's startup probe runs.
+This closes the Kuadrant instance of the race on fresh installs of this repo —
+§E1's other cached-probe victims (e.g. TrustyAI) are not covered by this
+ordering. The pod-bounce remedy above remains for clusters installed before
+the fix (RHCL subscribed before any GatewayClass existed).
+
 **Remove when:** this note (not the E1 remedy — the pod-bounce remedy itself
 stays until RHOAIENG-67925 fixes the startup probe) — when a RHCL build loads
 the wasm shim in the OCP5 sail envoy; verify via envoy logs (no wasm fetch

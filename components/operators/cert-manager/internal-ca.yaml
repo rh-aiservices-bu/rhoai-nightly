@@ -22,6 +22,11 @@ apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: selfsigned-issuer
+  # SkipDryRunOnMissingResource: the cert-manager.io CRDs are created by the
+  # operator this component installs; without the skip ArgoCD rejects the
+  # entire sync at dry-run validation.
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   selfSigned: {}
 ---
@@ -30,6 +35,8 @@ kind: Certificate
 metadata:
   name: selfsigned-ca
   namespace: cert-manager
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   isCA: true
   commonName: selfsigned-ca
@@ -54,6 +61,8 @@ apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: ca-issuer
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   ca:
     secretName: cert-manager-ca

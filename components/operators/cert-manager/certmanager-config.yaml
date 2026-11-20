@@ -23,7 +23,11 @@ kind: CertManager
 metadata:
   name: cluster
   annotations:
-    argocd.argoproj.io/sync-options: ServerSideApply=true
+    # SkipDryRunOnMissingResource: this CertManager singleton is the CRD owner's
+    # own resource — the CRD exists only after the Subscription below installs
+    # the operator, and without the skip ArgoCD rejects the whole sync at
+    # dry-run validation.
+    argocd.argoproj.io/sync-options: ServerSideApply=true,SkipDryRunOnMissingResource=true
 spec:
   controllerConfig:
     overrideArgs:

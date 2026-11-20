@@ -326,6 +326,21 @@ This closes the Kuadrant instance of the race on fresh installs of this repo —
 ordering. The pod-bounce remedy above remains for clusters installed before
 the fix (RHCL subscribed before any GatewayClass existed).
 
+**2026-11-20 — Prevention (second leg): OOM-crashloop trigger.** The
+operator-generated controllers crashloop on their default memory limits
+(kuadrant-operator 500Mi, mcp-gateway-controller 256Mi), and each crash
+drives the EnvoyFilter re-render churn that wedges the wasm shim above. SSA
+resource-limit patches in `components/operators/connectivity-link/`
+(kuadrant-operator 1Gi, mcp-gateway-controller 512Mi) mitigate the trigger:
+the owning operator re-renders its Deployments and reverts out-of-band edits
+to env AND resources alike on every reconcile, but ArgoCD re-applies the
+patch declaratively on each sync/selfHeal, so the limits stick where a
+one-time imperative edit would not. Remove when RHCL 1.5.1 ships the churn
+fix ([kuadrant#2398](https://github.com/kuadrant/kuadrant-operator/issues/2398)).
+The wasm wedge after a churn episode is NOT covered by these patches —
+separate defect, see
+[issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md).
+
 **Remove when:** this note (not the E1 remedy — the pod-bounce remedy itself
 stays until RHOAIENG-67925 fixes the startup probe) — when a RHCL build loads
 the wasm shim in the OCP5 sail envoy; verify via envoy logs (no wasm fetch

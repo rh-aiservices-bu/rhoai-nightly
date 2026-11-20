@@ -1,0 +1,35 @@
+---
+# Partial SSA override of the rhcl-operator-generated Kuadrant operator
+# Deployment: the rhcl-operator stays owner of every field not declared here.
+# The rhcl-operator re-renders this Deployment and reverts
+# out-of-band changes to env AND resources alike; the SSA patch wins because
+# ArgoCD re-applies it declaratively on every sync/selfHeal — the patch, not
+# a one-time imperative edit, is what makes the raised memory limit stick.
+# Without that limit this controller OOM-crashloops under the RHOAI MaaS
+# policy set, and each crash drives EnvoyFilter re-render churn that wedges
+# the gateway's wasm shim (docs/issues/rhcl-wasm-fail-closed.md; CONNLINK-1878;
+# RHOAIENG-103592).
+# REMOVE WHEN: RHCL 1.5.1 ships the churn fix
+# (kuadrant/kuadrant-operator#2398, planned 2026-11-24 per RHOAIENG-103592) —
+# verify with the issue entry's Detection commands, then delete this file.
+# The Deployment does not exist until the CSV installs, so the
+# SkipDryRunOnMissingResource sync option lets the patch apply when the
+# workload appears (ArgoCD selfHeal picks it up).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kuadrant-operator-controller-manager
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false,Prune=false,Delete=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              memory: 256Mi

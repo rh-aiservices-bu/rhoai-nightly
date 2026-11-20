@@ -3,3 +3,6 @@ kind: Kustomization
 resources:
   - gatewayclass.yaml
   - subscription.yaml
+  # SSA resource patches for the operator-generated workloads (see file headers)
+  - kuadrant-operator-resources.yaml
+  - mcp-gateway-controller-resources.yaml

@@ -15,7 +15,12 @@ the unenforced rollback is not cleanly reachable and is a security hole.
 Not a mitigation for this defect: Prevention for the bootstrap race that
 triggered the §E1 remedy — `components/operators/connectivity-link/` wave-orders
 the `openshift-default` GatewayClass (wave 0) ahead of the RHCL Subscription
-(wave 1).
+(wave 1). The OOM-churn trigger is now mitigated declaratively: SSA resource
+patches in the connectivity-link component raise the memory limits of the
+rhcl-operator-generated controllers (remove-when: RHCL 1.5.1 ships the churn
+fix, [kuadrant/kuadrant-operator#2398](https://github.com/Kuadrant/kuadrant-operator/pull/2398),
+per RHOAIENG-103592). The wasm wedge post-churn is NOT mitigated by them — it
+is a separate upstream defect, still fail-closed without a wasm fix.
 
 ## Symptom
 

@@ -29,8 +29,8 @@ SYNC_ORDER=(
     "instance-nfs"
     "nfd"
     "instance-nfd"
-    # No nvidia-operator: on OpenShift 5 the GPU operator is helm-installed
-    # outside ArgoCD (gpu-operator-certified is absent from the v5.0 catalog).
+    # Operator precedes its ClusterPolicy consumer (needs nvidia.com CRDs).
+    "nvidia-gpu-operator"
     "instance-nvidia"
 
     # Phase 2: Dependent Operators
@@ -148,7 +148,7 @@ get_operator_csv_info() {
     case "$1" in
         nfs-provisioner)        echo "nfs-provisioner-operator|nfs-provisioner" ;;
         nfd)                    echo "nfd|openshift-nfd" ;;
-        nvidia-operator)        echo "gpu-operator-certified|nvidia-gpu-operator" ;;
+        nvidia-gpu-operator)    echo "gpu-operator-certified|nvidia-gpu-operator" ;;
         cert-manager)           echo "cert-manager-operator|cert-manager-operator" ;;
         kueue-operator)         echo "kueue-operator|openshift-kueue-operator" ;;
         leader-worker-set)      echo "leader-worker-set|openshift-lws-operator" ;;

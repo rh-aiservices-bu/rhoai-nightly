@@ -195,7 +195,7 @@ log_info "Patched cluster-oper-instances-applicationset"
 # Step 7: Wait for all expected apps to be created
 EXPECTED_APPS=(
     "nfd" "instance-nfd"
-    "instance-nvidia"
+    "nvidia-gpu-operator" "instance-nvidia"
     "kueue-operator"
     "leader-worker-set" "instance-lws"
     "jobset-operator" "instance-jobset"

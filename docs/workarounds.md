@@ -341,6 +341,23 @@ The wasm wedge after a churn episode is NOT covered by these patches —
 separate defect, see
 [issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md).
 
+**2026-11-22 — Prevention (third leg): tenant telemetry disable.** RHOAI 3.6
+enables tenant telemetry by default (RHOAIENG-95219): the maas-controller
+renders a `maas-telemetry` TelemetryPolicy (openshift-ingress) whose
+multi-label CEL sources fail on unauthenticated traffic (per-request
+wasm-shim `Task failed` → 500s) and whose renders fed the RHCL 1.5.0
+EnvoyFilter churn above. `MaasTenantConfig.spec.telemetry.enabled=false` —
+verified live to remove the policy and keep it removed — is now declarative
+in `components/instances/maas-oidc/maastenantconfig.yaml` (was imperative),
+so fresh installs cannot re-arm the failure modes. Cost: per-model and
+per-subscription usage attribution in the Observability Usage dashboard.
+Rate limiting is unaffected — TokenRateLimitPolicy enforcement is
+independent of the telemetry policy. If usage attribution is needed,
+re-enable via a route-scoped TelemetryPolicy carrying only safe labels (the
+istiod-bounce remedy for a wedged gateway is documented in the issue file).
+Remove when RHCL 1.5.1 is deployed and the full-label TelemetryPolicy
+verifies non-flapping.
+
 **Remove when:** this note (not the E1 remedy — the pod-bounce remedy itself
 stays until RHOAIENG-67925 fixes the startup probe) — when a RHCL build loads
 the wasm shim in the OCP5 sail envoy; verify via envoy logs (no wasm fetch

@@ -1,0 +1,30 @@
+---
+# Partial SSA patch of the maas-controller-owned MaasTenantConfig: the
+# maas-controller stays owner of every field not declared here (the patch
+# wins on every sync/selfHeal the same way the connectivity-link SSA
+# resource patches do). Telemetry is disabled because RHOAI 3.6 turns tenant
+# telemetry on by default (RHOAIENG-95219): the controller renders a
+# `maas-telemetry` TelemetryPolicy (openshift-ingress) whose multi-label CEL
+# sources fail on unauthenticated traffic — a per-request wasm-shim
+# "Task failed" turns into 500s — and its renders were a churn amplifier for
+# the RHCL 1.5.0 EnvoyFilter churn (RHOAIENG-103592 mitigation;
+# docs/issues/rhcl-wasm-fail-closed.md). Cost: per-model/subscription usage
+# attribution is absent from the Observability Usage dashboard. Rate
+# limiting is NOT affected — TokenRateLimitPolicy enforcement is independent
+# of the telemetry policy. Manual management: if usage attribution is
+# needed, re-enable via a route-scoped TelemetryPolicy carrying only safe
+# (always-resolving) labels — the istiod-bounce remedy for a wedged gateway
+# is documented in the issue file.
+# REMOVE WHEN: RHCL 1.5.1 is deployed and the full-label TelemetryPolicy is
+# verified non-flapping, or a route-scoped safe-label policy replaces it.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaasTenantConfig
+metadata:
+  name: default-tenant
+  namespace: models-as-a-service
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true,Validate=false,Prune=false,Delete=false,SkipDryRunOnMissingResource=true
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  telemetry:
+    enabled: false

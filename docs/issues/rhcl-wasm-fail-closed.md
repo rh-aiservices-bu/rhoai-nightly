@@ -21,12 +21,19 @@ paired components on 2026-11-24.
 Not a mitigation for this defect: Prevention for the bootstrap race that
 triggered the §E1 remedy — `components/operators/connectivity-link/` wave-orders
 the `openshift-default` GatewayClass (wave 0) ahead of the RHCL Subscription
-(wave 1). The OOM-churn trigger is now mitigated declaratively: SSA resource
-patches in the connectivity-link component raise the memory limits of the
-rhcl-operator-generated controllers (remove-when: RHCL 1.5.1 ships the churn
+(wave 1). The OOM-churn trigger is mitigated for the kuadrant-operator only:
+an SSA resource patch in the connectivity-link component plus an imperative
+CSV-template patch on the live cluster raise that Deployment's memory limit
+(remove-when: RHCL 1.5.1 ships the churn
 fix, [kuadrant/kuadrant-operator#2398](https://github.com/Kuadrant/kuadrant-operator/pull/2398),
-per RHOAIENG-103592). The wasm wedge post-churn is NOT mitigated by them — it
-is a separate upstream defect, still fail-closed without a wasm fix.
+per RHOAIENG-103592). The rhcl-operator-generated mcp-gateway-controller
+carries no workaround: its 256Mi limit is hardcoded in the kuadrant-operator's
+embedded chart with no knob, and the chart's ~20s re-render loop outpaces any
+declarative re-assert — the occasional idle OOMKill is accepted, and
+parameterizing the chart's controller resources is the upstream ask (see the
+workarounds.md second-leg Prevention entry). The wasm wedge post-churn is NOT
+mitigated by these measures — it is a separate upstream defect, still
+fail-closed without a wasm fix.
 
 ## Symptom
 

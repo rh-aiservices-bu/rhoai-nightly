@@ -329,15 +329,32 @@ the fix (RHCL subscribed before any GatewayClass existed).
 **2026-11-20 — Prevention (second leg): OOM-crashloop trigger.** The
 operator-generated controllers crashloop on their default memory limits
 (kuadrant-operator 500Mi, mcp-gateway-controller 256Mi), and each crash
-drives the EnvoyFilter re-render churn that wedges the wasm shim above. SSA
-resource-limit patches in `components/operators/connectivity-link/`
-(kuadrant-operator 1Gi, mcp-gateway-controller 512Mi) mitigate the trigger:
-the owning operator re-renders its Deployments and reverts out-of-band edits
-to env AND resources alike on every reconcile, but ArgoCD re-applies the
+drives the EnvoyFilter re-render churn that wedges the wasm shim above. The
+kuadrant-operator limit is raised to 1Gi on the live cluster two ways. First,
+the SSA patch in `components/operators/connectivity-link/`: that Deployment is
+bundle-owned (OLM enforces the CSV bundle spec), and ArgoCD re-asserts the
 patch declaratively on each sync/selfHeal, so the limits stick where a
-one-time imperative edit would not. Remove when RHCL 1.5.1 ships the churn
-fix ([kuadrant#2398](https://github.com/kuadrant/kuadrant-operator/issues/2398)).
-The wasm wedge after a churn episode is NOT covered by these patches —
+one-time imperative edit would not. Second, an imperative CSV-template patch
+on the `rhcl-operator.v1.5.0` CSV
+(`/spec/install/spec/deployments/0/spec/template/spec/containers/0/resources`:
+limits.memory 1Gi + requests.memory 256Mi) so OLM itself enforces the raised
+values. The CSV patch does not survive an RHCL upgrade — a new CSV ships the
+bundle defaults — which coincides with the remove-when below. The rates
+decide where a declarative patch can win: ArgoCD's ~3m self-heal outpaces
+OLM's enforcement cadence on the bundle-owned kuadrant-operator Deployment,
+but it cannot outpace the ~20s chart re-render loop that owns the
+mcp-gateway-controller Deployment — which is why that Deployment carries no
+workaround: the SSA override attempted 2026-11-20 was removed 2026-11-22 as
+ineffective. The kuadrant-operator renders that Deployment from an embedded
+Helm chart with a hardcoded 256Mi limit — no chart value, no
+KuadrantControlPlane spec field, no env knob (verified against
+kuadrant-operator main and v1.6.0). The occasional idle OOMKill is
+accepted: MCP gateway features are unused by this rig's MaaS testing, and the
+correct upstream ask is parameterizing the chart's controller resources (file
+per the [issues/](issues/README.md) process when scheduled). Remove when RHCL
+1.5.1 ships the churn fix
+([kuadrant#2398](https://github.com/kuadrant/kuadrant-operator/issues/2398)).
+The wasm wedge after a churn episode is NOT covered by these measures —
 separate defect, see
 [issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md).
 

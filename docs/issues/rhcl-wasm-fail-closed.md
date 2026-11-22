@@ -4,14 +4,20 @@
 Connectivity Link; MaaS-class issues flow to CONNLINK), with a mirror on
 [Kuadrant/kuadrant-operator](https://github.com/Kuadrant/kuadrant-operator)
 GitHub for fix velocity. **OCPBUGS only if the sail envoy build is proven at
-fault** — the evidence so far does not isolate the component.
+fault** — the initial trigger is not isolated to a component build; the
+persistence mechanism is localized to the sail control plane's cached
+translation (Root cause, 2026-11-22 findings) and the 1.5.1 fix content is
+confirmed locally (Churn-fix confirmation), pending RHCL 1.5.1 (2026-11-24).
 **Found:** 2026-11-19, cluster `nightly.rhai-tmm.dev` (OpenShift 5.0.1, RHOAI
 `rhods-operator.3.6.0` nightly, RHCL 1.5.0), immediately after the
 workarounds.md §E1 pod-bounce remedy (RHOAIENG-67925) re-enabled AuthPolicy
 enforcement on the MaaS gateway.
 **Workaround in this repo:** none that restores traffic — enforcement
 (fail-closed) is kept as the current honest state (workarounds.md **E1**);
-the unenforced rollback is not cleanly reachable and is a security hole.
+the unenforced rollback is not cleanly reachable and is a security hole. A
+recovery sequence for a wedged gateway exists (churn-trigger fix + istiod
+bounce — see **Recovery** below); the expected full unblock is RHCL 1.5.1's
+paired components on 2026-11-24.
 Not a mitigation for this defect: Prevention for the bootstrap race that
 triggered the §E1 remedy — `components/operators/connectivity-link/` wave-orders
 the `openshift-default` GatewayClass (wave 0) ahead of the RHCL Subscription
@@ -59,12 +65,71 @@ So the network path is good and the failure is envoy-internal — a signature
 matching no known issue. `FAIL_RELOAD` makes the failed load fail-closed: the
 filter chain rejects everything it governs, which is the 5xx above.
 
+**Persistence mechanism (2026-11-22 testing):** the wedge outlives every
+remedy aimed at the envoy side. After a churn episode the module fails to
+load on EVERY envoy — fresh or old, any config, any operator version — while
+the serving side verifies healthy end-to-end: the envoy wasm-fetch cluster
+counters show `rq_success:2 rq_error:0`, an envoy-situ curl pod fetches
+200/5.4–5.6MB, `config_dump` confirms the clusters are plaintext (mTLS ruled
+out), the endpoints are correct, and the operator pod itself serves the shim
+on :8082. A fresh envoy fails its first load in <50ms: `createWasm: failed
+to load (in progress)` followed by `(cached)` — the module never
+instantiates. An `istiod-openshift-gateway` pod bounce heals the load
+immediately (the module's own logging appears); the per-envoy poison lives
+in the sail control plane's cached translation, inherited by every fresh
+envoy. Consequence: wedged-gateway recovery = fix the churn trigger + bounce
+istiod; the §E1 operator pod-bounce alone was never sufficient (see
+**Recovery**).
+
 **Not the NetworkPolicy class of
 [kuadrant-operator#2234](https://github.com/Kuadrant/kuadrant-operator/issues/2234)**
 (deny-all NetworkPolicy in `kuadrant-system` blocking the wasm fetch, fixed by
 [#2244](https://github.com/Kuadrant/kuadrant-operator/pull/2244), merged
 2026-09-16 on main): that root cause is ruled out by the NetworkPolicy allow
 proof in the evidence bundle below.
+
+## Churn-fix confirmation (2026-11-22)
+
+Upstream kuadrant-operator v1.6.0 plus PR
+[#2398](https://github.com/Kuadrant/kuadrant-operator/pull/2398)'s four
+determinism commits (built locally as
+`quay.io/jharmison/kuadrant-operator:v1.6.0-2398`) rendered the gateway's
+wasm EnvoyFilter deterministically — 0 rewrites over 90s. RHCL 1.5.1's
+planned fix content works as claimed.
+
+Test caveat: the run was an operator-only swap (upstream shim + RHCL
+authorino). RHCL 1.5.1 ships wasm-shim 0.15.0 PAIRED with authorino 0.28.0,
+and the pair matters: the swapped state showed per-request shim→authorino
+gRPC failures (`gRPC status code is not OK`) that the matched pairing does
+not show.
+
+### Testing technique — a modified operator image under OLM
+
+OLM continuously enforces the CSV bundle spec on operator Deployments: env,
+resource, and image patches revert in seconds (generation churn ~1 per 2.5
+minutes; OLM itself is CVO-managed and cannot be paused). The only stable way
+to test a modified operator image is to patch the CSV's embedded deployment
+template — OLM then enforces the patched spec; revert by patching the CSV
+back:
+
+```bash
+oc patch csv <csv-name> -n <namespace> --type=json -p='[{"op":"replace",
+  "path":"/spec/install/spec/deployments/0/spec/template/spec/containers/0/image",
+  "value":"<image>"}]'
+```
+
+## Recovery
+
+Wedged-gateway recovery sequence:
+
+1. Remove or fix the churn trigger.
+2. Bounce `istiod-openshift-gateway`.
+3. Verify the wasm loads — envoy logs `wasm log kuadrant-wasm-shim …`.
+4. Verify traffic.
+
+RHCL 1.5.1 (paired wasm-shim 0.15.0 + authorino 0.28.0) + istiod bounce is
+the expected full unblock on 2026-11-24; test tracker CONNLINK-2003 was
+still New as of 2026-11-22, so the date is at risk.
 
 ## Detection
 
@@ -123,9 +188,10 @@ oc get authpolicies.kuadrant.io -A
   operator-wide, and apply only post-load (CONNLINK-1956, support case
   07801313 — itself a RHOAI MaaS + RHCL case). No documented non-wasm
   enforcement path exists (no ambient/extproc alternative found).
-- **No upstream rescue yet:** RHCL 1.5.1 is being staged (CONNLINK-2004 +
-  regression tickets, 2026-11-11); no published 1.5.x/1.6 claim mentions a
-  wasm or OCP5 fix.
+- **Upstream fix status:** RHCL 1.5.1 is staged (CONNLINK-2004 + regression
+  tickets, 2026-11-11); its fix content is confirmed locally (see Churn-fix
+  confirmation, 2026-11-22), pending publication — test tracker
+  CONNLINK-2003 was still New as of 2026-11-22.
 
 ## Related, unconfirmed — blocked behind this defect
 
@@ -145,6 +211,8 @@ unconfirmed, not a claim.**
   [#2244](https://github.com/Kuadrant/kuadrant-operator/pull/2244); **not our
   root cause**
 - CONNLINK-1595, CONNLINK-1878, CONNLINK-1956, CONNLINK-595
+- CONNLINK-2003 (1.5.1 test tracker; New as of 2026-11-22), CONNLINK-2004
+  (1.5.1 staging)
 - CONNLINK-2030 (MaaS issues flow to CONNLINK)
 - [RHOAIENG-67925](https://redhat.atlassian.net/browse/RHOAIENG-67925) (the §E1
   cached dependency probe) — its pod-bounce remedy is what surfaces this

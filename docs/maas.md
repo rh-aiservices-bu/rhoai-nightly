@@ -1,36 +1,33 @@
 # MaaS (Models as a Service)
 
-MaaS provides API-key management, subscriptions, and rate limiting for LLM inference
-services on RHOAI. It uses a hybrid GitOps + imperative approach: a declarative Gateway
-(`components/instances/maas-gateway/`), a Helm chart for PostgreSQL, plus
-`install-maas.sh` for the bits that can't be declarative (generated secrets; Authorino
-SSL only when a legacy Authorino stack exists).
+MaaS provides API-key management, subscriptions, and rate limiting for LLM inference services on RHOAI. It uses a hybrid
+GitOps + imperative approach: a declarative Gateway (`components/instances/maas-gateway/`), a Helm chart for PostgreSQL,
+plus `install-maas.sh` for the bits that can't be declarative (generated secrets; Authorino SSL only when a legacy
+Authorino stack exists).
 
-`make all` installs the MaaS **platform** automatically. Models and observability are
-separate, deliberate steps.
+`make all` installs the MaaS **platform** automatically. Models and observability are separate, deliberate steps.
 
 ## What gets deployed
 
-| Component | Managed by | Description |
-|-----------|------------|-------------|
-| PostgreSQL | Helm chart (ArgoCD) | API-key storage. 20Gi PVC — size/`storageClassName` configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName` (empty = cluster default). |
-| Gateway + GatewayClass | GitOps: `components/instances/maas-gateway/` (`instance-maas-gateway`) | LoadBalancer gateway for MaaS traffic. OCP5/Praxis owner (GatewayClass `data-science-gateway-class`; the platform `openshift-default` enablement class from `components/operators/connectivity-link/` also exists on OCP 5 but is referenced by no Gateway); the Helm chart's Gateway/GatewayClass templates are the legacy path. |
-| PostgreSQL secrets | `install-maas.sh` | Generated password, DB connection URL. |
-| Authorino SSL | `install-maas.sh` | Env vars for TLS trust. Legacy Kuadrant/Authorino stacks only — skipped on OCP5/Praxis nightlies, where the Praxis gateway handles auth. |
-| maas-api, maas-controller | RHOAI operator | Deployed automatically when the DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; `kserve.modelsAsService` on 3.5). |
-| UWM | `make uwm` (part of `make infra`) | Prerequisite for scraping MaaS metrics. |
-| TelemetryPolicy + Istio Telemetry | `instance-maas-observability` (ArgoCD) | Per-subscription/model/user metric labels. Added by `make observability`. |
-| Observability cascade (Kuadrant, ServiceMonitors, Perses/Tempo/OTel) | `make observability` (separate, settle-gated) | Lights up the RHOAI Observability dashboard. |
+| Component                                                            | Managed by                                                             | Description                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL                                                           | Helm chart (ArgoCD)                                                    | API-key storage. 20Gi PVC — size/`storageClassName` configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName` (empty = cluster default).                                                                                                                                                 |
+| Gateway + GatewayClass                                               | GitOps: `components/instances/maas-gateway/` (`instance-maas-gateway`) | LoadBalancer gateway for MaaS traffic. OCP5/Praxis owner (GatewayClass `data-science-gateway-class`; the platform `openshift-default` enablement class from `components/operators/connectivity-link/` also exists on OCP 5 but is referenced by no Gateway); the Helm chart's Gateway/GatewayClass templates are the legacy path. |
+| PostgreSQL secrets                                                   | `install-maas.sh`                                                      | Generated password, DB connection URL.                                                                                                                                                                                                                                                                                            |
+| Authorino SSL                                                        | `install-maas.sh`                                                      | Env vars for TLS trust. Legacy Kuadrant/Authorino stacks only — skipped on OCP5/Praxis nightlies, where the Praxis gateway handles auth.                                                                                                                                                                                          |
+| maas-api, maas-controller                                            | RHOAI operator                                                         | Deployed automatically when the DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; `kserve.modelsAsService` on 3.5).                                                                                                                                                                                                      |
+| UWM                                                                  | `make uwm` (part of `make infra`)                                      | Prerequisite for scraping MaaS metrics.                                                                                                                                                                                                                                                                                           |
+| TelemetryPolicy + Istio Telemetry                                    | `instance-maas-observability` (ArgoCD)                                 | Per-subscription/model/user metric labels. Added by `make observability`.                                                                                                                                                                                                                                                         |
+| Observability cascade (Kuadrant, ServiceMonitors, Perses/Tempo/OTel) | `make observability` (separate, settle-gated)                          | Lights up the RHOAI Observability dashboard.                                                                                                                                                                                                                                                                                      |
 
-Legacy OCP 4.x opt-in for the chart's Gateway templates (ArgoCD Application
-`helm.values`; `install-maas.sh` injects only `namespace`, so these must be
-supplied by whoever creates the Application):
+Legacy OCP 4.x opt-in for the chart's Gateway templates (ArgoCD Application `helm.values`; `install-maas.sh` injects
+only `namespace`, so these must be supplied by whoever creates the Application):
 
 ```yaml
 gateway:
   enabled: true
   clusterDomain: apps.<cluster-domain>
-  certName: router-certs-default   # optional; override as needed
+  certName: router-certs-default # optional; override as needed
 ```
 
 ## Install the platform
@@ -39,17 +36,14 @@ gateway:
 make maas
 ```
 
-Auto-detects the cluster domain, creates the PostgreSQL secrets,
-deploys the Helm chart via ArgoCD (PostgreSQL + 20Gi PVC; the chart's
-Gateway/GatewayClass templates are the legacy path — the live Gateway comes from
-`components/instances/maas-gateway/` via `instance-maas-gateway`), and configures
-Authorino SSL only when a legacy Authorino stack exists. ELB DNS propagation can
-take **2–5 minutes** after install.
+Auto-detects the cluster domain, creates the PostgreSQL secrets, deploys the Helm chart via ArgoCD (PostgreSQL + 20Gi
+PVC; the chart's Gateway/GatewayClass templates are the legacy path — the live Gateway comes from
+`components/instances/maas-gateway/` via `instance-maas-gateway`), and configures Authorino SSL only when a legacy
+Authorino stack exists. ELB DNS propagation can take **2–5 minutes** after install.
 
-> `make maas` does **not** install observability. The observability cascade (Perses,
-> Tempo, OTel, MonitoringStack) puts significant memory pressure on the control plane,
-> so it's a separate step with its own settle-gate. Run `make observability` once the
-> cluster is healthy.
+> `make maas` does **not** install observability. The observability cascade (Perses, Tempo, OTel, MonitoringStack) puts
+> significant memory pressure on the control plane, so it's a separate step with its own settle-gate. Run
+> `make observability` once the cluster is healthy.
 
 From Claude Code: `/install-maas` (see [Install with Claude](install-claude.md)).
 
@@ -68,11 +62,11 @@ make maas-model MODEL=all               # all of the above
 
 Available models:
 
-| Model | Hardware | Notes |
-|-------|----------|-------|
-| **simulator** | CPU only | ~256Mi RAM, instant startup, mock responses |
-| **gpt-oss-20b** | 1 GPU | OpenAI gpt-oss-20b on vLLM CUDA, 60Gi RAM, 5–15 min startup |
-| **granite-tiny-gpu** | 1 GPU | RedHatAI Granite 4.0-h-tiny FP8 on vLLM CUDA, 24Gi RAM |
+| Model                | Hardware | Notes                                                       |
+| -------------------- | -------- | ----------------------------------------------------------- |
+| **simulator**        | CPU only | ~256Mi RAM, instant startup, mock responses                 |
+| **gpt-oss-20b**      | 1 GPU    | OpenAI gpt-oss-20b on vLLM CUDA, 60Gi RAM, 5–15 min startup |
+| **granite-tiny-gpu** | 1 GPU    | RedHatAI Granite 4.0-h-tiny FP8 on vLLM CUDA, 24Gi RAM      |
 
 Each model gets two subscription tiers (all authenticated users):
 
@@ -99,9 +93,8 @@ make maas-model-delete MODEL=all         # delete all
 make maas-verify
 ```
 
-Full end-to-end test: deploys a temporary simulator model, creates an API key, tests
-inference, checks auth enforcement and rate limiting (429s), then cleans up. It does
-**not** touch persistently deployed models.
+Full end-to-end test: deploys a temporary simulator model, creates an API key, tests inference, checks auth enforcement
+and rate limiting (429s), then cleans up. It does **not** touch persistently deployed models.
 
 ## Observability
 
@@ -113,28 +106,33 @@ make observability             # settle-gate -> flip instance-rhoai overlay
 make observability-uninstall   # reverse-flip; monitoring cascade tears down
 ```
 
-The **settle-gate** refuses to run if any master is ≥80% memory (override: SETTLE_GATE_MASTER_MEM_MAX), the DSC/DSCI aren't
-`Ready`, there are non-terminal pods in core namespaces, or etcd is `Degraded`. This
-prevents the cascade from tipping a stressed control plane into OOM.
+`make observability-uninstall` reverse-flips the overlay and the operator tears the LokiStack down with the cascade —
+usage-log data does **not** survive an observability off/on cycle.
 
-> **Control-plane sizing.** The monitoring cascade is memory-heavy on the masters.
-> Use **`m6a.2xlarge`** (or larger) control-plane nodes — smaller types fail the
-> settle-gate. On demo.redhat.com this must be chosen at order time (masters can't be
-> resized later) — see [Provision a cluster](demo-env.md#1-order-an-aws-openshift-environment).
+The **settle-gate** refuses to run if any master is ≥80% memory (override: SETTLE_GATE_MASTER_MEM_MAX), the DSC/DSCI
+aren't `Ready`, there are non-terminal pods in core namespaces, or etcd is `Degraded`. This prevents the cascade from
+tipping a stressed control plane into OOM.
 
-Observability lights up the RHOAI 3.x **Observability dashboard** (request rate,
-success rate, GPU/CPU/memory, per-subscription usage). On RHOAI 3.6 the
-dashboard operator auto-detects the Perses service and wires the `/perses`
-proxy itself (see the wiring check below); the tab is visible only to
-dashboard admins (cluster-admin); non-admins won't see it.
+> **Control-plane sizing.** The monitoring cascade is memory-heavy on the masters. Use **`m6a.2xlarge`** (or larger)
+> control-plane nodes — smaller types fail the settle-gate. On demo.redhat.com this must be chosen at order time
+> (masters can't be resized later) — see [Provision a cluster](demo-env.md#1-order-an-aws-openshift-environment).
 
-> **Verify the dashboard wiring.** Perses pods Running is not enough on its own;
-> confirm the Dashboard CR reports `ObservabilityAvailable=True` (reason
-> `Deployed`) after `make observability`:
+Observability lights up the RHOAI 3.x **Observability dashboard** (request rate, success rate, GPU/CPU/memory,
+per-subscription usage). On RHOAI 3.6 the dashboard operator auto-detects the Perses service and wires the `/perses`
+proxy itself (see the wiring check below); the tab is visible only to dashboard admins (cluster-admin); non-admins won't
+see it.
+
+On current 3.6 nightlies the Usage panels read **Loki** rather than PromQL: the observability install additionally needs
+the `loki-operator` component (`components/operators/loki-operator/` — it provides only the LokiStack CRD) and a
+`USAGE_LOGS_S3_BUCKET` in `.env` (an S3 bucket provisioned out-of-band once with `aws s3api create-bucket`; S3
+credentials are reused from the `LE_AWS_*` keys). The RHOAI operator deploys the usage-logs LokiStack itself from the
+maas-observability overlay's DSCI `monitoring.usageLogs` patch — nothing Loki-related is hand-written in this repo.
+
+> **Verify the dashboard wiring.** Perses pods Running is not enough on its own; confirm the Dashboard CR reports
+> `ObservabilityAvailable=True` (reason `Deployed`) after `make observability`:
 > `oc get dashboard default-dashboard -o jsonpath='{.status.conditions[?(@.type=="ObservabilityAvailable")].status}'`.
-> On RHOAI 3.6 the dashboard operator auto-detects the Perses service, so no
-> manual step is needed (the per-cluster `Dashboard.spec.observability` patch
-> that 3.5 required was retired 2026-10-16). `make diagnose` checks this too.
+> On RHOAI 3.6 the dashboard operator auto-detects the Perses service, so no manual step is needed (the per-cluster
+> `Dashboard.spec.observability` patch that 3.5 required was retired 2026-10-16). `make diagnose` checks this too.
 
 ## Uninstall
 
@@ -146,8 +144,8 @@ See [Uninstall](uninstall.md) for the full order (observability and models first
 
 ## Dry run
 
-The `make maas` / `make maas-uninstall` targets don't forward flags, so call the
-scripts directly to preview without applying:
+The `make maas` / `make maas-uninstall` targets don't forward flags, so call the scripts directly to preview without
+applying:
 
 ```bash
 scripts/install-maas.sh --dry-run     # preview install
@@ -171,5 +169,4 @@ oc get maassubscription -n models-as-a-service
 curl -sk https://maas.<cluster-domain>/maas-api/health
 ```
 
-`make diagnose` includes a MaaS section (and an Observability section) covering all of
-the above.
+`make diagnose` includes a MaaS section (and an Observability section) covering all of the above.

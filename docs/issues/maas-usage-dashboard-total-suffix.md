@@ -7,6 +7,13 @@ ready-to-file draft.
 First seen 2026-09-25 (n56g8, 3.6.0-ea.2); still present 2026-10-16 on
 RHOAI 3.6.0 (`rhoai-3.6-nightly`, operator `b14cd97f`) with RHCL 1.4.3.
 
+**Disposition 2026-11-23** — on the 3.6 nightly build pinned for the current
+reprovision (catalog digest `sha256:864736d5...`), the Usage dashboard panels
+no longer use PromQL `*_total` queries: they read the LokiDatasources
+`usage-logs-multi-tenancy` / `usage-logs-all` (the usage-logs stack — see
+CLAUDE.md). This supersedes the issue's premise on current nightlies; the
+issue remains valid for builds carrying the PromQL-based panels.
+
 ## Symptom
 
 The MaaS **Usage** view of the Observability dashboard renders empty panels

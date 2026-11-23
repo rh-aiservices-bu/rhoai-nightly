@@ -4,20 +4,33 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.x Nightly** builds on OpenShift clusters. It follows a hybrid approach:
+This is a **GitOps repository** for deploying **RHOAI (Red Hat OpenShift AI) 3.x Nightly** builds on OpenShift clusters.
+It follows a hybrid approach:
 
 - **Pre-GitOps Scripts**: Shell scripts for initial cluster setup (GPU nodes, pull secrets, ICSP)
 - **GitOps Deployment**: ArgoCD ApplicationSets that automatically sync components from git
-- **Remote References**: Uses [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) with local patches
+- **Remote References**: Uses [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) with local
+  patches
 
-**Key Principle**: This repository uses a declarative GitOps model where components are deployed by committing Kustomize configurations to git, which ArgoCD automatically syncs to the cluster.
+**Key Principle**: This repository uses a declarative GitOps model where components are deployed by committing Kustomize
+configurations to git, which ArgoCD automatically syncs to the cluster.
 
-**Mission — surface bugs, don't paper over them**: A primary purpose of this repository is to exercise RHOAI nightlies early and **surface product bugs so they get fixed upstream before release**. The deliverable is the bug report, not the workaround. Consequences:
+**Mission — surface bugs, don't paper over them**: A primary purpose of this repository is to exercise RHOAI nightlies
+early and **surface product bugs so they get fixed upstream before release**. The deliverable is the bug report, not the
+workaround. Consequences:
 
-- [docs/issues/](docs/issues/) is the bug ledger — one file per upstream issue with symptom, root cause, detection, and Jira. **Every issue gets filed upstream** (files carry ready-to-file drafts until they are); an issue we found but never filed is a failure of the mission.
-- **Workarounds are a last resort**, accepted only when the rig cannot function or keep testing without one. Never build a workaround for a bug that merely degrades UX — document it, file it, and let it hurt; the pain is the signal that gets it fixed. Each workaround we do carry must be **Temporary** with a Jira and a "remove when" condition, indexed in [docs/workarounds.md](docs/workarounds.md) (developer doc; [docs/known-issues.md](docs/known-issues.md) is the product-facing issue list for cluster users/managers).
-- **Remove workarounds aggressively**: as soon as a nightly contains the upstream fix (verify with the entry's Detection command), delete ours. A redundant workaround hides regressions of the very bug it covered.
-- When a bug appears, the order of work is: root-cause → file/comment upstream (docs/issues entry) → only then decide if a workaround is truly required to keep testing.
+- [docs/issues/](docs/issues/) is the bug ledger — one file per upstream issue with symptom, root cause, detection, and
+  Jira. **Every issue gets filed upstream** (files carry ready-to-file drafts until they are); an issue we found but
+  never filed is a failure of the mission.
+- **Workarounds are a last resort**, accepted only when the rig cannot function or keep testing without one. Never build
+  a workaround for a bug that merely degrades UX — document it, file it, and let it hurt; the pain is the signal that
+  gets it fixed. Each workaround we do carry must be **Temporary** with a Jira and a "remove when" condition, indexed in
+  [docs/workarounds.md](docs/workarounds.md) (developer doc; [docs/known-issues.md](docs/known-issues.md) is the
+  product-facing issue list for cluster users/managers).
+- **Remove workarounds aggressively**: as soon as a nightly contains the upstream fix (verify with the entry's Detection
+  command), delete ours. A redundant workaround hides regressions of the very bug it covered.
+- When a bug appears, the order of work is: root-cause → file/comment upstream (docs/issues entry) → only then decide if
+  a workaround is truly required to keep testing.
 
 ## Repository Structure
 
@@ -256,23 +269,29 @@ make observability-uninstall # Reverse-flip instance-rhoai to overlays/maas; mon
 ```
 
 Available models:
+
 - `simulator` — CPU-only mock (~256Mi RAM, no real LLM)
 - `gpt-oss-20b` — OpenAI gpt-oss-20b on vLLM GPU (1 GPU, 60Gi RAM)
 - `granite-tiny-gpu` — RedHatAI Granite 4.0-h-tiny FP8 on vLLM GPU (1 GPU, 24Gi RAM)
 
-Each model gets free tier (100 tokens/min, all authenticated users) and premium tier (100000 tokens/min, all authenticated users).
+Each model gets free tier (100 tokens/min, all authenticated users) and premium tier (100000 tokens/min, all
+authenticated users).
 
 ### Repository Configuration (for forks)
 
 Three options, by durability:
 
 1. **Inline env var (ephemeral, no file edits)** — for test runs / feature branches:
+
    ```bash
    GITOPS_BRANCH=my-feature-branch make deploy
    ```
-   `scripts/deploy-apps.sh` reads `GITOPS_BRANCH` at runtime and patches ArgoCD ApplicationSets + every child Application on the cluster. The checked-in YAML is unchanged.
+
+   `scripts/deploy-apps.sh` reads `GITOPS_BRANCH` at runtime and patches ArgoCD ApplicationSets + every child
+   Application on the cluster. The checked-in YAML is unchanged.
 
 2. **`.env` override (persistent across sessions, still no file edits)**:
+
    ```bash
    echo "GITOPS_BRANCH=my-feature-branch" >> .env
    make deploy
@@ -284,7 +303,9 @@ Three options, by durability:
    GITOPS_BRANCH=my-default \
    make configure-repo
    ```
-   Use only for permanent fork setups. Mutates `components/argocd/apps/*.yaml`, the cluster overlay patches, and the bootstrap `cluster-config-app.yaml`. Must be committed. **Not appropriate for ephemeral branch testing** — creates a commit that has to be reverted before merge.
+   Use only for permanent fork setups. Mutates `components/argocd/apps/*.yaml`, the cluster overlay patches, and the
+   bootstrap `cluster-config-app.yaml`. Must be committed. **Not appropriate for ephemeral branch testing** — creates a
+   commit that has to be reverted before merge.
 
 ### RHOAI Version Configuration
 
@@ -297,9 +318,13 @@ spec:
   displayName: RHOAI 3.6 Nightly
 ```
 
-The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently **`stable-3.x`** — the `rhoai-3.6-nightly` head is `rhods-operator.3.6.0`, skipRange `>=3.5.0 <3.6.0`. EA builds ship only on `beta`; switch to `beta` when tracking an `-ea.N-nightly` tag).
+The subscription channel is set in `components/operators/rhoai-operator/base/patch-channel.yaml` (currently
+**`stable-3.x`** — the `rhoai-3.6-nightly` head is `rhods-operator.3.6.0`, skipRange `>=3.5.0 <3.6.0`. EA builds ship
+only on `beta`; switch to `beta` when tracking an `-ea.N-nightly` tag).
 
-**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.6-nightly` tag so a fresh install always gets the newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to exactly one build (e.g. a ledger audit); revert it before merging.
+**Floating tag vs digest pin:** `main` tracks the floating `:rhoai-3.6-nightly` tag so a fresh install always gets the
+newest nightly. Pin a digest (`rhoai-fbc-fragment@sha256:...`) only on a test branch, and only when one run must map to
+exactly one build (e.g. a ledger audit); revert it before merging.
 
 ```bash
 # After editing, commit and push
@@ -313,10 +338,12 @@ make restart-catalog  # Force catalog pod to pull new image
 ```
 
 **Catalog image examples:**
+
 - `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-nightly` (the 3.6 z-stream nightly track; channel `stable-3.x`)
 - `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.6-ea.2-nightly` (an EA nightly track; channel `beta`)
 - `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5-nightly` (the previous 3.5 z-stream nightly track; channel `stable-3.x`)
-- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5` (the released z-stream — a *different track*, moving to it is a track change)
+- `quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.5` (the released z-stream — a _different track_, moving to it is a track
+  change)
 
 ## Configuration (.env file)
 
@@ -353,17 +380,63 @@ GITOPS_BRANCH=main
 
 ## Let's Encrypt Wildcard TLS
 
-`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…` points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`; the ingress operator retires `router-certs-default` and mounts the custom wildcard secret on the routers directly, so the MaaS Gateway listener references `apps-wildcard-tls` explicitly (updated in the same flow). Everything flows through GitOps except the credential secret (imperative via `.env`, like the pull-secret flow). Alongside the public `letsencrypt-prod` issuer, the cert-manager operator component also provisions an internal CA (`selfsigned-issuer` → Certificate `selfsigned-ca` → ClusterIssuer `ca-issuer`) for chart-stack TLS that references it by name (CNPG in the postgres-cluster chart, etc.).
+`make le-creds` provisions the Route53 credential secret (`letsencrypt-route53-credentials`, ns `cert-manager`) consumed
+by the `letsencrypt-prod` ClusterIssuer in `components/instances/letsencrypt/` (`instance-letsencrypt` ArgoCD
+Application). The component requests a wildcard for `*.apps.<cluster-domain>` via DNS-01 (required — `maas.apps.…`
+points at the Gateway ELB, so HTTP-01 is unreachable) and sideloads it as the ingress controller's `defaultCertificate`;
+the ingress operator retires `router-certs-default` and mounts the custom wildcard secret on the routers directly, so
+the MaaS Gateway listener references `apps-wildcard-tls` explicitly (updated in the same flow). Everything flows through
+GitOps except the credential secret (imperative via `.env`, like the pull-secret flow). Alongside the public
+`letsencrypt-prod` issuer, the cert-manager operator component also provisions an internal CA (`selfsigned-issuer` →
+Certificate `selfsigned-ca` → ClusterIssuer `ca-issuer`) for chart-stack TLS that references it by name (CNPG in the
+postgres-cluster chart, etc.).
 
 ## Keycloak (identity provider)
 
-The cluster's OIDC identity provider (console login, MaaS portal) is Keycloak, deployed by `make keycloak` (`scripts/install-keycloak.sh`) from two OCI charts on ghcr (`jharmison-redhat/helm-charts`) as raw-OCI ArgoCD sources (`oci://ghcr.io/.../<chart>` + `path: "."`; each chart artifact is its own repo, and the scheme-less Helm-source form with `chart:` is a working alternative): `keycloak` (Keycloak CR + realm `sso` + CNPG postgres, Application `instance-keycloak`) and `keycloak-auth` (OAuth IdP upsert, cluster-admins group, console logout redirect, Application `instance-keycloak-auth`), in that order — the auth hooks need a live issuer. The RHBK + CloudNativePG operators come from the GitOps component `components/operators/keycloak-stack/` (which also owns ns `keycloak`); the chart instances are script-created ArgoCD Applications with Helm values injected from `.env` (the install-maas.sh pattern) — realm users, client secrets and the OAuth IdP secret are never in git, missing `KEYCLOAK_*` vars are generated and appended to `.env` on first run. Realm `sso` carries clients `ocp-idp` (OCP OAuth), `maas-api`, `maas-consumer-portal`; admin user `keycloak-admin` (password `KEYCLOAK_ADMIN_PASSWORD` in `.env`), test users alice/bob.
+The cluster's OIDC identity provider (console login, MaaS portal) is Keycloak, deployed by `make keycloak`
+(`scripts/install-keycloak.sh`) from two OCI charts on ghcr (`jharmison-redhat/helm-charts`) as raw-OCI ArgoCD sources
+(`oci://ghcr.io/.../<chart>` + `path: "."`; each chart artifact is its own repo, and the scheme-less Helm-source form
+with `chart:` is a working alternative): `keycloak` (Keycloak CR + realm `sso` + CNPG postgres, Application
+`instance-keycloak`) and `keycloak-auth` (OAuth IdP upsert, cluster-admins group, console logout redirect, Application
+`instance-keycloak-auth`), in that order — the auth hooks need a live issuer. The RHBK + CloudNativePG operators come
+from the GitOps component `components/operators/keycloak-stack/` (which also owns ns `keycloak`); the chart instances
+are script-created ArgoCD Applications with Helm values injected from `.env` (the install-maas.sh pattern) — realm
+users, client secrets and the OAuth IdP secret are never in git, missing `KEYCLOAK_*` vars are generated and appended to
+`.env` on first run. Realm `sso` carries clients `ocp-idp` (OCP OAuth), `maas-api`, `maas-consumer-portal`; admin user
+`keycloak-admin` (password `KEYCLOAK_ADMIN_PASSWORD` in `.env`), test users alice/bob.
 
-Uninstall with `make keycloak-uninstall`, NOT `oc delete application` — ArgoCD's execution of Helm pre-delete hooks is version/condition-dependent, so deleting the Applications directly could leave the OAuth identityProviders entry and console logoutRedirect pointing at a dead Keycloak. The uninstall strips the IdP entry and redirect itself (belt-and-braces; only its own entries are touched, other IdPs preserved) before deleting the Applications, and keeps ns `keycloak` and kubeadmin. Caveat: the realm-import job runs Keycloak's FULL import, which skips entirely when the realm already exists (`Realm 'sso' already exists. Import skipped`) — deleting and recreating the `KeycloakRealmImport` does NOT re-run it while the realm persists in the database. Realm-config changes therefore require deleting the realm itself (admin API via the operator's `keycloak-initial-admin` secret in ns `keycloak` — the chart-created realm admin has no REST roles), then deleting the `KeycloakRealmImport` and its Job so a fresh import runs.
+Uninstall with `make keycloak-uninstall`, NOT `oc delete application` — ArgoCD's execution of Helm pre-delete hooks is
+version/condition-dependent, so deleting the Applications directly could leave the OAuth identityProviders entry and
+console logoutRedirect pointing at a dead Keycloak. The uninstall strips the IdP entry and redirect itself
+(belt-and-braces; only its own entries are touched, other IdPs preserved) before deleting the Applications, and keeps ns
+`keycloak` and kubeadmin. Caveat: the realm-import job runs Keycloak's FULL import, which skips entirely when the realm
+already exists (`Realm 'sso' already exists. Import skipped`) — deleting and recreating the `KeycloakRealmImport` does
+NOT re-run it while the realm persists in the database. Realm-config changes therefore require deleting the realm itself
+(admin API via the operator's `keycloak-initial-admin` secret in ns `keycloak` — the chart-created realm admin has no
+REST roles), then deleting the `KeycloakRealmImport` and its Job so a fresh import runs.
 
 ### Keycloak ↔ MaaS OIDC wiring
 
-Two realm clients serve MaaS: `maas-api` (the AITenant OIDC issuer — the gateway enforces a single-client `azp==clientId`, RHOAIENG-103680) and `maas-consumer-portal` (the consumer-portal auth-proxy). The GitOps side lives at `components/instances/maas-oidc/` (`instance-maas-oidc` Application): `AITenant.spec.oidc` points at the Keycloak realm issuer (publicly trusted via the LE wildcard cert — no DSCI trustedCABundle needed); both manifests apply with ServerSideApply since the maas-controller and dashboard-operator co-own those CRs. The AITenant OIDC wiring + portal credentials are in place and MaaS token auth works against Keycloak; the portal is enabled declaratively via a `dashboard.maasPortal.managementState: Managed` DSC patch in `components/instances/rhoai-instance/overlays/maas/` (dashboard-operator deploys the portal operand — Deployment/Service/HTTPRoute; ai-gateway-controller adds the auth proxy + routes/AuthPolicies once the `maas-portal` Service, AITenant OIDC and creds secret all exist; base stays portal-free as the no-MaaS baseline (aigateway states Removed, no AITenant OIDC wiring, no creds secret), so the portal flag lives with the overlay that turns MaaS on, and the auth proxy + routes layer renders only once those prerequisites exist (ai-gateway-controller-owned, not a user prerequisite)). Two front doors serve the portal UI: `https://<gateway-domain>/maas-portal/` (platform GatewayConfig OCP-OAuth path) and `https://maas.apps.<domain>/maas-portal/` (MaaS gateway session path); portal API function depends on gateway AuthPolicy enforcement — see docs/known-issues.md (RHCL AuthPolicy/wasm defects) before expecting end-to-end function. The portal's credentials secret (`maas-consumer-portal-auth-proxy-creds`, ns `redhat-ai-gateway-infra`) is the imperative administrator path: `make maas-portal-creds` takes `KEYCLOAK_PORTAL_SECRET` from `.env` and generates `MAAS_PORTAL_COOKIE_SECRET` into `.env` on first run (the tenant-managed alternative, `AITenant.spec.oidc.clientSecretRef`, is not used). Note that removing `spec.oidc` does not revoke IdP-token access — the gateway rules persist until cleaned (RHOAIENG-103587); revoke via the Keycloak client instead.
+Two realm clients serve MaaS: `maas-api` (the AITenant OIDC issuer — the gateway enforces a single-client
+`azp==clientId`, RHOAIENG-103680) and `maas-consumer-portal` (the consumer-portal auth-proxy). The GitOps side lives at
+`components/instances/maas-oidc/` (`instance-maas-oidc` Application): `AITenant.spec.oidc` points at the Keycloak realm
+issuer (publicly trusted via the LE wildcard cert — no DSCI trustedCABundle needed); both manifests apply with
+ServerSideApply since the maas-controller and dashboard-operator co-own those CRs. The AITenant OIDC wiring + portal
+credentials are in place and MaaS token auth works against Keycloak; the portal is enabled declaratively via a
+`dashboard.maasPortal.managementState: Managed` DSC patch in `components/instances/rhoai-instance/overlays/maas/`
+(dashboard-operator deploys the portal operand — Deployment/Service/HTTPRoute; ai-gateway-controller adds the auth
+proxy + routes/AuthPolicies once the `maas-portal` Service, AITenant OIDC and creds secret all exist; base stays
+portal-free as the no-MaaS baseline (aigateway states Removed, no AITenant OIDC wiring, no creds secret), so the portal
+flag lives with the overlay that turns MaaS on, and the auth proxy + routes layer renders only once those prerequisites
+exist (ai-gateway-controller-owned, not a user prerequisite)). Two front doors serve the portal UI:
+`https://<gateway-domain>/maas-portal/` (platform GatewayConfig OCP-OAuth path) and
+`https://maas.apps.<domain>/maas-portal/` (MaaS gateway session path); portal API function depends on gateway AuthPolicy
+enforcement — see docs/known-issues.md (RHCL AuthPolicy/wasm defects) before expecting end-to-end function. The portal's
+credentials secret (`maas-consumer-portal-auth-proxy-creds`, ns `redhat-ai-gateway-infra`) is the imperative
+administrator path: `make maas-portal-creds` takes `KEYCLOAK_PORTAL_SECRET` from `.env` and generates
+`MAAS_PORTAL_COOKIE_SECRET` into `.env` on first run (the tenant-managed alternative,
+`AITenant.spec.oidc.clientSecretRef`, is not used). Note that removing `spec.oidc` does not revoke IdP-token access —
+the gateway rules persist until cleaned (RHOAIENG-103587); revoke via the Keycloak client instead.
 
 ## Pull Secret Management
 
@@ -372,6 +445,7 @@ The cluster pull-secret can be managed in two ways:
 ### Manual Mode (QUAY_USER/QUAY_TOKEN set)
 
 When `QUAY_USER` and `QUAY_TOKEN` are set in `.env`:
+
 - `scripts/add-pull-secret.sh` directly patches the cluster pull-secret
 - Adds `quay.io/rhoai` credentials to the existing pull-secret
 - Script is idempotent - safe to re-run
@@ -379,6 +453,7 @@ When `QUAY_USER` and `QUAY_TOKEN` are set in `.env`:
 ### External Secrets Mode (No credentials, bootstrap repo access)
 
 When credentials are not set but user has access to the private bootstrap repo:
+
 - External Secrets Operator is installed
 - ClusterSecretStore connects to AWS Secrets Manager
 - ExternalSecret syncs pull-secret from AWS
@@ -389,10 +464,11 @@ When credentials are not set but user has access to the private bootstrap repo:
 spec:
   target:
     name: pull-secret
-    creationPolicy: Merge  # Critical: Merge into existing secret
+    creationPolicy: Merge # Critical: Merge into existing secret
 ```
 
 **Why `creationPolicy: Merge`?**
+
 - `Owner` (default): ExternalSecret owns the secret; deleting ExternalSecret cascade-deletes the pull-secret
 - `Merge`: ExternalSecret merges data into existing pull-secret; secret survives ExternalSecret deletion
 
@@ -401,6 +477,7 @@ This allows seamless switching between modes without losing credentials.
 ### Switching Modes
 
 **From External Secrets to Manual:**
+
 ```bash
 # ExternalSecret will be ignored when QUAY_USER/QUAY_TOKEN are set
 # The script detects ExternalSecret and skips if present, or you can delete it:
@@ -409,6 +486,7 @@ make secrets  # Uses manual mode
 ```
 
 **From Manual to External Secrets:**
+
 ```bash
 # Clear credentials from .env, ensure bootstrap repo access
 make secrets  # Detects no credentials, uses External Secrets
@@ -423,20 +501,23 @@ This repository uses two ApplicationSets to automatically sync components:
 1. **cluster-operators-appset.yaml**: Syncs all directories in `components/operators/*` (git generator)
 2. **cluster-oper-instances-appset.yaml**: Syncs specific directories in `components/instances/*` (list generator)
 
-When you commit a new directory to `components/operators/` or add an entry to the instances ApplicationSet, ArgoCD automatically creates a corresponding Application and syncs it.
+When you commit a new directory to `components/operators/` or add an entry to the instances ApplicationSet, ArgoCD
+automatically creates a corresponding Application and syncs it.
 
 ### ApplicationSet Sync Behavior (Important)
 
 ApplicationSets use `applicationsSync: create-only` which has specific implications:
 
 **Why `create-only`?**
+
 - `make sync` enables auto-sync on Applications one-by-one to avoid overwhelming the API server
 - Without `create-only`, the ApplicationSet would reset the syncPolicy back to the template's empty `syncPolicy: {}`
 - This would disable auto-sync after `make sync` runs
 
 **Implication: Template changes don't propagate to existing Applications**
 
-When you modify the ApplicationSet template (e.g., change `targetRevision`, `repoURL`, or add new list elements), existing Applications are NOT updated. Only new Applications get the updated template.
+When you modify the ApplicationSet template (e.g., change `targetRevision`, `repoURL`, or add new list elements),
+existing Applications are NOT updated. Only new Applications get the updated template.
 
 **To apply template changes to existing Applications:**
 
@@ -452,12 +533,14 @@ oc patch application.argoproj.io/<app-name> -n openshift-gitops \
 ```
 
 **When adding new components:**
+
 - New Applications are created automatically with the current template
 - No manual intervention needed for new apps
 
 ### Remote References with Local Patches
 
-Components reference the [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) repository and apply local patches:
+Components reference the [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) repository and apply
+local patches:
 
 ```yaml
 # components/operators/nfd/kustomization.yaml
@@ -474,6 +557,7 @@ patches:
 ```
 
 This pattern allows:
+
 - Leveraging upstream catalog definitions
 - Applying local customizations via patches
 - Version pinning via git refs
@@ -530,43 +614,62 @@ The ApplicationSet will automatically detect the new directory and create an App
 Operators and instances have dependencies that must be respected:
 
 **Deployment Order:**
+
 1. Operators (all can deploy in parallel)
 2. Instances (must wait for operators to be ready)
 
 **Specific Dependencies:**
+
 - `nvidia-instance` requires `nvidia-gpu-operator` (drivers) and `nfd-instance` (GPU labels)
 - `rhoai-instance` requires `rhoai-operator` to be ready
-- Service Mesh is **not** GitOps-managed here: the ingress operator owns istio for Gateway API. On `ocp5-testing` the connectivity-link component declaratively creates the `openshift-default` GatewayClass (sync-wave 0, preceding the RHCL subscription at wave 1 in the same component), which triggers the Ingress Operator's built-in Istio — no servicemesh operator on OCP 5 either; on OCP 4.20.32+ no `servicemeshoperator3` OLM operator exists at all (`managed-by=sail-library`). See `docs/workarounds.md` §B and §C2
+- Service Mesh is **not** GitOps-managed here: the ingress operator owns istio for Gateway API. On `ocp5-testing` the
+  connectivity-link component declaratively creates the `openshift-default` GatewayClass (sync-wave 0, preceding the
+  RHCL subscription at wave 1 in the same component), which triggers the Ingress Operator's built-in Istio — no
+  servicemesh operator on OCP 5 either; on OCP 4.20.32+ no `servicemeshoperator3` OLM operator exists at all
+  (`managed-by=sail-library`). See `docs/workarounds.md` §B and §C2
 - `nfs-instance` requires `nfs-provisioner` operator (no other dependencies)
 
 The ApplicationSets handle this by deploying all operators first, then all instances.
 
 ## MaaS (Models as a Service)
 
-MaaS enables API key management, subscriptions, and rate limiting for LLM inference services. It uses a hybrid GitOps + imperative approach.
+MaaS enables API key management, subscriptions, and rate limiting for LLM inference services. It uses a hybrid GitOps +
+imperative approach.
 
 ### Architecture
 
 MaaS has three layers:
 
-1. **GitOps** - PostgreSQL from the Helm chart `components/instances/maas-instance/chart/`; the Gateway is declarative GitOps at `components/instances/maas-gateway/` (`instance-maas-gateway` Application, GatewayClass `data-science-gateway-class`)
-   - PostgreSQL deployment with 20Gi PVC (size/storageClassName configurable via Helm values `postgres.persistence.size` / `postgres.persistence.storageClassName`; empty storageClassName = cluster default)
+1. **GitOps** - PostgreSQL from the Helm chart `components/instances/maas-instance/chart/`; the Gateway is declarative
+   GitOps at `components/instances/maas-gateway/` (`instance-maas-gateway` Application, GatewayClass
+   `data-science-gateway-class`)
+   - PostgreSQL deployment with 20Gi PVC (size/storageClassName configurable via Helm values `postgres.persistence.size`
+     / `postgres.persistence.storageClassName`; empty storageClassName = cluster default)
    - PostgreSQL Service
-   - The chart's GatewayClass `openshift-default` + Gateway `maas-default-gateway` (LoadBalancer with cluster-specific hostname) templates are the legacy path — superseded on OCP5/Praxis nightlies by the declarative Gateway
+   - The chart's GatewayClass `openshift-default` + Gateway `maas-default-gateway` (LoadBalancer with cluster-specific
+     hostname) templates are the legacy path — superseded on OCP5/Praxis nightlies by the declarative Gateway
 
 2. **Imperative (install-maas.sh)** - Things that can't be in git:
    - PostgreSQL secrets (`postgres-creds`, `maas-db-config`) — generated password
-   - Authorino SSL env vars (legacy Kuadrant/Authorino stacks only; skipped on OCP5/Praxis nightlies) — no CR field, must `oc set env`
-   - ArgoCD Application creation — injects the `namespace` value into Helm chart (the chart's legacy Gateway values are gated off by default)
+   - Authorino SSL env vars (legacy Kuadrant/Authorino stacks only; skipped on OCP5/Praxis nightlies) — no CR field,
+     must `oc set env`
+   - ArgoCD Application creation — injects the `namespace` value into Helm chart (the chart's legacy Gateway values are
+     gated off by default)
    - Does NOT install observability — that's its own operation (`make observability`)
 
-3. **Operator-managed** - Deployed automatically when DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; was `kserve.modelsAsService` on 3.5 — that field is deprecated: on 3.6.0 GA the DSC v2→v3 conversion maps a legacy `kserve.modelsAsService: Managed` onto `aigateway.modelsAsAService`, while 3.6.0-ea.2 silently ignored it):
+3. **Operator-managed** - Deployed automatically when DSC has `aigateway.modelsAsAService: Managed` (RHOAI 3.6+; was
+   `kserve.modelsAsService` on 3.5 — that field is deprecated: on 3.6.0 GA the DSC v2→v3 conversion maps a legacy
+   `kserve.modelsAsService: Managed` onto `aigateway.modelsAsAService`, while 3.6.0-ea.2 silently ignored it):
    - maas-api, maas-controller, payload-processing deployments
    - HTTPRoutes, AuthPolicies, NetworkPolicies
 
 ### Why Helm (not Kustomize)
 
-The MaaS PostgreSQL + PVC come from the Helm chart because the instances ApplicationSet template assumes Kustomize and can't express a Helm source. The chart's remaining cluster-specific values are its Gateway settings (`gateway.enabled`, `gateway.clusterDomain`), which are legacy-only — they stay gated off and the live Gateway is declarative at `components/instances/maas-gateway/`. `install-maas.sh` creates the `instance-maas` ArgoCD Application directly with a Helm source and injects only `namespace`, bypassing the ApplicationSet.
+The MaaS PostgreSQL + PVC come from the Helm chart because the instances ApplicationSet template assumes Kustomize and
+can't express a Helm source. The chart's remaining cluster-specific values are its Gateway settings (`gateway.enabled`,
+`gateway.clusterDomain`), which are legacy-only — they stay gated off and the live Gateway is declarative at
+`components/instances/maas-gateway/`. `install-maas.sh` creates the `instance-maas` ArgoCD Application directly with a
+Helm source and injects only `namespace`, bypassing the ApplicationSet.
 
 ### MaaS Install Flow
 
@@ -581,11 +684,9 @@ install-maas.sh:
   5. Validate: wait for maas-api, check health endpoint
 ```
 
-**Note**: `install-maas.sh` used to call `install-observability.sh` as a final
-phase. That coupling is now removed — observability is run separately with
-`make observability` because its monitoring cascade is heavy on the control
-plane and needs its own settle-gate. See the MaaS Observability section below
-and `docs/workarounds.md` §B (settle-gate row).
+**Note**: `install-maas.sh` used to call `install-observability.sh` as a final phase. That coupling is now removed —
+observability is run separately with `make observability` because its monitoring cascade is heavy on the control plane
+and needs its own settle-gate. See the MaaS Observability section below and `docs/workarounds.md` §B (settle-gate row).
 
 ### MaaS Uninstall Flow
 
@@ -601,31 +702,44 @@ uninstall-maas.sh:
 
 The DataScienceCluster is split across base + overlays:
 
-- `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `aigateway.managementState` + `aigateway.modelsAsAService.managementState: Removed` (the deprecated `kserve.modelsAsService` is omitted) and `rawDeploymentServiceConfig: Headed`. Base is the safe no-MaaS baseline.
-- `components/instances/rhoai-instance/overlays/maas/` patches both `aigateway` states to `Managed` — this is the default overlay the `instance-rhoai` ApplicationSet entry points at, so MaaS is on out of the box.
-- `components/instances/rhoai-instance/overlays/maas-observability/` layers on top of `maas` and adds `DSCI.spec.monitoring.metrics.storage`, which triggers the rhods-operator Monitoring controller's full observability cascade (Perses, TempoStack, OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint, MonitoringStack, ThanosQuerier). `scripts/install-observability.sh` flips the Application source to this overlay only after a settle-gate confirms the cluster is healthy enough to absorb the load.
+- `components/instances/rhoai-instance/base/datasciencecluster.yaml` has `aigateway.managementState` +
+  `aigateway.modelsAsAService.managementState: Removed` (the deprecated `kserve.modelsAsService` is omitted) and
+  `rawDeploymentServiceConfig: Headed`. Base is the safe no-MaaS baseline.
+- `components/instances/rhoai-instance/overlays/maas/` patches both `aigateway` states to `Managed` — this is the
+  default overlay the `instance-rhoai` ApplicationSet entry points at, so MaaS is on out of the box.
+- `components/instances/rhoai-instance/overlays/maas-observability/` layers on top of `maas` and adds
+  `DSCI.spec.monitoring.metrics.storage`, which triggers the rhods-operator Monitoring controller's full observability
+  cascade (Perses, TempoStack, OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint, MonitoringStack, ThanosQuerier).
+  `scripts/install-observability.sh` flips the Application source to this overlay only after a settle-gate confirms the
+  cluster is healthy enough to absorb the load.
 
-With MaaS on (default), the operator attempts to deploy MaaS components as soon as DSC syncs, even before `install-maas.sh` runs. The operator tolerates the missing Gateway and retries until it appears.
+With MaaS on (default), the operator attempts to deploy MaaS components as soon as DSC syncs, even before
+`install-maas.sh` runs. The operator tolerates the missing Gateway and retries until it appears.
 
 ### MaaS Model Management
 
 Models are defined as kustomize manifests in `components/instances/maas-models/`. Each model directory contains:
+
 - `llm/` — LLMInferenceService (the workload)
 - `maas/` — MaaSModelRef + MaaSAuthPolicy + MaaSSubscription (free + premium tiers)
 
-`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for model selection (default: **`auto`** — the script inspects GPU VRAM and picks simulator / granite-tiny-gpu / gpt-oss-20b).
+`setup-maas-model.sh` deploys/deletes models using `oc kustomize`. It reads `MAAS_MODELS` from `.env` for model
+selection (default: **`auto`** — the script inspects GPU VRAM and picks simulator / granite-tiny-gpu / gpt-oss-20b).
 
 ### MaaS Verification
 
 `verify-maas.sh` runs 6 phases:
-1. Infrastructure health (Gateway, PostgreSQL, maas-api, maas-controller, Authorino when the legacy stack is present, health endpoint)
+
+1. Infrastructure health (Gateway, PostgreSQL, maas-api, maas-controller, Authorino when the legacy stack is present,
+   health endpoint)
 2. Deploy temporary simulator model + MaaS resources
 3. API verification (create API key, list models, test inference)
 4. Auth enforcement (reject unauthenticated + invalid token requests)
 5. Rate limiting (trigger 429 responses)
 6. Cleanup (remove all temporary test resources)
 
-The verify script is self-contained — it deploys its own temporary model and does NOT affect persistently deployed models.
+The verify script is self-contained — it deploys its own temporary model and does NOT affect persistently deployed
+models.
 
 ### MaaS Debugging Commands
 
@@ -659,19 +773,66 @@ oc get deployment authorino -n kuadrant-system -o jsonpath='{.spec.template.spec
 
 ## MaaS Observability
 
-Observability lights up the RHOAI 3.x Observability dashboard (request rate, success rate, GPU/CPU/memory, per-subscription usage) for MaaS. It layers OpenShift user-workload monitoring + MaaS-specific TelemetryPolicy/ServiceMonitors + the Kuadrant observability toggle.
+Observability lights up the RHOAI 3.x Observability dashboard (request rate, success rate, GPU/CPU/memory,
+per-subscription usage) for MaaS. It layers OpenShift user-workload monitoring + MaaS-specific
+TelemetryPolicy/ServiceMonitors + the Kuadrant observability toggle.
 
-**Installed separately from MaaS.** `install-maas.sh` used to call `install-observability.sh` as a final phase, but that coupling was removed. The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack, NodeMetrics) puts substantial memory pressure on the control plane — it now has its own entrypoint with a settle-gate that refuses to fire if masters are >=80% memory (override with `SETTLE_GATE_MASTER_MEM_MAX`) or the cluster isn't otherwise healthy. Run `make observability` when the cluster is ready.
+**Installed separately from MaaS.** `install-maas.sh` used to call `install-observability.sh` as a final phase, but that
+coupling was removed. The monitoring cascade (Perses, Tempo, OTel DaemonSet, MonitoringStack, NodeMetrics) puts
+substantial memory pressure on the control plane — it now has its own entrypoint with a settle-gate that refuses to fire
+if masters are >=80% memory (override with `SETTLE_GATE_MASTER_MEM_MAX`) or the cluster isn't otherwise healthy. Run
+`make observability` when the cluster is ready.
 
-**Dashboard visibility:** On RHOAI 3.6 the dashboard operator auto-detects the Perses service (`data-science-perses:8080` in `redhat-ods-monitoring`) and wires the `/perses` proxy itself (Dashboard CR condition `ObservabilityAvailable=True`, reason `Deployed`). The OdhDashboardConfig feature-flag map no longer carries these flags — deprecated keys are CEL-rejected and the map is pruned to operator-written overrides. Viewing the Observability tab still requires cluster-admin (or equivalent dashboard admin) permissions.
+**Dashboard visibility:** On RHOAI 3.6 the dashboard operator auto-detects the Perses service
+(`data-science-perses:8080` in `redhat-ods-monitoring`) and wires the `/perses` proxy itself (Dashboard CR condition
+`ObservabilityAvailable=True`, reason `Deployed`). The OdhDashboardConfig feature-flag map no longer carries these flags
+— deprecated keys are CEL-rejected and the map is pruned to operator-written overrides. Viewing the Observability tab
+still requires cluster-admin (or equivalent dashboard admin) permissions.
 
-**Dashboard backend (Perses):** The Observability tab proxies to a Perses Service in `redhat-ods-monitoring` on port 8080. The RHOAI operator's Monitoring controller owns the Perses lifecycle end-to-end — it runs `deployPerses`, `deployPersesTempoIntegration`, `deployPersesPrometheusIntegration`, `deployOpenTelemetryCollector`, and `deployNodeMetricsEndpoint` on every reconcile, creating the Perses CR (named `data-science-perses`), its datasources, the Tempo integration, the OTel collector, the node-metrics endpoint, and the per-RHOAI `PersesDashboard` resources automatically.
+**Dashboard backend (Perses):** The Observability tab proxies to a Perses Service in `redhat-ods-monitoring` on
+port 8080. The RHOAI operator's Monitoring controller owns the Perses lifecycle end-to-end — it runs `deployPerses`,
+`deployPersesTempoIntegration`, `deployPersesPrometheusIntegration`, `deployOpenTelemetryCollector`, and
+`deployNodeMetricsEndpoint` on every reconcile, creating the Perses CR (named `data-science-perses`), its datasources,
+the Tempo integration, the OTel collector, the node-metrics endpoint, and the per-RHOAI `PersesDashboard` resources
+automatically.
 
-The only thing we need to provide is the **Cluster Observability Operator (COO)** so the `Perses`, `PersesDatasource`, and `PersesDashboard` CRDs are registered on the cluster:
+The only thing we need to provide is the **Cluster Observability Operator (COO)** so the `Perses`, `PersesDatasource`,
+and `PersesDashboard` CRDs are registered on the cluster:
 
-- `components/operators/cluster-observability-operator/` — COO Subscription (channel `stable`, AllNamespaces, installed into namespace **`openshift-cluster-observability-operator`** — this exact namespace is required; rhods-operator's `perses-operator-access` NetworkPolicy only admits it, and installing COO into `openshift-operators` breaks the Perses path with "bad request: metadata.project doesn't exist". See the note in that subscription.yaml).
+- `components/operators/cluster-observability-operator/` — COO Subscription (channel `stable`, AllNamespaces, installed
+  into namespace **`openshift-cluster-observability-operator`** — this exact namespace is required; rhods-operator's
+  `perses-operator-access` NetworkPolicy only admits it, and installing COO into `openshift-operators` breaks the Perses
+  path with "bad request: metadata.project doesn't exist". See the note in that subscription.yaml).
 
-Once COO is installed, the RHOAI operator does everything else. No custom Perses resources are managed in this repo — creating our own would conflict with (and be continuously overwritten by) the operator, and our v1alpha1 CR would clash with the operator's v1alpha2 preference. If the Observability tab is blank, check that COO is subscribed and the `perses.perses.dev` CRD exists; the operator reconciles the rest. On 3.6 the dashboard operator also auto-detects the Perses service and wires the `/perses` proxy itself — confirm with the Dashboard CR condition `ObservabilityAvailable=True` (reason `Deployed`); `Dashboard.spec.observability` stays unset by design (the manual patch 3.5 needed is retired).
+Once COO is installed, the RHOAI operator does everything else. No custom Perses resources are managed in this repo —
+creating our own would conflict with (and be continuously overwritten by) the operator, and our v1alpha1 CR would clash
+with the operator's v1alpha2 preference. If the Observability tab is blank, check that COO is subscribed and the
+`perses.perses.dev` CRD exists; the operator reconciles the rest. On 3.6 the dashboard operator also auto-detects the
+Perses service and wires the `/perses` proxy itself — confirm with the Dashboard CR condition
+`ObservabilityAvailable=True` (reason `Deployed`); `Dashboard.spec.observability` stays unset by design (the manual
+patch 3.5 needed is retired).
+
+### Usage-logs stack
+
+On current 3.6 nightlies the Usage dashboard panels read **Loki**, not PromQL — the PersesDatasources
+(`usage-logs-multi-tenancy` / `usage-logs-all`) point at the gateway of a LokiStack `data-science-usage-logs-lokistack`,
+and the stack lights up as part of the observability install:
+
+- `components/operators/loki-operator/` — Loki operator Subscription (ns `openshift-operators-redhat`, channel
+  `stable-6.7`; both source and channel are pinned because a community alpha-channel loki-operator collides on the
+  package name across catalogs). It only provides the `lokistacks.loki.grafana.com` CRD — cluster-logging is not
+  required.
+- The maas-observability overlay patches DSCI `spec.monitoring.usageLogs` (size `1x.demo` — the schema default
+  `1x.extra-small` does not schedule on smaller clusters; `storageClassName: gp3-csi`). The odh-observability controller
+  deploys the LokiStack itself from that config; nothing Loki-related is hand-written in this repo.
+- `install-observability.sh` Phase LG (before the overlay flip) ensures the `redhat-ods-monitoring` namespace exists and
+  creates the Secret `rhoai-usage-logs-s3` from `.env` (`USAGE_LOGS_S3_BUCKET`, region `USAGE_LOGS_S3_REGION`,
+  credentials reused from `LE_AWS_ACCESS_KEY_ID`/`LE_AWS_SECRET_ACCESS_KEY`). The bucket itself is a one-time
+  out-of-band provisioning step (`aws s3api create-bucket`) — the script consumes the bucket name and never creates AWS
+  infrastructure.
+
+`make observability-uninstall` reverse-flips the overlay and the operator tears the LokiStack down with the cascade —
+usage-log data does **not** survive an observability off/on cycle.
 
 ### Architecture
 
@@ -679,23 +840,31 @@ MaaS observability has three layers:
 
 1. **Infrastructure (`make infra` / `make uwm`)** - `bootstrap/cluster-monitoring-config/`
    - `cluster-monitoring-config` ConfigMap with `enableUserWorkload: true`
-   - Applied by `scripts/enable-uwm.sh` as part of `make infra`. UWM is a
-     foundational cluster capability other workloads may depend on; owning it
-     at the infra stage makes dependencies clearer and avoids stacking UWM's
-     memory overhead on top of the observability cascade at install time.
+   - Applied by `scripts/enable-uwm.sh` as part of `make infra`. UWM is a foundational cluster capability other
+     workloads may depend on; owning it at the infra stage makes dependencies clearer and avoids stacking UWM's memory
+     overhead on top of the observability cascade at install time.
 
 2. **GitOps (Kustomize)** - `components/instances/maas-observability/base/`
-   - Kuadrant `TelemetryPolicy/maas-telemetry` (adds `model`, `user`, `subscription`, `organization_id`, `cost_center` labels on gateway metrics)
+   - Kuadrant `TelemetryPolicy/maas-telemetry` (adds `model`, `user`, `subscription`, `organization_id`, `cost_center`
+     labels on gateway metrics)
    - Istio `Telemetry/latency-per-subscription` (per-subscription request-duration label)
-   - Synced by the `instance-maas-observability` ArgoCD Application — created imperatively by `scripts/install-observability.sh` (mirrors how `install-maas.sh` creates `instance-maas`), NOT by the cluster-oper-instances ApplicationSet. This keeps the cluster baseline clean (no TelemetryPolicy, no Istio Telemetry) when observability is off.
+   - Synced by the `instance-maas-observability` ArgoCD Application — created imperatively by
+     `scripts/install-observability.sh` (mirrors how `install-maas.sh` creates `instance-maas`), NOT by the
+     cluster-oper-instances ApplicationSet. This keeps the cluster baseline clean (no TelemetryPolicy, no Istio
+     Telemetry) when observability is off.
 
 3. **Imperative (install-observability.sh)** - Things that can't be in git:
    - Verifies UWM is already enabled (fails fast with pointer to `make uwm` if not)
-   - Creates `instance-maas-observability` ArgoCD Application (Phase G) — replaces the previous static ApplicationSet element
-   - Flips `instance-rhoai` source.path to `overlays/maas-observability` (triggers RHOAI operator's Perses/Tempo/OTel cascade)
-   - Verifies Kuadrant CR has `spec.observability.enable=true` (set declaratively in `components/instances/connectivity-link-instance/base/kuadrant.yaml`; ArgoCD reconciles it — flag is intentionally GitOps-managed because the Kuadrant operator's internal monitors are inert without UWM/Perses scraping)
+   - Creates `instance-maas-observability` ArgoCD Application (Phase G) — replaces the previous static ApplicationSet
+     element
+   - Flips `instance-rhoai` source.path to `overlays/maas-observability` (triggers RHOAI operator's Perses/Tempo/OTel
+     cascade)
+   - Verifies Kuadrant CR has `spec.observability.enable=true` (set declaratively in
+     `components/instances/connectivity-link-instance/base/kuadrant.yaml`; ArgoCD reconciles it — flag is intentionally
+     GitOps-managed because the Kuadrant operator's internal monitors are inert without UWM/Perses scraping)
    - Conditional Limitador/Authorino ServiceMonitors (skipped if the operator already covers those targets)
-   - Conditional Istio Gateway metrics Service + ServiceMonitor (only applied when `maas-default-gateway` deployment exists)
+   - Conditional Istio Gateway metrics Service + ServiceMonitor (only applied when `maas-default-gateway` deployment
+     exists)
 
 ### Install Flow
 
@@ -706,13 +875,14 @@ install-observability.sh:
   3. Phase A2: Scrub openshift.io/cluster-monitoring label from kuadrant-system + llm (UWM owns scraping; redhat-ods-applications is skipped — RHOAI 3.6 sets the label there on every DSCI reconcile)
   4. Phase S:  Settle-gate (CSVs Succeeded, DSC/DSCI Ready, no bad pods, etcd healthy, masters <80% mem)
   5. Phase G:  Create instance-maas-observability ArgoCD Application (TelemetryPolicy + Istio Telemetry sync via ArgoCD)
-  6. Phase O:  Flip instance-rhoai source -> overlays/maas-observability (RHOAI operator's monitoring cascade fires)
-  7. Phase B:  Verify Kuadrant CR has spec.observability.enable=true (GitOps-managed)
-  8. Phase C:  Apply limitador-servicemonitor IF no existing monitor covers it
-  9. Phase D:  Apply authorino-server-metrics-servicemonitor IF no existing monitor covers /server-metrics
-  10. Phase V:  Verify the cascade pods reach Running (120s timeout)
-  11. Phase E: Apply istio-gateway-service + servicemonitor IF maas-default-gateway deployment present
-  11. Phase F: Apply kserve-llm-models-servicemonitor IF llm namespace exists
+  6. Phase LG: Ensure redhat-ods-monitoring ns + create Secret rhoai-usage-logs-s3 from .env (USAGE_LOGS_S3_BUCKET, LE_AWS_* creds reused)
+  7. Phase O:  Flip instance-rhoai source -> overlays/maas-observability (RHOAI operator's monitoring cascade fires)
+  8. Phase B:  Verify Kuadrant CR has spec.observability.enable=true (GitOps-managed)
+  9. Phase C:  Apply limitador-servicemonitor IF no existing monitor covers it
+  10. Phase D:  Apply authorino-server-metrics-servicemonitor IF no existing monitor covers /server-metrics
+  11. Phase V:  Verify the cascade pods reach Running (120s timeout)
+  12. Phase E: Apply istio-gateway-service + servicemonitor IF maas-default-gateway deployment present
+  13. Phase F: Apply kserve-llm-models-servicemonitor IF llm namespace exists
 ```
 
 ### Uninstall Flow
@@ -757,75 +927,63 @@ make diagnose  # section 11 = Observability (9 = RHOAI, 10 = MaaS, 12 = Network)
 
 ## Eval Hub
 
-Eval Hub is a TrustyAI evaluation harness layered on top of RHOAI. It's
-opt-in (not part of `make all`) and orthogonal to MaaS and observability —
-turning eval-hub on or off does not affect either of the other two
-features. `make evalhub` / `make evalhub-uninstall` toggle it.
+Eval Hub is a TrustyAI evaluation harness layered on top of RHOAI. It's opt-in (not part of `make all`) and orthogonal
+to MaaS and observability — turning eval-hub on or off does not affect either of the other two features. `make evalhub`
+/ `make evalhub-uninstall` toggle it.
 
 ### Architecture
 
-Eval-hub is shipped as its own ArgoCD Application (`instance-evalhub`),
-not as a Kustomize overlay on `instance-rhoai`. This keeps eval-hub
-orthogonal to the MaaS / observability flips that DO modify the
-`instance-rhoai` overlay path. The composition is:
+Eval-hub is shipped as its own ArgoCD Application (`instance-evalhub`), not as a Kustomize overlay on `instance-rhoai`.
+This keeps eval-hub orthogonal to the MaaS / observability flips that DO modify the `instance-rhoai` overlay path. The
+composition is:
 
-| Feature | Mechanism | Lifecycle |
-|---|---|---|
-| MaaS | `instance-rhoai` overlay flip (`overlays/maas`) | `make maas` / `make maas-uninstall` |
+| Feature            | Mechanism                                                     | Lifecycle                                             |
+| ------------------ | ------------------------------------------------------------- | ----------------------------------------------------- |
+| MaaS               | `instance-rhoai` overlay flip (`overlays/maas`)               | `make maas` / `make maas-uninstall`                   |
 | MaaS observability | `instance-rhoai` overlay flip (`overlays/maas-observability`) | `make observability` / `make observability-uninstall` |
-| Eval-hub | Standalone `instance-evalhub` Application | `make evalhub` / `make evalhub-uninstall` |
+| Eval-hub           | Standalone `instance-evalhub` Application                     | `make evalhub` / `make evalhub-uninstall`             |
 
-`make evalhub` mirrors the `install-maas.sh` pattern: detect repo URL +
-branch from the existing `instance-rhoai` Application, then `oc apply` an
-ArgoCD Application manifest pointed at `components/instances/evalhub/`.
-`make evalhub-uninstall` deletes that Application; the
-`resources-finalizer.argocd.argoproj.io` finalizer cascade-prunes
+`make evalhub` mirrors the `install-maas.sh` pattern: detect repo URL + branch from the existing `instance-rhoai`
+Application, then `oc apply` an ArgoCD Application manifest pointed at `components/instances/evalhub/`.
+`make evalhub-uninstall` deletes that Application; the `resources-finalizer.argocd.argoproj.io` finalizer cascade-prunes
 EvalHub, MLflow, DSPA, and the evalhub-tenant namespace + RBAC + Job.
 
 ### What it deploys
 
 - `EvalHub/evalhub` (TrustyAI) in `redhat-ods-applications`
 - `MLflow/mlflow` (10Gi RWO PVC) in `redhat-ods-applications`
-- `DataSciencePipelinesApplication/dspa` in `evalhub-tenant` ns —
-  brings up its own MinIO with external route, MariaDB, pipeline API
-  server, and supporting controllers
-- `evalhub-tenant` namespace + RBAC (Role `evalhub-jobs-dspa-api`,
-  RoleBindings to `ds-pipeline-dspa` and `evalhub-redhat-ods-applications-job`)
-- `Job/update-secret-minio` — hook Job that patches DSPA's
-  `ds-pipeline-s3-dspa` secret to point at the in-cluster MinIO
+- `DataSciencePipelinesApplication/dspa` in `evalhub-tenant` ns — brings up its own MinIO with external route, MariaDB,
+  pipeline API server, and supporting controllers
+- `evalhub-tenant` namespace + RBAC (Role `evalhub-jobs-dspa-api`, RoleBindings to `ds-pipeline-dspa` and
+  `evalhub-redhat-ods-applications-job`)
+- `Job/update-secret-minio` — hook Job that patches DSPA's `ds-pipeline-s3-dspa` secret to point at the in-cluster MinIO
 
 All manifests live at `components/instances/evalhub/`.
 
 ### Why it's opt-in (not in `make all`)
 
-- **Storage class dependency.** MLflow and DSPA-managed MinIO each ask
-  for an RWO PVC. Without a default StorageClass, both sit Pending.
-- **CRD/sync ordering.** `EvalHub`, `MLflow`, and DSPA CRDs only exist
-  on RHOAI 3.x nightly. ArgoCD will retry but reports Degraded for a
-  few minutes on first install.
-- **Privileged hook Job.** `update-secret-minio` runs with a SA bound
-  to `ClusterRole/edit` (namespace-scoped). Acceptable for a demo rig;
-  noted for awareness.
-- **Demo-grade MinIO posture.** DSPA enables `enableExternalRoute: true`
-  and `podToPodTLS: false` — fine for a demo cluster.
+- **Storage class dependency.** MLflow and DSPA-managed MinIO each ask for an RWO PVC. Without a default StorageClass,
+  both sit Pending.
+- **CRD/sync ordering.** `EvalHub`, `MLflow`, and DSPA CRDs only exist on RHOAI 3.x nightly. ArgoCD will retry but
+  reports Degraded for a few minutes on first install.
+- **Privileged hook Job.** `update-secret-minio` runs with a SA bound to `ClusterRole/edit` (namespace-scoped).
+  Acceptable for a demo rig; noted for awareness.
+- **Demo-grade MinIO posture.** DSPA enables `enableExternalRoute: true` and `podToPodTLS: false` — fine for a demo
+  cluster.
 
 ### Settle-gate
 
-Before creating the Application, `scripts/install-evalhub.sh` runs a
-lightweight gate (no master-memory check — eval-hub deploys ~5 worker
-pods, no DaemonSet, no control-plane cascade):
+Before creating the Application, `scripts/install-evalhub.sh` runs a lightweight gate (no master-memory check — eval-hub
+deploys ~5 worker pods, no DaemonSet, no control-plane cascade):
 
 1. `rhods-operator` CSV in `redhat-ods-operator` is `Succeeded`
-2. `DataScienceCluster/default-dsc` Ready=True;
-   `DSCInitialization/default-dsci` Available=True / Degraded≠True
+2. `DataScienceCluster/default-dsc` Ready=True; `DSCInitialization/default-dsci` Available=True / Degraded≠True
 3. At least one default StorageClass exists
 
-After the Application is created, the script waits up to 600s for
-`EvalHub` to reach `status.phase=Ready`, MLflow + DSPA + `evalhub-tenant`
-ns to come up, then runs a 120s pod-readiness check on
-`redhat-ods-applications` (eval-hub + mlflow pods) and `evalhub-tenant`
-(DSPA + MinIO pods). Pod-readiness is warn-only — the Application is
-already created by then.
+After the Application is created, the script waits up to 600s for `EvalHub` to reach `status.phase=Ready`, MLflow +
+DSPA + `evalhub-tenant` ns to come up, then runs a 120s pod-readiness check on `redhat-ods-applications` (eval-hub +
+mlflow pods) and `evalhub-tenant` (DSPA + MinIO pods). Pod-readiness is warn-only — the Application is already created
+by then.
 
 ### Verification commands
 
@@ -865,17 +1023,25 @@ All scripts follow these patterns:
 Expected wait times for each script:
 
 - `secrets`: Immediate in Manual mode; ~30s-1min in External Secrets mode (waits for operator + sync)
-- `icsp`: ~90 seconds on OCP 4.20 (registries.conf applied via crio reload, no node reboot). Older z-streams: 10-15 minutes for a rolling restart
+- `icsp`: ~90 seconds on OCP 4.20 (registries.conf applied via crio reload, no node reboot). Older z-streams: 10-15
+  minutes for a rolling restart
 - `gpu`: 5-10 minutes (waits for GPU node Ready)
 - `cpu`: 5-10 minutes (waits for CPU worker node Ready)
 - `gitops`: 2-3 minutes (waits for GitOps operator + ArgoCD)
 - `deploy`: Immediate (creates apps, sync happens async)
-- `maas`: 3-5 minutes (creates secrets, ArgoCD app, waits for Gateway + maas-api). Does NOT install observability — run `make observability` separately. Allow another 2-5 min for the gateway ELB's DNS record to propagate before external calls succeed
-- `observability`: ~3-5 minutes (settle-gate check, overlay flip, wait for Perses/Tempo/OTel to reconcile, then Kuadrant patch + conditional ServiceMonitors). Run separately from `make maas`.
-- `evalhub`: ~3-5 minutes (lightweight settle-gate, creates instance-evalhub Application, waits for EvalHub Ready + MLflow + DSPA + evalhub-tenant). Orthogonal to MaaS / observability.
-- `evalhub-uninstall`: ~30 seconds (deletes instance-evalhub Application; resources-finalizer cascade-prunes EvalHub/MLflow/DSPA + evalhub-tenant ns).
+- `maas`: 3-5 minutes (creates secrets, ArgoCD app, waits for Gateway + maas-api). Does NOT install observability — run
+  `make observability` separately. Allow another 2-5 min for the gateway ELB's DNS record to propagate before external
+  calls succeed
+- `observability`: ~3-5 minutes (settle-gate check, overlay flip, wait for Perses/Tempo/OTel to reconcile, then Kuadrant
+  patch + conditional ServiceMonitors). Run separately from `make maas`.
+- `evalhub`: ~3-5 minutes (lightweight settle-gate, creates instance-evalhub Application, waits for EvalHub Ready +
+  MLflow + DSPA + evalhub-tenant). Orthogonal to MaaS / observability.
+- `evalhub-uninstall`: ~30 seconds (deletes instance-evalhub Application; resources-finalizer cascade-prunes
+  EvalHub/MLflow/DSPA + evalhub-tenant ns).
 - `maas-model` (simulator): ~30 seconds (CPU, no image pull needed after first time)
-- `maas-model` (GPU models): ~18-20 minutes. NOTE: the script exits 0 at ~17 min while the pod is still 1/2 and MaaSModelRef reports Unhealthy — vLLM finishes ~4 min later. Poll `oc get pods -n llm` to 2/2 before verifying (workarounds.md §E2)
+- `maas-model` (GPU models): ~18-20 minutes. NOTE: the script exits 0 at ~17 min while the pod is still 1/2 and
+  MaaSModelRef reports Unhealthy — vLLM finishes ~4 min later. Poll `oc get pods -n llm` to 2/2 before verifying
+  (workarounds.md §E2)
 - `maas-verify`: ~3 minutes (deploys temp model, runs tests, cleans up)
 - `maas-uninstall`: ~30 seconds (deletes ArgoCD app + secrets)
 
@@ -927,6 +1093,7 @@ git diff --staged
 ### Secret Handling Rules
 
 1. **Credentials**: Always use environment variables, never hardcode
+
    ```bash
    # CORRECT
    --auth-basic="${QUAY_USER}:${QUAY_TOKEN}"
@@ -978,27 +1145,36 @@ The `.gitignore` file is configured to prevent common secret files from being co
 ### Common Issues
 
 **Problem**: ICSP script hangs waiting for nodes
+
 - **Cause**: Nodes are restarting to apply ICSP
-- **Solution**: On OCP 4.20 this finishes in ~90s with no reboot; if `oc get mcp` shows `Updating=True` (older z-streams) wait 10-15 minutes
+- **Solution**: On OCP 4.20 this finishes in ~90s with no reboot; if `oc get mcp` shows `Updating=True` (older
+  z-streams) wait 10-15 minutes
 - **Debug**: `oc get nodes -w` to watch nodes restart
 
 **Problem**: GPU node not appearing
+
 - **Cause**: Availability zone has no GPU capacity
 - **Solution**: Specify different AZ with `--az` or `GPU_AZ` env var
 - **Debug**: Check AWS EC2 console for g6e.2xlarge availability
 
 **Problem**: ArgoCD apps not syncing
+
 - **Cause**: ApplicationSet repo URL or branch is pointing at the wrong place
-- **Solution (ephemeral fix)**: `GITOPS_BRANCH=correct-branch make deploy` — patches ArgoCD in-place, no YAML commit needed
-- **Solution (permanent)**: `make configure-repo` with correct `GITOPS_REPO_URL` / `GITOPS_BRANCH`, then commit the YAML changes
-- **Debug**: `oc get applicationsets -n openshift-gitops -o yaml`, `oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,REPO:.spec.source.repoURL,BRANCH:.spec.source.targetRevision`
+- **Solution (ephemeral fix)**: `GITOPS_BRANCH=correct-branch make deploy` — patches ArgoCD in-place, no YAML commit
+  needed
+- **Solution (permanent)**: `make configure-repo` with correct `GITOPS_REPO_URL` / `GITOPS_BRANCH`, then commit the YAML
+  changes
+- **Debug**: `oc get applicationsets -n openshift-gitops -o yaml`,
+  `oc get applications.argoproj.io -n openshift-gitops -o custom-columns=NAME:.metadata.name,REPO:.spec.source.repoURL,BRANCH:.spec.source.targetRevision`
 
 **Problem**: RHOAI operator stuck in "Installing"
+
 - **Cause**: Catalog pod may need restart to pull new image
 - **Solution**: Run `make restart-catalog` to restart catalog and operator pods
 - **Debug**: `oc get pods -n openshift-marketplace -l olm.catalogSource=rhoai-catalog-nightly`
 
 **Problem**: "error: Unknown command" when running make targets
+
 - **Cause**: Scripts don't have execute permissions
 - **Solution**: Makefile automatically adds execute permissions with `chmod +x`
 - **Debug**: Check script permissions with `ls -la scripts/`
@@ -1080,50 +1256,63 @@ oc get mcp  # MachineConfigPool status
 
 ## Key Files Reference
 
-| File | Purpose |
-|------|---------|
-| `Makefile` | Automation targets and workflow orchestration |
-| `.env.example` | Configuration template (copy to `.env`) |
-| `.env` | Local configuration (gitignored, never commit) |
-| `.gitignore` | Prevents committing secrets and temp files |
-| `README.md` | User-facing documentation |
-| `CLAUDE.md` | AI assistant guidance (this file) |
-| `scripts/*.sh` | Pre-GitOps setup automation scripts |
-| `bootstrap/*/kustomization.yaml` | Bootstrap resource definitions |
-| `bootstrap/external-secrets/pull-secret-external.yaml` | ExternalSecret with Merge policy for pull-secret |
-| `clusters/base/kustomization.yaml` | Root cluster configuration |
-| `components/argocd/apps/*.yaml` | ApplicationSet definitions |
-| `components/operators/*/kustomization.yaml` | Operator subscriptions |
-| `components/instances/*/kustomization.yaml` | Operator instance configurations |
-| `components/instances/maas-instance/chart/` | MaaS Helm chart (PostgreSQL + PVC, Gateway) |
-| `components/instances/maas-observability/base/` | MaaS observability GitOps manifests (TelemetryPolicy, Istio Telemetry) |
-| `components/instances/maas-gateway/` | Declarative MaaS Gateway on OCP5/Praxis (replaces the legacy chart's Gateway) |
-| `bootstrap/cluster-monitoring-config/` | UWM ConfigMap applied by `scripts/enable-uwm.sh` during `make infra` |
-| `scripts/compare-builds.sh` | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift) |
-| `scripts/cleanup-stale-projects.sh` | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`) |
-| `scripts/enable-uwm.sh` | Enable UWM (idempotent merge; --check / --dry-run modes) |
-| `scripts/add-le-creds.sh` | Provision the Route53 credential secret for Let's Encrypt DNS-01 (`make le-creds`) |
-| `scripts/install-maas.sh` | MaaS install (secrets, ArgoCD app; Authorino SSL only when a legacy stack exists). Does NOT install observability |
-| `scripts/install-observability.sh` | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors) |
-| `scripts/uninstall-maas.sh` | MaaS uninstall (cascade delete + cleanup) |
-| `scripts/install-keycloak.sh` | Keycloak IdP install/uninstall (script-created Applications, OCI charts, secrets in .env) (`make keycloak`) |
+| File                                                   | Purpose                                                                                                           |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `Makefile`                                             | Automation targets and workflow orchestration                                                                     |
+| `.env.example`                                         | Configuration template (copy to `.env`)                                                                           |
+| `.env`                                                 | Local configuration (gitignored, never commit)                                                                    |
+| `.gitignore`                                           | Prevents committing secrets and temp files                                                                        |
+| `README.md`                                            | User-facing documentation                                                                                         |
+| `CLAUDE.md`                                            | AI assistant guidance (this file)                                                                                 |
+| `scripts/*.sh`                                         | Pre-GitOps setup automation scripts                                                                               |
+| `bootstrap/*/kustomization.yaml`                       | Bootstrap resource definitions                                                                                    |
+| `bootstrap/external-secrets/pull-secret-external.yaml` | ExternalSecret with Merge policy for pull-secret                                                                  |
+| `clusters/base/kustomization.yaml`                     | Root cluster configuration                                                                                        |
+| `components/argocd/apps/*.yaml`                        | ApplicationSet definitions                                                                                        |
+| `components/operators/*/kustomization.yaml`            | Operator subscriptions                                                                                            |
+| `components/instances/*/kustomization.yaml`            | Operator instance configurations                                                                                  |
+| `components/instances/maas-instance/chart/`            | MaaS Helm chart (PostgreSQL + PVC, Gateway)                                                                       |
+| `components/instances/maas-observability/base/`        | MaaS observability GitOps manifests (TelemetryPolicy, Istio Telemetry)                                            |
+| `components/instances/maas-gateway/`                   | Declarative MaaS Gateway on OCP5/Praxis (replaces the legacy chart's Gateway)                                     |
+| `bootstrap/cluster-monitoring-config/`                 | UWM ConfigMap applied by `scripts/enable-uwm.sh` during `make infra`                                              |
+| `scripts/compare-builds.sh`                            | Report-only build comparison across git pins, clusters and quay (`make compare`; exit 2 = drift)                  |
+| `scripts/cleanup-stale-projects.sh`                    | Audit/delete stale dashboard projects (`make cleanup-projects`; audit-only unless `--delete-*`)                   |
+| `scripts/enable-uwm.sh`                                | Enable UWM (idempotent merge; --check / --dry-run modes)                                                          |
+| `scripts/add-le-creds.sh`                              | Provision the Route53 credential secret for Let's Encrypt DNS-01 (`make le-creds`)                                |
+| `scripts/install-maas.sh`                              | MaaS install (secrets, ArgoCD app; Authorino SSL only when a legacy stack exists). Does NOT install observability |
+| `scripts/install-observability.sh`                     | MaaS observability install/uninstall (UWM, Kuadrant, ServiceMonitors)                                             |
+| `scripts/uninstall-maas.sh`                            | MaaS uninstall (cascade delete + cleanup)                                                                         |
+| `scripts/install-keycloak.sh`                          | Keycloak IdP install/uninstall (script-created Applications, OCI charts, secrets in .env) (`make keycloak`)       |
 
 ## Related Repositories
 
-- **This Repository**: [rh-aiservices-bu/rhoai-nightly](https://github.com/rh-aiservices-bu/rhoai-nightly) - GitOps deployment for RHOAI nightly builds
-- **Bootstrap Repository**: [rh-aiservices-bu/rh-aiservices-bu-bootstrap](https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap) - Private bootstrap repo with External Secrets configuration
-- **Upstream Catalog**: [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) - Community GitOps catalog for OpenShift operators
-- **MaaS Upstream**: [opendatahub-io/models-as-a-service](https://github.com/opendatahub-io/models-as-a-service) - MaaS docs, samples, and deployment manifests
-- **RHOAI Documentation**: [Red Hat OpenShift AI docs](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
+- **This Repository**: [rh-aiservices-bu/rhoai-nightly](https://github.com/rh-aiservices-bu/rhoai-nightly) - GitOps
+  deployment for RHOAI nightly builds
+- **Bootstrap Repository**:
+  [rh-aiservices-bu/rh-aiservices-bu-bootstrap](https://github.com/rh-aiservices-bu/rh-aiservices-bu-bootstrap) -
+  Private bootstrap repo with External Secrets configuration
+- **Upstream Catalog**: [redhat-cop/gitops-catalog](https://github.com/redhat-cop/gitops-catalog) - Community GitOps
+  catalog for OpenShift operators
+- **MaaS Upstream**: [opendatahub-io/models-as-a-service](https://github.com/opendatahub-io/models-as-a-service) - MaaS
+  docs, samples, and deployment manifests
+- **RHOAI Documentation**:
+  [Red Hat OpenShift AI docs](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
 
 ## Notes for AI Assistants
 
 - This repository uses **GitOps** - changes are deployed by committing to git, not by running oc commands
 - Scripts in `scripts/` are **pre-GitOps only** - they run before ArgoCD is installed
-- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, `install-keycloak.sh`, `enable-uwm.sh`, `restart-catalog.sh`, and `add-le-creds.sh` run **after** ArgoCD — they create secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative (`add-le-creds.sh` creates the Route53 credential secret in ns `cert-manager` after GitOps). `install-maas.sh`, `install-observability.sh`, `install-evalhub.sh`, and `install-keycloak.sh` are independent; none invokes another.
-- After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets; Authorino SSL applies only on legacy stacks)
+- **Exception**: `install-maas.sh`, `uninstall-maas.sh`, `install-observability.sh`, `install-evalhub.sh`,
+  `install-keycloak.sh`, `enable-uwm.sh`, `restart-catalog.sh`, and `add-le-creds.sh` run **after** ArgoCD — they create
+  secrets, patch ArgoCD Applications (overlay flips), or apply cluster-wide config that can't be purely declarative
+  (`add-le-creds.sh` creates the Route53 credential secret in ns `cert-manager` after GitOps). `install-maas.sh`,
+  `install-observability.sh`, `install-evalhub.sh`, and `install-keycloak.sh` are independent; none invokes another.
+- After ArgoCD is running, **all changes go through git commits**, not scripts (except MaaS secrets; Authorino SSL
+  applies only on legacy stacks)
 - The **default workflow is incremental** - stop after each phase unless user requests autonomous run
-- **Bugs are the product**: when you hit an upstream bug, the priority is root-cause + a `docs/issues/` entry (with a filing draft) — NOT inventing a workaround. Propose a workaround only if testing is blocked without it, and give it a Jira + remove-when condition
+- **Bugs are the product**: when you hit an upstream bug, the priority is root-cause + a `docs/issues/` entry (with a
+  filing draft) — NOT inventing a workaround. Propose a workaround only if testing is blocked without it, and give it a
+  Jira + remove-when condition
 - **Never commit secrets** - this is a public repository
 - All file paths should be **absolute** when referencing in responses
 - When suggesting changes, show both the **file content** and the **git workflow** to apply it

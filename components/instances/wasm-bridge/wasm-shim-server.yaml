@@ -44,6 +44,8 @@ spec:
       containers:
         - name: nginx
           image: registry.access.redhat.com/ubi8/nginx-122@sha256:abe58a16720c2ebd3b6823531fe5a1346bc512f561349c740c0dce0a407d2fd9
+          # The image's default Cmd is the platform usage script, which exits 0 without serving.
+          command: ["/usr/libexec/s2i/run"]
           ports:
             - containerPort: 8080
           volumeMounts:

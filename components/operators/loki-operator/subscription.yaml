@@ -1,0 +1,28 @@
+# Loki operator (LokiStack CRD)
+#
+# Provides the lokistacks.loki.grafana.com CRD. The RHOAI odh-observability
+# controller (not this repo) creates the LokiStack `data-science-usage-logs-
+# lokistack` when DSCI `spec.monitoring.usageLogs.storage` is configured —
+# we never hand-write a LokiStack; this operator is only the prerequisite.
+# Cluster-logging is NOT required for the usage-logs path.
+#
+# Install namespace: openshift-operators-redhat (per the logging docs install
+# procedure; the cluster-monitoring label enables scraping of the operator's
+# own metrics).
+#
+# Both the source AND the channel pins are load-bearing: a community
+# loki-operator (alpha channel, different versioning) also exists in
+# community-operators, so the defaultChannel is ambiguous across the catalogs
+# carrying the colliding package name — redhat-operators' own defaultChannel
+# is stable-6.7. stable-6.7 resolves to loki-operator.v6.7.0.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: loki-operator
+  namespace: openshift-operators-redhat
+spec:
+  channel: stable-6.7
+  installPlanApproval: Automatic
+  name: loki-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

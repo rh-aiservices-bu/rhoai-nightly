@@ -6,6 +6,10 @@
 #   - Verifying OpenShift user-workload monitoring (UWM) is enabled (owned by `make infra`)
 #   - Creating the `instance-maas-observability` ArgoCD Application that syncs
 #     TelemetryPolicy + Istio Telemetry from components/instances/maas-observability/base/
+#   - Creating the usage-logs storage backend (Phase LG): pre-creating ns
+#     redhat-ods-monitoring, verifying the loki-operator CSV is Succeeded
+#     (required by DSCI monitoring.usageLogs -> LokiStack), and creating the
+#     rhoai-usage-logs-s3 storage Secret from .env
 #   - Flipping instance-rhoai source to overlays/maas-observability (triggers
 #     RHOAI operator's Perses/Tempo/OTel cascade via DSCI.spec.monitoring.metrics)
 #   - Verifying the Kuadrant CR has spec.observability.enable=true (set via GitOps)
@@ -472,6 +476,11 @@ PYEOF
     log_info "conflicts with user-workload-monitoring scraping. If you need it back:"
     log_info "  oc label namespace <ns> openshift.io/cluster-monitoring=true --overwrite"
     log_info "========================================="
+    log_info ""
+    log_info "Note: Secret rhoai-usage-logs-s3 in redhat-ods-monitoring is intentionally"
+    log_info "LEFT in place (imperative credentials, like the le-creds pattern) — the"
+    log_info "overlay flip tears the LokiStack down, but re-running 'make observability'"
+    log_info "reuses the same secret without re-entering credentials."
     exit 0
 fi
 
@@ -593,6 +602,81 @@ spec:
         maxDuration: 3m
 EOF
 applied "instance-maas-observability Application created (TelemetryPolicy + Istio Telemetry will sync)"
+
+# =============================================================================
+# Phase LG: usage-logs storage backend
+# =============================================================================
+# DSCI `monitoring.usageLogs.storage` (set by the maas-observability overlay)
+# makes the odh-observability controller deploy LokiStack
+# data-science-usage-logs-lokistack backed by an S3 secret it reads from ns
+# redhat-ods-monitoring. That secret is imperative (credentials live in .env,
+# never in git — le-creds pattern), the loki-operator must be installed
+# beforehand (the LokiStack CRD is its product), and the namespace itself may
+# not exist yet on a virgin cluster: the monitoring cascade creates it only
+# after the Phase O flip — pre-creating is safe, the operator adopts it.
+log_step "Phase LG: usage-logs storage backend"
+
+# Defensive .env load: `make observability` exports .env via the Makefile, but
+# a direct ./install-observability.sh invocation does not have the values.
+ENV_FILE="${REPO_ROOT}/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+fi
+
+# 1. Idempotently ensure redhat-ods-monitoring exists (see phase rationale).
+if oc get namespace redhat-ods-monitoring >/dev/null 2>&1; then
+    log_info "Namespace redhat-ods-monitoring already exists"
+else
+    log_info "Creating namespace redhat-ods-monitoring (monitoring cascade adopts it after the flip)"
+    run_cmd oc create namespace redhat-ods-monitoring
+fi
+
+# 2. Gate on the loki-operator CSV: without it the LokiStack CRD does not
+# exist and the cascade's LokiStack reconcile cannot succeed.
+LOKI_CSV_STATUS=$(oc get csv -n openshift-operators-redhat \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\n"}{end}' 2>/dev/null \
+    | awk -F'\t' '$1 ~ /^loki-operator/ {print $2; exit}') || LOKI_CSV_STATUS=""
+if [ "$LOKI_CSV_STATUS" != "Succeeded" ]; then
+    log_error "Phase LG: loki-operator CSV in openshift-operators-redhat is '${LOKI_CSV_STATUS:-not found}' (expected Succeeded)."
+    log_error "Install the loki-operator component (components/operators/loki-operator) and re-run."
+    log_error "Sequencing: commit/push the component, let the cluster-operators ApplicationSet create the"
+    log_error "Application, 'make sync-app APP=loki-operator', wait for the CSV, then re-run 'make observability'."
+    exit 1
+fi
+log_info "loki-operator CSV is Succeeded (openshift-operators-redhat)"
+
+# 3. Credentials from .env / environment.
+if [ -z "${USAGE_LOGS_S3_BUCKET:-}" ]; then
+    log_error "Phase LG: USAGE_LOGS_S3_BUCKET is not set."
+    log_error "Add it to .env (see .env.example) — the bucket itself is provisioned out-of-band (AWS CLI)."
+    exit 1
+fi
+if [ -z "${LE_AWS_ACCESS_KEY_ID:-}" ] || [ -z "${LE_AWS_SECRET_ACCESS_KEY:-}" ]; then
+    log_error "Phase LG: LE_AWS_ACCESS_KEY_ID and LE_AWS_SECRET_ACCESS_KEY must be set."
+    log_error "Add them to .env (see .env.example) — they are reused for the usage-logs S3 backend."
+    exit 1
+fi
+USAGE_LOGS_S3_REGION="${USAGE_LOGS_S3_REGION:-us-east-2}"
+log_info "Configuring usage-logs storage: Secret rhoai-usage-logs-s3 in redhat-ods-monitoring (bucket: ${USAGE_LOGS_S3_BUCKET}, region: ${USAGE_LOGS_S3_REGION})"
+
+# 4. Create/update the Secret with the DSCI schema's required key set.
+if [ "$DRY_RUN" = true ]; then
+    log_info "[DRY RUN] Would create/update Secret rhoai-usage-logs-s3 in redhat-ods-monitoring (bucket: ${USAGE_LOGS_S3_BUCKET})"
+else
+    oc create secret generic rhoai-usage-logs-s3 -n redhat-ods-monitoring \
+        --from-literal=access_key_id="$LE_AWS_ACCESS_KEY_ID" \
+        --from-literal=access_key_secret="$LE_AWS_SECRET_ACCESS_KEY" \
+        --from-literal=bucketnames="$USAGE_LOGS_S3_BUCKET" \
+        --from-literal="endpoint=https://s3.${USAGE_LOGS_S3_REGION}.amazonaws.com" \
+        --from-literal=region="$USAGE_LOGS_S3_REGION" \
+        --from-literal=insecure="false" \
+        --from-literal=s3ForcePathStyle="false" \
+        --dry-run=client -o yaml | oc apply -f -
+fi
+applied "usage-logs storage backend (Secret rhoai-usage-logs-s3 in redhat-ods-monitoring, bucket ${USAGE_LOGS_S3_BUCKET})"
 
 # =============================================================================
 # Phase O: Flip instance-rhoai Application source -> overlays/maas-observability

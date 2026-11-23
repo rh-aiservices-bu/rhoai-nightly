@@ -7,6 +7,14 @@ kind: Kustomization
 # Perses, TempoStack, OpenTelemetryCollector DaemonSet, NodeMetricsEndpoint,
 # MonitoringStack, ThanosQuerier.
 #
+# monitoring.usageLogs triggers the odh-observability controller to deploy the
+# LokiStack data-science-usage-logs-lokistack and wire the usage-logs
+# collector; the PersesDatasources usage-logs-* and the tenancy proxy light up
+# (the portal Usage panels are Loki-backed). Size 1x.demo because the default
+# 1x.extra-small does not schedule on smaller clusters per the CRD schema, and
+# this rig is a demo. The storage secret (rhoai-usage-logs-s3) is created
+# imperatively by scripts/install-observability.sh from .env.
+#
 # This cascade puts substantial memory pressure on the control plane.
 # `scripts/install-observability.sh` runs a settle-gate before flipping the
 # instance-rhoai Application source here — do not hand-apply.
@@ -28,3 +36,12 @@ patches:
       - op: add
         path: /spec/monitoring/namespace
         value: redhat-ods-monitoring
+      - op: add
+        path: /spec/monitoring/usageLogs
+        value:
+          size: 1x.demo
+          storage:
+            type: s3
+            secretName: rhoai-usage-logs-s3
+            credentialMode: static
+            storageClassName: gp3-csi

@@ -1,0 +1,27 @@
+{
+ "apiVersion": "networking.istio.io/v1beta1",
+ "kind": "DestinationRule",
+ "metadata": {
+  "name": "wasm-bridge-authorino-tls",
+  "namespace": "openshift-ingress",
+  "labels": {
+   "app.kubernetes.io/part-of": "wasm-bridge"
+  }
+ },
+ "spec": {
+  "host": "authorino-authorino-authorization.kuadrant-system.svc.cluster.local",
+  "trafficPolicy": {
+   "portLevelSettings": [
+    {
+     "port": {
+      "number": 50051
+     },
+     "tls": {
+      "mode": "SIMPLE",
+      "insecureSkipVerify": true
+     }
+    }
+   ]
+  }
+ }
+}

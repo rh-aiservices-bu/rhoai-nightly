@@ -93,6 +93,17 @@ spec:
               name: instance-maas-oidc
               path: components/instances/maas-oidc
               namespace: openshift-gitops
+          # Kuadrant wasm shim delivered to the MaaS gateway via the istio-agent
+          # (envoy's remote fetch fails deterministically on OCP5 sail) — see
+          # docs/issues/rhcl-wasm-fail-closed.md and workarounds.md §E3. The
+          # WasmPlugin's pluginConfig is the frozen post-surgery render, tied
+          # to this rig's tenancy — see components/instances/wasm-bridge/README.md.
+          # Manifests live in components/instances/wasm-bridge/.
+          - cluster: local
+            values:
+              name: instance-wasm-bridge
+              path: components/instances/wasm-bridge
+              namespace: openshift-gitops
   template:
     metadata:
       name: "{{values.name}}"

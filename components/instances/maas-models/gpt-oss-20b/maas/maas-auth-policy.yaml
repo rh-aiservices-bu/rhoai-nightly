@@ -13,4 +13,7 @@ spec:
   subjects:
     groups:
       - name: system:authenticated
+      # Keycloak-JWT identities never carry the OCP-implicit system:authenticated
+      # group — the demo users authenticate via Keycloak JWTs (groups: ["user"]).
+      - name: user
     users: []

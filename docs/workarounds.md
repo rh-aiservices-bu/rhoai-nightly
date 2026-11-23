@@ -356,7 +356,8 @@ per the [issues/](issues/README.md) process when scheduled). Remove when RHCL
 ([kuadrant#2398](https://github.com/kuadrant/kuadrant-operator/issues/2398)).
 The wasm wedge after a churn episode is NOT covered by these measures —
 separate defect, see
-[issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md).
+[issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md); the
+broken wasm delivery is bypassed by the §E3 bridge.
 
 **2026-11-22 — Prevention (third leg): tenant telemetry disable.** RHOAI 3.6
 enables tenant telemetry by default (RHOAIENG-95219): the maas-controller
@@ -392,6 +393,50 @@ than a hard timeout.) **Reproduced identically 2026-08-14** (bq4x2, L40S):
 exit 0 at ~17 min with the pod at 1/2 and the MaaSModelRef reporting
 `Unhealthy`; serving ~4 min later. Two runs on different clusters now agree on
 the shape, which strengthens the case for the ~1500s fix.
+
+### E3. Kuadrant wasm shim delivered via the istio-agent (`components/instances/wasm-bridge/`)
+
+**Files:** `components/instances/wasm-bridge/` (shim-server Deployment+Service,
+`WasmPlugin/kuadrant-shim-bridge`, authorino TLS DestinationRule; synced by the
+`instance-wasm-bridge` element of the instances ApplicationSet)
+
+**Without it:** on OCP5 sail, envoy's remote wasm fetch of the
+`kuadrant-wasm-shim` fails deterministically while the wasm server is verified
+serving — and the plugin's `failure_policy: FAIL_RELOAD` is fail-closed, so
+**all** `maas.apps` traffic 5xxes (§E1's defect; full RCA in
+[issues/rhcl-wasm-fail-closed.md](issues/rhcl-wasm-fail-closed.md)). The
+bridge bypasses the broken delivery path: the istio-agent (which fetches
+WasmPlugin CRs itself, not envoy) pulls the module from a local nginx
+shim-server whose initContainer copies `/wasm/plugin.wasm` from the
+**RHCL-paired** operator image (the paired shim/authorino binaries matter).
+
+Two frozen pieces beyond the delivery itself, both rig-specific:
+
+- The WasmPlugin's `pluginConfig` is the **hand-surgered post-surgery render**
+  of the gateway EnvoyFilter (tier rate limits, ~940 CEL label expressions
+  transformed to null-safe `in`-operator forms, endpoints remapped to
+  istio-registry cluster names, store actions for removed services dropped).
+  It is frozen for THIS rig's tenancy (tenant/gateway names, tier UUIDs in the
+  CEL predicates); when policies change, re-freeze via the plan doc's
+  "WasmPlugin config transform runbook"
+  (`~/.local/share/opencode/plans/rhoai-nightly/nightly-rebuild-usage-dashboard.md`,
+  §"WASM BRIDGE").
+- The kuadrant-operator's EnvoyFilter **and** AuthConfig render rights are
+  stripped via the CSV `clusterPermissions` + the live ClusterRole (the
+  freezes of 2026-11-22/23) so the operator cannot overwrite the frozen
+  render or revert the patched AuthConfigs. These are imperative RBAC freezes:
+  **re-apply them after every OLM RBAC reconcile / operator upgrade** (same
+  runbook; the CSV is the durable form, the live-role patch covers OLM's
+  reconcile lag).
+
+**Status:** Temporary. **Remove when:** RHCL 1.5.1 is deployed (paired
+wasm-shim 0.15.0 + authorino 0.28.0 + the upstream wasm-fix content, verified
+locally via the `quay.io/jharmison/kuadrant-operator:v1.6.0-2398` swap) and
+the wasm shim loads in the sail envoy — verify with the §E1 Detection commands
+(envoy logs free of wasm fetch failures, `maas.apps` traffic 200). Removal =
+restore the operator's render rights, delete the `instance-wasm-bridge`
+Application and the shim-server, and revert the frozen AuthConfig patches
+(the new-policy renders then propagate again).
 
 ---
 

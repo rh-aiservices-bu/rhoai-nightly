@@ -259,7 +259,7 @@ Quick smoke test: `make maas-verify 2>&1 | tee $LOGDIR/phase10-maas-verify.log` 
 Run: `make observability 2>&1 | tee $LOGDIR/phase11-observability.log`.
 
 The settle-gate will **refuse** if any of the following are true:
-- Required operator CSVs (rhods, COO, opentelemetry) are not Succeeded; the settle gate still requires the authorino-operator and limitador-operator CSVs unconditionally, so `make observability` aborts without them even on Praxis nightlies (conditioning the gate is tracked as a follow-up); servicemeshoperator3 is required only when its Subscription exists (on OCP 4.20.32+ istiod is run by the ingress operator's embedded sail library with no OLM operator — the gate checks istiod health instead)
+- Required operator CSVs (rhods, COO, opentelemetry) are not Succeeded; authorino-operator and limitador-operator CSVs are required only when their Subscriptions exist (on Praxis nightlies the kuadrant-operator deploys them as direct Deployments — the gate checks readiness of the `authorino` and `limitador-limitador` Deployments in kuadrant-system instead, mirroring the servicemeshoperator3/istiod pattern); servicemeshoperator3 is likewise required only when its Subscription exists (on OCP 4.20.32+ istiod is run by the ingress operator's embedded sail library with no OLM operator — the gate checks istiod health instead)
 - DSC or DSCI Ready != True
 - Any pod in redhat-ods-applications / kuadrant-system / openshift-monitoring is non-terminal
 - etcd ClusterOperator is Degraded

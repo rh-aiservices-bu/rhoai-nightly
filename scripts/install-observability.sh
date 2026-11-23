@@ -151,9 +151,28 @@ run_settle_gate() {
         "rhods-operator:redhat-ods-operator"
         "cluster-observability-operator:openshift-cluster-observability-operator"
         "opentelemetry-operator:openshift-operators"
-        "authorino-operator:kuadrant-system"
-        "limitador-operator:kuadrant-system"
     )
+    # authorino and limitador are OLM operators only on legacy-era kuadrant
+    # stacks. On RHCL 1.5.x the kuadrant-operator deploys both as its own
+    # direct Deployments (no Subscription/CSV at all) — in that mode gate on
+    # Deployment readiness instead.
+    local op_name dep_name dep_ready spec
+    for spec in "authorino-operator:authorino" "limitador-operator:limitador-limitador"; do
+        op_name="${spec%%:*}"
+        dep_name="${spec##*:}"
+        if oc get subscription -n kuadrant-system "$op_name" >/dev/null 2>&1; then
+            csv_entries+=("$op_name:kuadrant-system")
+        else
+            # `|| echo ""` guards set -e for the same reason as the istiod
+            # check below: oc exits 1 when the deployment is missing.
+            dep_ready=$(oc get deployment -n kuadrant-system "$dep_name" \
+                -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")
+            if [[ -z "$dep_ready" || "$dep_ready" == "0" ]]; then
+                abort_settle_gate "no $op_name Subscription and no ready $dep_name deployment in kuadrant-system"
+            fi
+            log_info "  ✓ ${op_name%-operator} managed directly by the kuadrant-operator (no OLM CSV) — ${op_name%-operator} Ready"
+        fi
+    done
     # servicemeshoperator3 is an OLM operator only when istio is OLM-managed.
     # From OCP 4.20.32 the ingress operator embeds the sail library and runs
     # istiod directly (istiod deployment labelled managed-by=sail-library, no

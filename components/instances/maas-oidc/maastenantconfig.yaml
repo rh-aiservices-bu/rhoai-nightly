@@ -2,21 +2,33 @@
 # Partial SSA patch of the maas-controller-owned MaasTenantConfig: the
 # maas-controller stays owner of every field not declared here (the patch
 # wins on every sync/selfHeal the same way the connectivity-link SSA
-# resource patches do). Telemetry is disabled because RHOAI 3.6 turns tenant
-# telemetry on by default (RHOAIENG-95219): the controller renders a
-# `maas-telemetry` TelemetryPolicy (openshift-ingress) whose multi-label CEL
-# sources fail on unauthenticated traffic — a per-request wasm-shim
-# "Task failed" turns into 500s — and its renders were a churn amplifier for
-# the RHCL 1.5.0 EnvoyFilter churn (RHOAIENG-103592 mitigation;
-# docs/issues/rhcl-wasm-fail-closed.md). Cost: per-model/subscription usage
-# attribution is absent from the Observability Usage dashboard. Rate
-# limiting is NOT affected — TokenRateLimitPolicy enforcement is independent
-# of the telemetry policy. Manual management: if usage attribution is
-# needed, re-enable via a route-scoped TelemetryPolicy carrying only safe
-# (always-resolving) labels — the istiod-bounce remedy for a wedged gateway
-# is documented in the issue file.
-# REMOVE WHEN: RHCL 1.5.1 is deployed and the full-label TelemetryPolicy is
-# verified non-flapping, or a route-scoped safe-label policy replaces it.
+# resource patches do).
+#
+# telemetry.enabled gates the MaaS usage-log emitter: maas-controller
+# deploys the `maas-model-access-logs` EnvoyFilter (gateway OTel access
+# log → usage-logs collector → LokiStack) only when true and deletes the
+# filter when the flag is false (upstream models-as-a-service
+# tenant_usage_logs_envoyfilter.go) — the MaaS Usage dashboard's data
+# pipeline dies without it (verified live 2026-11-23: enabled → Loki
+# streams within minutes; ArgoCD revert of the flag → filter deleted).
+# Commit 5069df0 set it false as a workaround for RHCL 1.5.0, where the
+# TelemetryPolicy's per-request label CELs on unauthenticated traffic
+# turned wasm-shim `Task failed` into 500s (RHOAIENG-103592). True is safe
+# on this rig: the kuadrant-operator RBAC strips (Phase 5b workaround —
+# docs/issues/rhcl-wasm-fail-closed.md and the workarounds ledger) keep
+# those CELs from ever reaching the gateway's frozen wasm config, so the
+# 500s failure mode cannot reproduce while the strips hold; the access-log
+# EnvoyFilter is envoy-native and maas-controller-rendered, unaffected by
+# the strips.
+#
+# COUPLING WARNING: when the RBAC strips lift (RHCL 1.5.1 remove-when) the
+# CELs re-arm — re-verify unauthenticated traffic at that moment (expect
+# 401, not 500; Detection commands in
+# docs/issues/rhcl-wasm-fail-closed.md) and re-disable this flag if the
+# 500s return. Benefit: the usage-log pipeline re-arms — the purpose of
+# this flag on this rig. Cost: none while the strips hold; the
+# label-derived attribution metrics stay inert until the strips lift (see
+# the coupling warning above).
 apiVersion: maas.opendatahub.io/v1alpha1
 kind: MaasTenantConfig
 metadata:
@@ -27,4 +39,4 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   telemetry:
-    enabled: false
+    enabled: true

@@ -374,7 +374,13 @@ independent of the telemetry policy. If usage attribution is needed,
 re-enable via a route-scoped TelemetryPolicy carrying only safe labels (the
 istiod-bounce remedy for a wedged gateway is documented in the issue file).
 Remove when RHCL 1.5.1 is deployed and the full-label TelemetryPolicy
-verifies non-flapping.
+verifies non-flapping. **Status 2026-11-23:** the flag is re-enabled on the
+current rig — the usage-logs pipeline requires it (the maas-controller
+deploys the `maas-model-access-logs` EnvoyFilter only when telemetry is
+enabled) and the Phase 5b RBAC strips are the structural mitigation keeping
+the CEL failure mode unreproducible; see the coupling note in
+`components/instances/maas-oidc/maastenantconfig.yaml` for the re-disable
+condition once the strips lift.
 
 **Remove when:** this note (not the E1 remedy — the pod-bounce remedy itself
 stays until RHOAIENG-67925 fixes the startup probe) — when a RHCL build loads

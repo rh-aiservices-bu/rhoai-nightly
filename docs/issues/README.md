@@ -36,6 +36,8 @@ Working rules:
 | [servicemonitors-tls-servername-platform-prometheus.md](servicemonitors-tls-servername-platform-prometheus.md) | **NOT FILED** — target RHOAIENG (monitoring + trainer / model-registry / odh-model-controller / ogx) | Open — 3.6.0 GA moved `redhat-ods-applications` to platform monitoring; 7 component metrics targets `up=0` on x509 name mismatches (stale upstream-namespace `serverName`; ogx monitor selector also matches other components' Services) |
 | [maas-usage-dashboard-total-suffix.md](maas-usage-dashboard-total-suffix.md) | **NOT FILED** — target RHOAIENG (maas-controller) | Open — `dashboard-3-maas-usage-admin` queries `*_total` (12 queries); Limitador (RHCL 1.4.3) exports the names without `_total` → Usage panels empty. Re-confirmed n56g8 2026-10-16 |
 | [rhcl-wasm-fail-closed.md](rhcl-wasm-fail-closed.md) | **NOT FILED** — draft ready, target **CONNLINK** (RHCL / Connectivity Link) + [Kuadrant/kuadrant-operator](https://github.com/Kuadrant/kuadrant-operator) mirror | Open — found 2026-11-19 (OCP 5.0.1, RHCL 1.5.0); no workaround that restores traffic — enforcement (fail-closed) is kept as the current honest state |
+| [maas-usage-logs-orphaned-satoken-secret.md](maas-usage-logs-orphaned-satoken-secret.md) | **NOT FILED** — draft ready, target **RHOAIENG** (odh-observability / maas-controller usage-logs) + models-as-a-service GitHub mirror | Open — found 2026-11-23 (OCP 5.0.1, RHOAI 3.6.0 nightly, catalog `sha256:864736d5…`): the dsci-managed Usage PersesDatasources carry both `kubernetesAuth` (the replacement) and orphaned SA-token secret refs nobody mints — every Usage panel 401s; no reconcile path (the designed `usage-logs-loki` switch artifacts are carried — imperative, documented — but bypass rather than fix) |
+| [maas-api-logs-proxy-identity-bypass.md](maas-api-logs-proxy-identity-bypass.md) | **NOT FILED** — draft ready, target **RHOAIENG** + models-as-a-service GitHub mirror | Open — found 2026-11-23 (OCP 5.0.1, RHOAI 3.6.0 nightly, catalog `sha256:864736d5…`): the a6adc1a datasource repoint sends perses to maas-api's in-cluster `/v1/logs`, whose identity contract accepts only gateway-minted `X-MaaS-Identity` envelopes — a path that bypasses the gateway can never authenticate (also: `Authorization` never read; empty-sub MS-0007 envelope is what actually arrives); all Usage panels 401; no workaround for the bug itself is viable (the designed `usage-logs-loki` switch artifacts are carried) |
 
 ## Open Jiras backing carried workarounds
 
@@ -53,7 +55,10 @@ Closed / Won't Do, so the comment route is gone), ogx-upgrade (RHAIENG — link
 RHAIENG-6384), nightly-csv-name-static (build/release eng), duplicate-usage-tab
 (**two** RHOAIENG filings — maas-controller Perses orphan, and the dashboard
 tab-keying bug; added 2026-08-07), rhcl-wasm-fail-closed (**CONNLINK** +
-Kuadrant/kuadrant-operator mirror; added 2026-11-19).
+Kuadrant/kuadrant-operator mirror; added 2026-11-19),
+maas-usage-logs-orphaned-satoken-secret (**RHOAIENG** + models-as-a-service
+GitHub mirror; added 2026-11-23), maas-api-logs-proxy-identity-bypass
+(**RHOAIENG** + models-as-a-service GitHub mirror; added 2026-11-23).
 
 Dropped from the queue 2026-10-16 (n56g8, RHOAI 3.6.0 GA) — see the retired
 list in [../workarounds.md](../workarounds.md): TelemetryPolicy-labels
